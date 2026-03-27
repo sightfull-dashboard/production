@@ -1,0 +1,16 @@
+Sightfull SMTP setup
+
+Add these values to your .env file:
+
+SMTP_HOST=smtp.sightfull.co.za
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=dashboard@sightfull.co.za
+SMTP_PASS=YOUR_MAILBOX_PASSWORD
+SMTP_FROM_NAME=Sightfull Dashboard
+SMTP_FROM_EMAIL=dashboard@sightfull.co.za
+
+Notes:
+- Port 465 uses secure=true.
+- Payroll submission emails will send to the client's payroll email and CC the client's payroll CC when configured.
+- The app will still save the payroll submission even if the email send fails.

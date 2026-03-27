@@ -1,0 +1,2889 @@
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { 
+  LayoutDashboard, 
+  Users, 
+  Clock, 
+  CalendarDays, 
+  FileText, 
+  Files,
+  LogOut,
+  X,
+  MoreVertical,
+  Download,
+  Plus,
+  ShieldCheck,
+  Loader2,
+  Building2,
+  Activity,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  Lock,
+  Bell,
+  Inbox,
+  ClipboardList,
+  History,
+  MessageSquare,
+  AlertCircle
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { format, startOfWeek, addDays, differenceInDays } from 'date-fns';
+import type { RosterDefinition } from './types';
+import { cn } from './lib/utils';
+import { ApiError } from './lib/api';
+import { isEmployeePath, isSuperAdminPath, isSuperAdminRole, normalizeUserRole } from './lib/auth';
+
+const toTitleCase = (value?: string | null) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw
+    .replace(/[._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+};
+
+const formatAccountDisplayName = (user?: { name?: string | null; email?: string | null }) => {
+  return toTitleCase(user?.name || user?.email?.split('@')[0] || 'User') || 'User';
+};
+
+const formatRoleLabel = (role?: string | null) => {
+  return toTitleCase(role || 'user') || 'User';
+};
+
+const getSidebarBrandLabel = (opts?: { clientName?: string | null; client_name?: string | null; isSuperAdmin?: boolean }) => {
+  const clientName = String(opts?.clientName || opts?.client_name || '').trim();
+  if (clientName) return clientName;
+  return opts?.isSuperAdmin ? 'Sightfull Pro v2.0' : 'Client';
+};
+
+const employeeIdNumericValue = (value?: string | null) => {
+  const match = String(value || '').trim().toUpperCase().match(/^EMP(\d+)$/);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+};
+
+const compareEmployeeIds = (left?: string | null, right?: string | null) => {
+  const leftNum = employeeIdNumericValue(left);
+  const rightNum = employeeIdNumericValue(right);
+  if (Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum !== rightNum) {
+    return leftNum - rightNum;
+  }
+  return String(left || '').localeCompare(String(right || ''), undefined, { numeric: true, sensitivity: 'base' });
+};
+
+const generateAutoEmployeeId = (existingEmployees: Array<{ emp_id?: string | null }>) => {
+  const nextSequence = existingEmployees.reduce((maxValue, employee) => {
+    const numericValue = employeeIdNumericValue(employee.emp_id);
+    return Number.isFinite(numericValue) ? Math.max(maxValue, numericValue) : maxValue;
+  }, 0) + 1;
+  return `EMP${String(nextSequence).padStart(3, '0')}`;
+};
+
+const COUNTRY_OF_ISSUE_OPTIONS = [
+  'Afghanistan',
+  'Aland Islands',
+  'Albania',
+  'Algeria',
+  'American Samoa',
+  'Andorra',
+  'Angola',
+  'Anguilla',
+  'Antarctica',
+  'Antigua and Barbuda',
+  'Argentina',
+  'Armenia',
+  'Aruba',
+  'Australia',
+  'Austria',
+  'Azerbaijan',
+  'Bahamas',
+  'Bahrain',
+  'Bangladesh',
+  'Barbados',
+  'Belarus',
+  'Belgium',
+  'Belize',
+  'Benin',
+  'Bermuda',
+  'Bhutan',
+  'Bolivia (Plurinational State of)',
+  'Sint Eustatius and Saba',
+  'Bosnia and Herzegovina',
+  'Botswana',
+  'Bouvet Island',
+  'Brazil',
+  'British Indian Ocean Territory',
+  'Brunei Darussalam',
+  'Bulgaria',
+  'Burkina Faso',
+  'Burundi',
+  'Cambodia',
+  'Cameroon',
+  'Canada',
+  'Cape Verde',
+  'Cayman Islands',
+  'Central African Republic',
+  'Chad',
+  'Chile',
+  'China',
+  'Christmas Island',
+  'Cocos (Keeling) Island',
+  'Colombia',
+  'Comoros',
+  'Congo',
+  'Congo (The Democratic Republic of)',
+  'Cook Islands',
+  'Costa Rica',
+  "Cote d Ivoire",
+  'Croatia',
+  'Cuba',
+  'Curacao',
+  'Cyprus',
+  'Czech Republic',
+  'Denmark',
+  'Djibouti',
+  'Dominica',
+  'Dominican Republic',
+  'Ecuador',
+  'Egypt',
+  'El Salvador',
+  'Equatorial Guinea',
+  'Eritrea',
+  'Estonia',
+  'Ethiopia',
+  'Falkland Islands (Malvinas)',
+  'Faroe Islands',
+  'Fiji',
+  'Finland',
+  'France',
+  'French Guiana',
+  'French Polynesia',
+  'French Southern Territories',
+  'Gabon',
+  'Gambia',
+  'Georgia',
+  'Germany',
+  'Ghana',
+  'Gibraltar',
+  'Greece',
+  'Greenland',
+  'Grenada',
+  'Guadeloupe',
+  'Guam',
+  'Guatemala',
+  'Guernsey',
+  'Guinea',
+  'Guinea-Bissau',
+  'Guyana',
+  'Haiti',
+  'Heard and McDonald Islands',
+  'Holy See (Vatican City State)',
+  'Honduras',
+  'Hong Kong Special Administrative Region of China',
+  'Hungary',
+  'Iceland',
+  'India',
+  'Indonesia',
+  'Iran (Islamic Republic of)',
+  'Iraq',
+  'Ireland',
+  'Isle of Man',
+  'Israel',
+  'Italy',
+  'Jamaica',
+  'Japan',
+  'Jersey',
+  'Jordan',
+  'Kazakhstan',
+  'Kenya',
+  'Kiribati',
+  "Korea (Democratic People's Republic of)",
+  'Korea (Republic of)',
+  'Kuwait',
+  'Kyrgyzstan',
+  "Lao People's Democratic Republic",
+  'Latvia',
+  'Lebanon',
+  'Lesotho',
+  'Liberia',
+  'Libya',
+  'Liechtenstein',
+  'Lithuania',
+  'Luxembourg',
+  'Macao Special Administrative Region of China',
+  'Macedonia (The former Yugoslav Republic of)',
+  'Madagascar',
+  'Malawi',
+  'Malaysia',
+  'Maldives',
+  'Mali',
+  'Malta',
+  'Marshall Islands',
+  'Martinique',
+  'Mauritania',
+  'Mauritius',
+  'Mayotte',
+  'Mexico',
+  'Micronesia (Federated States of)',
+  'Moldova (Republic of)',
+  'Monaco',
+  'Mongolia',
+  'Montenegro',
+  'Montserrat',
+  'Morocco',
+  'Mozambique',
+  'Myanmar',
+  'Namibia',
+  'Nauru',
+  'Nepal',
+  'Netherlands',
+  'New Caledonia',
+  'New Zealand',
+  'Nicaragua',
+  'Niger',
+  'Nigeria',
+  'Niue',
+  'Norfolk Island',
+  'Northern Mariana Islands',
+  'Norway',
+  'Oman',
+  'Pakistan',
+  'Palau',
+  'Palestine (State of)',
+  'Panama',
+  'Papua New Guinea',
+  'Paraguay',
+  'Peru',
+  'Philippines',
+  'Pitcairn',
+  'Poland',
+  'Portugal',
+  'Puerto Rico',
+  'Qatar',
+  'Reunion',
+  'Romania',
+  'Russian Federation',
+  'Rwanda',
+  'Saint Barthelemy',
+  'Ascension and Tristan da Cunha',
+  'Saint Kitts and Nevis',
+  'Saint Lucia',
+  'Saint Martin (French Part)',
+  'Saint Pierre and Miquelon',
+  'Saint Vincent and the Grenadines',
+  'Samoa',
+  'San Marino',
+  'Sao Tome and Principe',
+  'Saudi Arabia',
+  'Senegal',
+  'Serbia',
+  'Seychelles',
+  'Sierra Leone',
+  'Singapore',
+  'Sint Maarten (Dutch Part)',
+  'Slovakia',
+  'Slovenia',
+  'Solomon Islands',
+  'Somalia',
+  'South Africa',
+  'South Georgia and South Sandwich Islands',
+  'South Sudan',
+  'Spain',
+  'Sri Lanka',
+  'Sudan',
+  'Suriname',
+  'Svalbard and Jan Mayen',
+  'Swaziland',
+  'Sweden',
+  'Switzerland',
+  'Syrian Arab Republic',
+  'Taiwan Province of China',
+  'Tajikistan',
+  'Tanzania (United Republic of)',
+  'Thailand',
+  'Timor-Leste',
+  'Togo',
+  'Tokelau',
+  'Tonga',
+  'Trinidad and Tobago',
+  'Tunisia',
+  'Turkey',
+  'Turkmenistan',
+  'Turks and Caicos Islands',
+  'Tuvalu',
+  'Uganda',
+  'Ukraine',
+  'United Arab Emirates',
+  'United Kingdom',
+  'United States',
+  'United States Minor Outlying Islands',
+  'Uruguay',
+  'Uzbekistan',
+  'Vanuatu',
+  'Venezuela (Bolivarian Republic of)',
+  'Viet Nam',
+  'Virgin Islands (British)',
+  'Virgin Islands (United States)',
+  'Wallis and Futuna',
+  'Western Sahara',
+  'Yemen',
+  'Zambia',
+  'Zimbabwe',
+] as const;
+
+
+const digitsOnly = (value?: string | number | null) => String(value ?? '').replace(/\D/g, '');
+
+const formatHourlyRateInput = (value?: string | number | null) => {
+  const digits = digitsOnly(value).padStart(8, '0');
+  const whole = digits.slice(0, -4).replace(/^0+(?=\d)/, '') || '0';
+  const decimals = digits.slice(-4);
+  return `R${whole.padStart(3, '0')}.${decimals}`;
+};
+
+const parseHourlyRateInputToNumber = (value?: string | null) => {
+  const digits = digitsOnly(value).padStart(8, '0');
+  const whole = digits.slice(0, -4).replace(/^0+(?=\d)/, '') || '0';
+  const decimals = digits.slice(-4);
+  return Number(`${whole}.${decimals}`);
+};
+
+const formatStoredHourlyRate = (value?: string | number | null) => {
+  const normalized = String(value ?? '').replace(/[^0-9.-]/g, '').trim();
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return 'R000.0000';
+  const [wholePart, decimalPart = '0000'] = parsed.toFixed(4).split('.');
+  return `R${wholePart.padStart(3, '0')}.${decimalPart}`;
+};
+
+const formatLeaveInput = (value?: string | number | null) => {
+  const digits = digitsOnly(value).padStart(6, '0');
+  const whole = digits.slice(0, -4).replace(/^0+(?=\d)/, '') || '0';
+  const decimals = digits.slice(-4);
+  return `${whole.padStart(2, '0')}.${decimals}`;
+};
+
+const parseLeaveInputToNumber = (value?: string | null) => {
+  const digits = digitsOnly(value).padStart(6, '0');
+  const whole = digits.slice(0, -4).replace(/^0+(?=\d)/, '') || '0';
+  const decimals = digits.slice(-4);
+  return Number(`${whole}.${decimals}`);
+};
+
+const phoneDigitsToLocalSa = (value?: string | null) => {
+  let digits = String(value || '').replace(/\D/g, '');
+  if (digits.startsWith('27')) digits = digits.slice(2);
+  if (digits.startsWith('0')) digits = digits.slice(1);
+  return digits.slice(0, 9);
+};
+
+const normalizeSouthAfricanCell = (value?: string | null) => {
+  const localDigits = phoneDigitsToLocalSa(value);
+  return localDigits ? `+27${localDigits}` : '';
+};
+import { Shift, Employee, RosterAssignment, RosterMeta, OffboardReason, User, AuthStatus, LeaveRequest, SupportTicket, PayrollSubmission } from './types';
+import { EmployeeSection } from './components/EmployeeSection';
+import { RosterSection } from './components/RosterSection';
+import { TimesheetSection } from './components/TimesheetSection';
+import { PayrollSubmissionsSection } from './components/PayrollSubmissionsSection';
+import { ShiftsSection } from './components/ShiftsSection';
+import { FilesSection } from './components/FilesSection';
+import { LeaveSection } from './components/LeaveSection';
+import { OffboardModal } from './components/OffboardModal';
+import { Login } from './components/Login';
+import { SuperAdminLogin } from './components/SuperAdminLogin';
+import { EmployeeLogin } from './components/EmployeeLogin';
+import { EmployeeDashboard } from './components/employee/EmployeeDashboard';
+import { ApplyLeave } from './components/employee/ApplyLeave';
+import { MyLeave } from './components/employee/MyLeave';
+import { EmployeeCalendar } from './components/employee/EmployeeCalendar';
+import { EmployeeDocuments } from './components/employee/EmployeeDocuments';
+import { EmployeeProfile } from './components/employee/EmployeeProfile';
+import { AdminPanel } from './components/AdminPanel';
+import { InternalPanel } from './components/InternalPanel';
+import { SupportTicketsPanel } from './components/SupportTicketsPanel';
+import { ClientNotificationsPanel } from './components/ClientNotificationsPanel';
+import { AnalyticsSection } from './components/AnalyticsSection';
+import { ActivityLogsPanel } from './components/ActivityLogsPanel';
+import { Tooltip } from './components/Tooltip';
+import { Toaster, toast } from 'sonner';
+import { calculateEmployeePayroll } from './services/PayrollService';
+import { appService } from './services/appService';
+const sidebarLogo = '/sd-logo.png';
+
+// --- UI Components ---
+
+const BANK_NAME_OPTIONS = [
+  'ABN AMRO BANK',
+  'ABSA',
+  'AFRICAN BANK',
+  'ALBARAKA BANK',
+  'GROBANK',
+  'BIDVEST BANK',
+  'CAPITEC BANK',
+  'CITI BANK',
+  'FBC FIDELITY BANK',
+  'FNB',
+  'GRINDROD BANK',
+  'HABIB OVERSEAS BANK',
+  'HBZ BANK',
+  'INVESTEC',
+  'ITHALA BANK',
+  'MEEG BANK',
+  'MERCANTILE BANK',
+  'NBS',
+  'NEDBANK',
+  'ACCESS BANK',
+  'PEP BANK',
+  'POSTBANK',
+  'STANDARD BANK',
+  'STATE BANK OF INDIA',
+  'UNIBANK',
+  'ABSA (RELOAD CARD)',
+  'STANDARD BANK (MUKURU CARD)',
+  'WIZZIT Bank',
+  'IMB FINANCIAL SERVICES (ABSA)',
+  'TYMEBANK',
+  'UBANK',
+  'SASFIN BANK',
+  'DISCOVERY BANK',
+  'BANK ZERO MUTUAL BANK',
+  'FINBOND MUTUAL BANK',
+  'VBS MUTUAL BANK',
+  'NEDBANK (CORPORATE SAVER ACCOUNT)',
+  'RMB Private Bank',
+  'OLD MUTUAL',
+  'BIDVEST BANK ALLIANCE',
+];
+
+const SidebarItem = ({ icon: Icon, label, active, onClick, badge, theme = 'indigo', isLocked = false }: { icon: any, label: string, active: boolean, onClick: () => void, badge?: number, theme?: 'indigo' | 'emerald' | 'rose', isLocked?: boolean }) => {
+  const themes = {
+    indigo: {
+      active: "bg-indigo-600 text-white shadow-lg shadow-indigo-200",
+      hover: "text-slate-600 hover:bg-white/50 hover:translate-x-1",
+      iconActive: "text-white",
+      iconHover: "text-slate-400 group-hover:text-indigo-600"
+    },
+    emerald: {
+      active: "bg-emerald-600 text-white shadow-lg shadow-emerald-200",
+      hover: "text-slate-600 hover:bg-white/50 hover:translate-x-1",
+      iconActive: "text-white",
+      iconHover: "text-slate-400 group-hover:text-emerald-600"
+    },
+    rose: {
+      active: "bg-rose-600 text-white shadow-lg shadow-rose-200",
+      hover: "text-slate-400 hover:bg-white/10 hover:translate-x-1",
+      iconActive: "text-white",
+      iconHover: "text-slate-500 group-hover:text-rose-400"
+    }
+  };
+
+  const currentTheme = themes[theme];
+
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-3 w-full px-4 py-3 rounded-xl transition-all duration-200 group relative",
+        active ? currentTheme.active : currentTheme.hover,
+        isLocked && "opacity-70 grayscale-[0.3]"
+      )}
+    >
+      <Icon className={cn("w-5 h-5", active ? currentTheme.iconActive : currentTheme.iconHover)} />
+      <span className="font-bold text-sm tracking-tight">{label}</span>
+      {isLocked && (
+        <span className="absolute right-3">
+          <Lock className="w-3.5 h-3.5 text-slate-400" />
+        </span>
+      )}
+      {badge !== undefined && badge > 0 && !isLocked && (
+        <span className="absolute right-3 w-5 h-5 bg-rose-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-sm">
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+};
+
+const Card = ({ children, className }: { children: React.ReactNode, className?: string }) => (
+  <div className={cn("bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 p-6", className)}>
+    {children}
+  </div>
+);
+
+const FeatureWrapper = ({ isLocked, featureName, children }: { isLocked: boolean, featureName: string, children: React.ReactNode }) => {
+  if (!isLocked) return <>{children}</>;
+  
+  return (
+    <div className="relative min-h-[60vh]">
+      <div className="absolute inset-0 blur-md pointer-events-none select-none opacity-40 transition-all duration-300 overflow-hidden">
+        {children}
+      </div>
+      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center text-center px-4 bg-white/30 backdrop-blur-sm rounded-[32px]">
+        <div className="w-24 h-24 bg-rose-50 rounded-[32px] flex items-center justify-center mb-8 border border-rose-100 shadow-xl shadow-rose-100/50">
+          <Lock className="w-10 h-10 text-rose-500" />
+        </div>
+        <h2 className="text-3xl font-black text-slate-800 mb-4 tracking-tight">Feature Locked</h2>
+        <p className="text-slate-500 max-w-md mb-8 text-lg leading-relaxed">
+          The <span className="font-bold text-slate-700">{featureName}</span> feature is not available in your current plan. Please contact your administrator to upgrade your account and unlock this feature.
+        </p>
+        <button className="px-8 py-4 bg-slate-900 text-white rounded-2xl font-black text-sm hover:bg-slate-800 transition-all shadow-xl shadow-slate-900/20 hover:shadow-2xl hover:shadow-slate-900/30 hover:-translate-y-1">
+          Contact Administrator
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const Modal = ({ isOpen, onClose, title, children, footer }: { isOpen: boolean, onClose: () => void, title: string, children: React.ReactNode, footer?: React.ReactNode }) => (
+  <AnimatePresence>
+    {isOpen && (
+      <>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]"
+        />
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 20 }}
+          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl bg-white rounded-[40px] shadow-2xl z-[101] overflow-hidden"
+        >
+          <div className="flex items-center justify-between p-8 border-b border-slate-100">
+            <h3 className="text-2xl font-black text-slate-800 tracking-tight">{title}</h3>
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+              <X className="w-5 h-5 text-slate-400" />
+            </button>
+          </div>
+          <div className="p-8 max-h-[70vh] overflow-y-auto">
+            {children}
+          </div>
+          {footer && (
+            <div className="p-8 bg-slate-50 flex justify-end gap-3">
+              {footer}
+            </div>
+          )}
+        </motion.div>
+      </>
+    )}
+  </AnimatePresence>
+);
+
+const SuperAdminSidebarItem = ({ icon: Icon, label, active, onClick, badge }: { icon: any, label: string, active: boolean, onClick: () => void, badge?: number }) => (
+  <button
+    onClick={onClick}
+    className={cn(
+      "flex items-center justify-between w-full px-4 py-3 rounded-xl transition-all duration-200 group",
+      active 
+        ? "bg-indigo-500 text-white shadow-lg shadow-indigo-500/20" 
+        : "text-slate-400 hover:bg-white/10 hover:translate-x-1"
+    )}
+  >
+    <div className="flex items-center gap-3">
+      <Icon className={cn("w-5 h-5", active ? "text-white" : "text-slate-500 group-hover:text-indigo-400")} />
+      <span className="font-bold text-sm tracking-tight">{label}</span>
+    </div>
+    {badge !== undefined && badge > 0 && (
+      <span className={cn(
+        "px-2 py-0.5 rounded-full text-[10px] font-black",
+        active ? "bg-white/20 text-white" : "bg-rose-500/20 text-rose-400"
+      )}>
+        {badge}
+      </span>
+    )}
+  </button>
+);
+
+export default function App() {
+  const [isSuperAdminRoute, setIsSuperAdminRoute] = useState(isSuperAdminPath(window.location.pathname));
+  const [isEmployeeRoute, setIsEmployeeRoute] = useState(isEmployeePath(window.location.pathname));
+  const [auth, setAuth] = useState<AuthStatus>({ user: null, loading: true });
+  const [employeeAuth, setEmployeeAuth] = useState<{ employee: Employee | null, loading: boolean }>({ employee: null, loading: true });
+
+  const clearEmployeeAuth = () => setEmployeeAuth({ employee: null, loading: false });
+  const [superAdminSection, setSuperAdminSection] = useState<'internal' | 'admin' | 'logs' | 'notifications' | 'tickets'>('internal');
+  const [impersonatedClient, setImpersonatedClient] = useState<any | null>(null);
+  const [lockedFeatures, setLockedFeatures] = useState<string[]>([]);
+  const [enabledDefinitions, setEnabledDefinitions] = useState<RosterDefinition[]>(['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+  const [rosterStartDay, setRosterStartDay] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(1);
+  const [rosterDuration, setRosterDuration] = useState<'1_week' | '2_weeks' | '1_month'>('1_week');
+  const [rosterMode, setRosterMode] = useState<'Automated' | 'Hybrid' | 'Manual'>('Manual');
+  const [rosterSeedWeekStart, setRosterSeedWeekStart] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState('analytics');
+  const [leaveManagementEmployeeId, setLeaveManagementEmployeeId] = useState<string | null>(null);
+  
+  const [clientTickets, setClientTickets] = useState<SupportTicket[]>([]);
+
+
+
+  const openTicketsCount = clientTickets.filter(t => t.status === 'open' || t.status === 'in_progress').length;
+
+  const [notifications, setNotifications] = useState<PayrollSubmission[]>([]);
+
+  const superAdminPendingNotificationsCount = React.useMemo(
+    () => notifications.filter((n) => n.status === 'pending').length,
+    [notifications]
+  );
+
+  const [employeeSection, setEmployeeSection] = useState('dashboard');
+  const [dobDisplay, setDobDisplay] = useState('');
+  const [passportDisplay, setPassportDisplay] = useState('');
+  const [showCountryOfIssue, setShowCountryOfIssue] = useState(false);
+  const [countryOfIssueInput, setCountryOfIssueInput] = useState('');
+  const [isCountryOfIssueFocused, setIsCountryOfIssueFocused] = useState(false);
+  const [bankNameInput, setBankNameInput] = useState('');
+  const [isBankNameFocused, setIsBankNameFocused] = useState(false);
+  const [annualLeaveDisplay, setAnnualLeaveDisplay] = useState('');
+  const [sickLeaveDisplay, setSickLeaveDisplay] = useState('');
+  const [familyLeaveDisplay, setFamilyLeaveDisplay] = useState('');
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [roster, setRoster] = useState<RosterAssignment[]>([]);
+  const [rosterMeta, setRosterMeta] = useState<RosterMeta[]>([]);
+  const leaveOverrideWarningShownRef = useRef<Set<string>>(new Set());
+  const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const getAlignedRosterStart = (baseDate: Date, startDay: 0 | 1 | 2 | 3 | 4 | 5 | 6) => startOfWeek(baseDate, { weekStartsOn: startDay });
+  
+  // Modals
+  const [isEmployeeModalOpen, setIsEmployeeModalOpen] = useState(false);
+  const [formIsUnion, setFormIsUnion] = useState<'yes' | 'no' | ''>('');
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [autoGeneratedEmployeeId, setAutoGeneratedEmployeeId] = useState('');
+  const [showPin, setShowPin] = useState(false);
+  const [generatedPin, setGeneratedPin] = useState<string>('');
+  const [payRateDisplay, setPayRateDisplay] = useState('R000.0000');
+  const [cellLocalDigits, setCellLocalDigits] = useState('');
+  const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
+  const [editingShift, setEditingShift] = useState<Shift | null>(null);
+  const [isOffboardModalOpen, setIsOffboardModalOpen] = useState(false);
+  const [offboardingEmployee, setOffboardingEmployee] = useState<Employee | null>(null);
+  const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
+  const [supportSubject, setSupportSubject] = useState('');
+  const [supportMessage, setSupportMessage] = useState('');
+  const [supportPriority, setSupportPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
+  const [isSubmittingSupport, setIsSubmittingSupport] = useState(false);
+
+  const filteredCountryOfIssueOptions = useMemo(() => {
+    const query = countryOfIssueInput.trim().toLowerCase();
+    if (!query) return [];
+    return COUNTRY_OF_ISSUE_OPTIONS.filter((country) => country.toLowerCase().includes(query)).slice(0, 8);
+  }, [countryOfIssueInput]);
+
+  const filteredBankNameOptions = useMemo(() => {
+    const query = bankNameInput.trim().toLowerCase();
+    if (!query) return [];
+    return BANK_NAME_OPTIONS.filter((bank) => bank.toLowerCase().includes(query)).slice(0, 8);
+  }, [bankNameInput]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setIsSuperAdminRoute(isSuperAdminPath(window.location.pathname));
+      setIsEmployeeRoute(isEmployeePath(window.location.pathname));
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (auth.user || isEmployeeRoute) {
+      void fetchEmployees();
+      void fetchShifts();
+      void fetchRoster();
+      void fetchRosterMeta();
+    }
+  }, [auth.user, isEmployeeRoute, currentWeekStart]);
+
+  useEffect(() => {
+    if (auth.user || isEmployeeRoute) {
+      void fetchRoster();
+      void fetchRosterMeta();
+    }
+  }, [employees]);
+
+  const fetchEmployees = async () => {
+    try {
+      const data = await appService.getEmployees();
+      const visibleClientId = getVisibleClientId();
+      const scoped = visibleClientId && !isEmployeeRoute
+        ? data.filter((employee) => employee.client_id === visibleClientId)
+        : data;
+      setEmployees([...scoped].sort((left, right) => compareEmployeeIds(left.emp_id, right.emp_id)));
+    } catch (error) {
+      console.error('Failed to fetch employees:', error);
+      setEmployees([]);
+    }
+  };
+
+  const fetchShifts = async () => {
+    try {
+      const data = await appService.getShifts();
+      setShifts(data);
+    } catch (error) {
+      console.error('Failed to fetch shifts:', error);
+    }
+  };
+
+  const fetchRoster = async () => {
+    try {
+      const periodDays = rosterDuration === '2_weeks' ? 14 : rosterDuration === '1_month' ? 28 : 7;
+      const data = await appService.getRoster(format(currentWeekStart, 'yyyy-MM-dd'), periodDays);
+      const employeeIds = new Set(employees.map((employee) => employee.id));
+      setRoster(data.filter((row) => employeeIds.size === 0 || employeeIds.has(row.employee_id)));
+    } catch (error) {
+      console.error('Failed to fetch roster:', error);
+      setRoster([]);
+    }
+  };
+
+  const fetchRosterMeta = async () => {
+    try {
+      const data = await appService.getRosterMeta(format(currentWeekStart, 'yyyy-MM-dd'));
+      const employeeIds = new Set(employees.map((employee) => employee.id));
+      setRosterMeta(data.filter((row) => employeeIds.size === 0 || employeeIds.has(row.employee_id)));
+    } catch (error) {
+      console.error('Failed to fetch roster meta:', error);
+      setRosterMeta([]);
+    }
+  };
+
+  const fetchLeaveRequests = async (employeeId?: string) => {
+    try {
+      const data = await appService.getLeaveRequests(employeeId);
+      setRequests(data);
+      await fetchEmployees();
+      return data;
+    } catch (error) {
+      console.error('Failed to fetch leave requests:', error);
+      return [];
+    }
+  };
+
+  const currentClientName = impersonatedClient?.name || auth.user?.client_name || auth.user?.clientName || null;
+  const currentClientId = impersonatedClient?.id || auth.user?.client_id || null;
+  const currentClientNotifications = React.useMemo(() => {
+    if (!currentClientName) {
+      return notifications;
+    }
+    return notifications.filter((n) => n.clientName === currentClientName);
+  }, [notifications, currentClientName]);
+
+  const currentClientTickets = React.useMemo(() => {
+    if (!currentClientId && !currentClientName) {
+      return clientTickets;
+    }
+    return clientTickets.filter((ticket) => {
+      if (currentClientId && ticket.client_id === currentClientId) return true;
+      if (currentClientName && ticket.client_name === currentClientName) return true;
+      return false;
+    });
+  }, [clientTickets, currentClientId, currentClientName]);
+
+  const currentClientPendingPayrollCount = React.useMemo(
+    () => currentClientNotifications.filter((n) => n.status === 'pending').length,
+    [currentClientNotifications]
+  );
+
+  const currentClientOpenTicketCount = React.useMemo(
+    () => currentClientTickets.filter((ticket) => ticket.status === 'open' || ticket.status === 'in_progress').length,
+    [currentClientTickets]
+  );
+
+  const fetchPayrollSubmissions = async () => {
+    try {
+      const data = await appService.getPayrollSubmissions();
+      setNotifications(data);
+      return data;
+    } catch (error) {
+      console.error('Failed to fetch payroll submissions:', error);
+      return [];
+    }
+  };
+
+  const fetchSupportTickets = async () => {
+    try {
+      const data = await appService.getSupportTickets();
+      setClientTickets(data);
+      return data;
+    } catch (error) {
+      console.error('Failed to fetch support tickets:', error);
+      return [];
+    }
+  };
+
+  const checkAuth = async () => {
+    try {
+      const user = await appService.getAuthUser();
+      const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
+      setAuth({ user: normalizedUser, loading: false });
+      if ((normalizeUserRole(normalizedUser.role) || '').toLowerCase() === 'superadmin') {
+        setImpersonatedClient(null);
+        setActiveSection('internal');
+      }
+      setLockedFeatures(normalizedUser.lockedFeatures || []);
+      setEnabledDefinitions(normalizedUser.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+      setRosterStartDay(normalizedUser.roster_start_day ?? 1);
+      setRosterDuration(normalizedUser.roster_duration || '1_week');
+      const apiRosterMode = normalizedUser.rosterMode || normalizedUser.roster_mode || 'Manual';
+      const apiRosterSeed = normalizedUser.rosterSeedWeekStart || normalizedUser.roster_seed_week_start || null;
+      let localRosterMode = apiRosterMode;
+      let localRosterSeed = apiRosterSeed;
+      try {
+        const key = getRosterPrefsStorageKey(normalizedUser.client_id || null);
+        const saved = JSON.parse(localStorage.getItem(key) || 'null');
+        if (saved?.rosterMode) localRosterMode = saved.rosterMode;
+        if (Object.prototype.hasOwnProperty.call(saved || {}, 'rosterSeedWeekStart')) localRosterSeed = saved.rosterSeedWeekStart;
+      } catch {}
+      setRosterMode(localRosterMode);
+      setRosterSeedWeekStart(localRosterSeed);
+      setCurrentWeekStart(getAlignedRosterStart(new Date(), normalizedUser.roster_start_day ?? 1));
+    } catch (err) {
+      setAuth({ user: null, loading: false });
+    }
+
+    try {
+      const employee = await appService.getEmployeeSession();
+      setEmployeeAuth({ employee, loading: false });
+    } catch (err) {
+      clearEmployeeAuth();
+    }
+  };
+
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  useEffect(() => {
+    setDobDisplay(editingEmployee?.dob ? toDateInputValue(String(editingEmployee.dob)) : '');
+    setPassportDisplay(editingEmployee?.passport || '');
+    setShowCountryOfIssue(Boolean(editingEmployee?.passport));
+    setCountryOfIssueInput(editingEmployee?.country_of_issue || '');
+    setBankNameInput(editingEmployee?.bank_name || '');
+    setIsCountryOfIssueFocused(false);
+    setIsBankNameFocused(false);
+    setPayRateDisplay(editingEmployee?.pay_rate != null ? formatStoredHourlyRate(editingEmployee.pay_rate) : 'R000.0000');
+    setAnnualLeaveDisplay(editingEmployee?.annual_leave != null ? formatLeaveInput(String(editingEmployee.annual_leave)) : '00.0000');
+    setSickLeaveDisplay(editingEmployee?.sick_leave != null ? formatLeaveInput(String(editingEmployee.sick_leave)) : '00.0000');
+    setFamilyLeaveDisplay(editingEmployee?.family_leave != null ? formatLeaveInput(String(editingEmployee.family_leave)) : '00.0000');
+  }, [editingEmployee]);
+
+  useEffect(() => {
+    try {
+      if (impersonatedClient?.id) {
+        localStorage.setItem('sightfull:active-client-id', impersonatedClient.id);
+      } else if ((auth.user?.role || '').toLowerCase() !== 'superadmin') {
+        localStorage.removeItem('sightfull:active-client-id');
+      }
+    } catch {}
+  }, [impersonatedClient?.id, auth.user?.role]);
+
+
+  useEffect(() => {
+    if (isEmployeeRoute) {
+      if (employeeAuth.employee) {
+        void fetchLeaveRequests(employeeAuth.employee.id);
+      }
+      return;
+    }
+
+    if (auth.user) {
+      void fetchLeaveRequests();
+    }
+  }, [auth.user, employeeAuth.employee, isEmployeeRoute]);
+
+  useEffect(() => {
+    if (!isEmployeeRoute && auth.user) {
+      void fetchPayrollSubmissions();
+      void fetchSupportTickets();
+      return;
+    }
+
+    if (!auth.user) {
+      setNotifications([]);
+      setClientTickets([]);
+    }
+  }, [auth.user, isEmployeeRoute]);
+
+  const handleLogin = async (email: string, password: string) => {
+    try {
+      const user = await appService.login(email, password);
+      const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
+      setAuth({ user: normalizedUser, loading: false });
+      if (!isSuperAdminRole(normalizedUser.role)) {
+        setImpersonatedClient(null);
+        try { localStorage.removeItem('sightfull:active-client-id'); } catch {}
+      }
+      setLockedFeatures(normalizedUser.lockedFeatures || []);
+      setEnabledDefinitions(normalizedUser.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+      setRosterStartDay(normalizedUser.roster_start_day ?? 1);
+      setRosterDuration(normalizedUser.roster_duration || '1_week');
+      const apiRosterMode = normalizedUser.rosterMode || normalizedUser.roster_mode || 'Manual';
+      const apiRosterSeed = normalizedUser.rosterSeedWeekStart || normalizedUser.roster_seed_week_start || null;
+      let localRosterMode = apiRosterMode;
+      let localRosterSeed = apiRosterSeed;
+      try {
+        const key = getRosterPrefsStorageKey(normalizedUser.client_id || null);
+        const saved = JSON.parse(localStorage.getItem(key) || 'null');
+        if (saved?.rosterMode) localRosterMode = saved.rosterMode;
+        if (Object.prototype.hasOwnProperty.call(saved || {}, 'rosterSeedWeekStart')) localRosterSeed = saved.rosterSeedWeekStart;
+      } catch {}
+      setRosterMode(localRosterMode);
+      setRosterSeedWeekStart(localRosterSeed);
+      setCurrentWeekStart(getAlignedRosterStart(new Date(), normalizedUser.roster_start_day ?? 1));
+      toast.success('Welcome back!');
+    } catch (err) {
+      if (err instanceof ApiError) {
+        toast.error(err.message || 'Login failed');
+      } else {
+        toast.error('An error occurred during login');
+      }
+      throw err;
+    }
+  };
+
+  const activeEmployees = useMemo(() => employees.filter(e => e.status !== 'offboarded'), [employees]);
+
+  const handleOpenLeaveEmployeeProfile = useCallback((employeeName: string) => {
+    const normalizedTarget = String(employeeName || '').trim().toLowerCase();
+    if (!normalizedTarget) {
+      setLeaveManagementEmployeeId(null);
+      setActiveSection('leave');
+      return;
+    }
+
+    const matchedEmployee = activeEmployees.find((employee) => {
+      const fullName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim().toLowerCase();
+      const invertedName = `${employee.last_name || ''} ${employee.first_name || ''}`.trim().toLowerCase();
+      return fullName === normalizedTarget || invertedName === normalizedTarget;
+    }) || null;
+
+    setLeaveManagementEmployeeId(matchedEmployee ? String(matchedEmployee.id) : null);
+    setActiveSection('leave');
+  }, [activeEmployees]);
+
+  const getVisibleClientId = () => {
+    if (isSuperAdminRole(auth.user?.role)) {
+      return impersonatedClient?.id || null;
+    }
+    return auth.user?.client_id || null;
+  };
+
+  useEffect(() => {
+    const clientName = String(impersonatedClient?.name || auth.user?.client_name || auth.user?.clientName || '').trim();
+    document.title = clientName ? `${clientName} - Sightfull Dashboard` : 'Sightfull Dashboard';
+  }, [impersonatedClient?.name, auth.user?.client_name, auth.user?.clientName]);
+
+
+  const getRosterPrefsStorageKey = (clientId?: string | null) => `sightfull:roster-prefs:${clientId || 'default'}`;
+  const getActiveClientScopeHeaders = () => {
+    try {
+      const activeClientId = localStorage.getItem('sightfull:active-client-id');
+      return activeClientId ? { 'x-active-client-id': activeClientId } : {};
+    } catch {
+      return {};
+    }
+  };
+
+
+  const persistRosterPreferences = async (nextMode: 'Automated' | 'Hybrid' | 'Manual', nextSeedWeekStart: string | null) => {
+    const clientId = getVisibleClientId();
+    try {
+      if (clientId) {
+        localStorage.setItem(getRosterPrefsStorageKey(clientId), JSON.stringify({ rosterMode: nextMode, rosterSeedWeekStart: nextSeedWeekStart }));
+      }
+    } catch {}
+    if (!clientId) return;
+    try {
+      await fetch('/api/client/roster-preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getActiveClientScopeHeaders() },
+        body: JSON.stringify({ rosterMode: nextMode, rosterSeedWeekStart: nextSeedWeekStart }),
+      });
+    } catch (error) {
+      console.error('Failed to persist roster preferences:', error);
+    }
+  };
+
+  const sanitizeString = (value: FormDataEntryValue | null) => String(value ?? '').trim();
+  const titleCase = (value: string) => value
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+  const normalizeDigits = (value: string) => value.replace(/\D/g, '');
+  const normalizeTextInput = (value: string) => value.replace(/\d/g, '');
+  const normalizeNumericInput = (value: string) => value.replace(/\D/g, '');
+  const handleTextOnlyInput = (event: React.FormEvent<HTMLInputElement>) => {
+    const target = event.currentTarget;
+    const nextValue = normalizeTextInput(target.value);
+    if (target.value !== nextValue) target.value = nextValue;
+  };
+  const handleNumberOnlyInput = (event: React.FormEvent<HTMLInputElement>) => {
+    const target = event.currentTarget;
+    const nextValue = normalizeNumericInput(target.value);
+    if (target.value !== nextValue) target.value = nextValue;
+  };
+  const normalizeFlexibleDateInput = (value: string) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const match = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2}|\d{4})$/);
+    if (!match) return raw;
+    const [, d, m, y] = match;
+    const yy = Number(y);
+    const fullYear = y.length === 4 ? yy : (yy <= Number(new Date().getFullYear().toString().slice(-2)) ? 2000 + yy : 1900 + yy);
+    return `${String(fullYear).padStart(4,'0')}-${String(Number(m)).padStart(2,'0')}-${String(Number(d)).padStart(2,'0')}`;
+  };
+  const isValidDateInput = (value: string) => {
+    const normalized = normalizeFlexibleDateInput(value);
+    return /^\d{4}-\d{2}-\d{2}$/.test(normalized) && !Number.isNaN(new Date(`${normalized}T00:00:00`).getTime());
+  };
+  const calculateAge = (dateOfBirth: string) => {
+    const today = new Date();
+    const dob = new Date(`${dateOfBirth}T00:00:00`);
+    let age = today.getFullYear() - dob.getFullYear();
+    const monthDiff = today.getMonth() - dob.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+      age -= 1;
+    }
+    return age;
+  };
+  const luhnChecksum = (digits: string) => {
+    let sum = 0;
+    let doubleDigit = false;
+    for (let index = digits.length - 1; index >= 0; index -= 1) {
+      let digit = Number(digits[index]);
+      if (doubleDigit) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+      doubleDigit = !doubleDigit;
+    }
+    return sum % 10 === 0;
+  };
+  const isValidSouthAfricanId = (value: string) => {
+    const digits = normalizeDigits(value);
+    if (!/^\d{13}$/.test(digits)) return false;
+    const yy = Number(digits.slice(0, 2));
+    const mm = Number(digits.slice(2, 4));
+    const dd = Number(digits.slice(4, 6));
+    const currentYearTwoDigits = Number(new Date().getFullYear().toString().slice(-2));
+    const fullYear = yy <= currentYearTwoDigits ? 2000 + yy : 1900 + yy;
+    const candidate = new Date(Date.UTC(fullYear, mm - 1, dd));
+    const validDate = candidate.getUTCFullYear() == fullYear && candidate.getUTCMonth() === mm - 1 && candidate.getUTCDate() === dd;
+    if (!validDate) return false;
+    return luhnChecksum(digits);
+  };
+
+
+  const getDobDisplayFromSouthAfricanId = (value: string) => {
+    const digits = normalizeDigits(value);
+    if (!isValidSouthAfricanId(digits)) return '';
+    const yy = Number(digits.slice(0, 2));
+    const mm = digits.slice(2, 4);
+    const dd = digits.slice(4, 6);
+    const currentYY = Number(new Date().getFullYear().toString().slice(-2));
+    const fullYear = yy <= currentYY ? 2000 + yy : 1900 + yy;
+    return `${fullYear}-${mm}-${dd}`;
+  };
+
+
+  const toDateInputValue = (value?: string | null) => {
+    const normalized = normalizeFlexibleDateInput(String(value || '').replace(/\//g, '-'));
+    return normalized || '';
+  };
+
+  const normalizeImportedDateValue = (value: unknown) => {
+    if (value === null || value === undefined || value === '') return '';
+
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return value.toISOString().slice(0, 10);
+    }
+
+    const raw = String(value).trim();
+    if (!raw) return '';
+
+    if (/^\d{5}(?:\.\d+)?$/.test(raw)) {
+      const serial = Number(raw);
+      if (!Number.isNaN(serial)) {
+        const utcDays = Math.floor(serial - 25569);
+        const utcValue = utcDays * 86400;
+        return new Date(utcValue * 1000).toISOString().slice(0, 10);
+      }
+    }
+
+    return normalizeFlexibleDateInput(raw.replace(/\//g, '-'));
+  };
+
+  const buildEmployeePayload = (formData: FormData) => ({
+    emp_id: sanitizeString(formData.get('emp_id')),
+    pin: editingEmployee?.pin || sanitizeString(formData.get('pin')),
+    allow_blank_pin: true,
+    first_name: sanitizeString(formData.get('first_name')),
+    last_name: sanitizeString(formData.get('last_name')),
+    start_date: normalizeFlexibleDateInput(sanitizeString(formData.get('start_date'))),
+    dob: normalizeFlexibleDateInput((dobDisplay || sanitizeString(formData.get('dob'))).replace(/\//g, '-')),
+    job_title: sanitizeString(formData.get('job_title')),
+    department: sanitizeString(formData.get('department')),
+    pay_rate: parseHourlyRateInputToNumber(sanitizeString(formData.get('pay_rate'))),
+    email: sanitizeString(formData.get('email')),
+    cell: normalizeSouthAfricanCell(sanitizeString(formData.get('cell'))),
+    residency: sanitizeString(formData.get('residency')),
+    street_number: sanitizeString(formData.get('street_number')),
+    id_number: sanitizeString(formData.get('id_number')),
+    passport: sanitizeString(formData.get('passport')),
+    bank_name: sanitizeString(formData.get('bank_name')),
+    country_of_issue: showCountryOfIssue ? sanitizeString(formData.get('country_of_issue')) : '',
+    province: sanitizeString(formData.get('province')),
+    account_holder: sanitizeString(formData.get('account_holder')),
+    account_no: sanitizeString(formData.get('account_no')),
+    account_type: sanitizeString(formData.get('account_type')),
+    tax_number: sanitizeString(formData.get('tax_number')),
+    ismibco: sanitizeString(formData.get('ismibco')),
+    isunion: sanitizeString(formData.get('isunion')),
+    union_name: sanitizeString(formData.get('union_name')),
+    address1: sanitizeString(formData.get('address1')),
+    address2: sanitizeString(formData.get('address2')),
+    address3: sanitizeString(formData.get('address3')),
+    address4: sanitizeString(formData.get('address4')),
+    postal_code: sanitizeString(formData.get('postal_code')),
+    paye_credit: sanitizeString(formData.get('paye_credit')),
+    classification: sanitizeString(formData.get('classification')),
+    annual_leave: parseLeaveInputToNumber(annualLeaveDisplay || sanitizeString(formData.get('annual_leave'))),
+    sick_leave: parseLeaveInputToNumber(sickLeaveDisplay || sanitizeString(formData.get('sick_leave'))),
+    family_leave: parseLeaveInputToNumber(familyLeaveDisplay || sanitizeString(formData.get('family_leave'))),
+  });
+
+  const validateEmployeeFormPayload = (employeeData: ReturnType<typeof buildEmployeePayload>, options?: { allowBlankPin?: boolean }) => {
+    employeeData.emp_id = employeeData.emp_id.toUpperCase();
+    employeeData.email = employeeData.email.toLowerCase();
+    employeeData.first_name = titleCase(employeeData.first_name);
+    employeeData.last_name = titleCase(employeeData.last_name);
+    employeeData.job_title = titleCase(employeeData.job_title);
+    employeeData.department = titleCase(employeeData.department);
+    employeeData.passport = employeeData.passport.toUpperCase();
+    employeeData.id_number = normalizeDigits(employeeData.id_number);
+    employeeData.tax_number = normalizeDigits(employeeData.tax_number);
+    employeeData.postal_code = normalizeDigits(employeeData.postal_code);
+    employeeData.account_no = normalizeDigits(employeeData.account_no);
+    employeeData.start_date = normalizeFlexibleDateInput(employeeData.start_date);
+    employeeData.dob = normalizeFlexibleDateInput(employeeData.dob);
+    employeeData.street_number = employeeData.street_number.replace(/\s+/g, ' ').trim();
+    employeeData.paye_credit = employeeData.paye_credit.replace(/[^\d.\-]/g, '');
+    employeeData.cell = employeeData.cell.replace(/[^\d+]/g, '');
+
+    if (!employeeData.first_name || !employeeData.last_name || !employeeData.start_date || !employeeData.pay_rate || !(employeeData.id_number || employeeData.passport)) return 'Please complete all required employee fields.';
+
+    if (employeeData.first_name && /\d/.test(employeeData.first_name)) {
+      return 'First name cannot contain numbers.';
+    }
+
+    if (employeeData.last_name && /\d/.test(employeeData.last_name)) {
+      return 'Last name cannot contain numbers.';
+    }
+
+    if (employeeData.job_title && /\d/.test(employeeData.job_title)) {
+      return 'Job title cannot contain numbers.';
+    }
+
+    if (employeeData.department && /\d/.test(employeeData.department)) {
+      return 'Department cannot contain numbers.';
+    }
+
+    if (employeeData.bank_name && /\d/.test(employeeData.bank_name)) {
+      return 'Bank name cannot contain numbers.';
+    }
+
+    if (employeeData.account_holder && /\d/.test(employeeData.account_holder)) {
+      return 'Account holder cannot contain numbers.';
+    }
+
+    const addressLinePattern = /^[A-Za-z0-9\s'\-.,/#]+$/;
+
+    if (employeeData.address1 && !addressLinePattern.test(employeeData.address1)) {
+      return 'Address Line 1 contains invalid characters.';
+    }
+
+    if (employeeData.address2 && !addressLinePattern.test(employeeData.address2)) {
+      return 'Address Line 2 contains invalid characters.';
+    }
+
+    if (employeeData.address3 && !addressLinePattern.test(employeeData.address3)) {
+      return 'Address Line 3 contains invalid characters.';
+    }
+
+    if (employeeData.street_number && !addressLinePattern.test(employeeData.street_number)) {
+      return 'Street Number contains invalid characters.';
+    }
+
+    if (!/^[A-Z0-9_-]{3,20}$/.test(employeeData.emp_id)) {
+      return 'Employee ID must be 3 to 20 characters and can only contain letters, numbers, hyphens, and underscores.';
+    }
+
+    if (employeeData.pin && !/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(employeeData.pin)) {
+      return 'Portal PIN must be at least 8 characters and include uppercase, lowercase, a number, and a special character.';
+    }
+
+    if (!/^[A-Za-z .'-]{2,50}$/.test(employeeData.first_name)) {
+      return 'Please enter a valid first name.';
+    }
+
+    if (!/^[A-Za-z .'-]{2,50}$/.test(employeeData.last_name)) {
+      return 'Please enter a valid last name.';
+    }
+
+    if (employeeData.id_number && !isValidSouthAfricanId(employeeData.id_number)) return 'Please enter a valid South African ID number.';
+    if (employeeData.id_number && isValidSouthAfricanId(employeeData.id_number)) {
+      employeeData.dob = getDobDisplayFromSouthAfricanId(employeeData.id_number);
+    }
+
+    if (!isValidDateInput(employeeData.dob) || !isValidDateInput(employeeData.start_date)) {
+      return 'Please enter valid date values for date of birth and start date.';
+    }
+
+
+    const dobDate = new Date(`${employeeData.dob}T00:00:00`);
+    const startDate = new Date(`${employeeData.start_date}T00:00:00`);
+    const now = new Date();
+    if (dobDate > now) {
+      return 'Date of birth cannot be in the future.';
+    }
+
+    if (calculateAge(employeeData.dob) < 16) {
+      return 'Employee must be at least 16 years old.';
+    }
+
+    if (startDate < dobDate) {
+      return 'Start date cannot be before date of birth.';
+    }
+
+    if (employeeData.passport && !/^[A-Z0-9]{6,20}$/.test(employeeData.passport)) return 'Passport number must be 6 to 20 letters or numbers.';
+    if (!employeeData.id_number && employeeData.passport && !employeeData.country_of_issue) return 'Country of issue is required when passport is used.';
+    if (!employeeData.id_number && employeeData.passport && !employeeData.dob) return 'Date of birth is required when passport is used.';
+
+    if (employeeData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employeeData.email)) {
+      return 'Please enter a valid employee email address.';
+    }
+
+    if (employeeData.cell) {
+      const digits = normalizeDigits(employeeData.cell);
+      if (!/^27\d{9}$/.test(digits)) {
+        return 'Please enter a valid South African cellphone number.';
+      }
+    }
+
+    if (!Number.isFinite(employeeData.pay_rate) || employeeData.pay_rate <= 0) return 'Hourly rate must be greater than 0.';
+    if (String(employeeData.pay_rate).includes('.') && String(employeeData.pay_rate).split('.')[1].length > 4) return 'Hourly rate can have up to 4 decimal places.';
+
+    if (employeeData.tax_number && !/^\d{10}$/.test(employeeData.tax_number)) {
+      return 'Tax number must be 10 digits.';
+    }
+
+    if (employeeData.postal_code && !/^\d{4}$/.test(employeeData.postal_code)) {
+      return 'Postal code must be 4 digits.';
+    }
+
+    if (employeeData.account_no && !/^\d{6,20}$/.test(employeeData.account_no)) {
+      return 'Account number must be 6 to 20 digits.';
+    }
+
+    const hasBankingData = Boolean(employeeData.bank_name || employeeData.account_no || employeeData.account_type);
+    if (hasBankingData && !(employeeData.bank_name && employeeData.account_no && employeeData.account_type)) return 'Please complete all banking fields when capturing bank details.';
+
+    if (employeeData.account_type && !['savings', 'cheque', 'current', 'transmission', 'bond'].includes(employeeData.account_type)) {
+      return 'Please select a valid account type.';
+    }
+
+    if (employeeData.isunion === 'yes' && !employeeData.union_name) {
+      return 'Please select a union when union membership is set to Yes.';
+    }
+
+    if (employeeData.isunion !== 'yes') {
+      employeeData.union_name = '';
+    }
+
+    for (const [label, value] of [['Annual leave', employeeData.annual_leave], ['Sick leave', employeeData.sick_leave], ['Family leave', employeeData.family_leave]] as const) {
+      if (!Number.isFinite(value) || value < 0) return `${label} must be 0 or more.`;
+      if (String(value).includes('.') && String(value).split('.')[1].length > 4) return `${label} can have up to 4 decimal places.`;
+    }
+
+    return null;
+  };
+
+  const ADMINISTRATIVE_SHIFT_LABELS = ['absent', 'annual leave', 'sick leave', 'family leave', 'unshifted'];
+  const rosterTitle = rosterDuration === '2_weeks' ? 'Fortnightly Roster' : rosterDuration === '1_month' ? 'Monthly Roster' : 'Weekly Roster';
+
+  const isAdministrativeShiftLabel = (label: string) => ADMINISTRATIVE_SHIFT_LABELS.includes(String(label || '').trim().toLowerCase());
+
+  const getShiftWindowMinutes = (start: string, end: string) => {
+    if (!start || !end) return 0;
+    const [startHour, startMinute] = start.split(':').map(Number);
+    const [endHour, endMinute] = end.split(':').map(Number);
+    if ([startHour, startMinute, endHour, endMinute].some((value) => Number.isNaN(value))) return 0;
+
+    let startTotal = startHour * 60 + startMinute;
+    let endTotal = endHour * 60 + endMinute;
+    if (endTotal <= startTotal) endTotal += 24 * 60;
+    return Math.max(0, endTotal - startTotal);
+  };
+
+  const buildShiftPayload = (formData: FormData, shiftId?: string) => {
+    const label = sanitizeString(formData.get('label'));
+    const isAdministrative = isAdministrativeShiftLabel(label);
+    return {
+      id: shiftId || Math.random().toString(36).substr(2, 9),
+      label,
+      start: isAdministrative ? '' : sanitizeString(formData.get('start')),
+      end: isAdministrative ? '' : sanitizeString(formData.get('end')),
+      lunch: isAdministrative ? 0 : (Number(sanitizeString(formData.get('lunch'))) || 0),
+    };
+  };
+
+  const validateShiftFormPayload = (shiftData: ReturnType<typeof buildShiftPayload>) => {
+    if (!shiftData.label) {
+      return 'Please complete all required shift fields.';
+    }
+
+    const isAdministrative = isAdministrativeShiftLabel(shiftData.label);
+    if (!isAdministrative && (!shiftData.start || !shiftData.end)) {
+      return 'Please complete all required shift fields.';
+    }
+
+    if (!Number.isInteger(shiftData.lunch) || shiftData.lunch < 0) {
+      return 'Lunch must be 0 or more minutes.';
+    }
+
+    const shiftWindowMinutes = getShiftWindowMinutes(shiftData.start, shiftData.end);
+    if (!isAdministrative && shiftWindowMinutes > 0 && shiftData.lunch > shiftWindowMinutes) {
+      return 'Lunch break cannot exceed the shift time window.';
+    }
+
+    return null;
+  };
+
+
+  const handleLogout = async () => {
+    try {
+      if (isEmployeeRoute) {
+        await appService.logoutEmployee();
+        clearEmployeeAuth();
+        setEmployeeSection('dashboard');
+        toast.success('Signed out successfully');
+        return;
+      }
+
+      await appService.logout();
+      setAuth({ user: null, loading: false });
+      clearEmployeeAuth();
+      setImpersonatedClient(null);
+      setLockedFeatures([]);
+      setEnabledDefinitions(['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+      setRosterStartDay(1);
+      setRosterDuration('1_week');
+      setEmployees([]);
+      setRoster([]);
+      setRosterMeta([]);
+      setRequests([]);
+      toast.success('Signed out successfully');
+    } catch (error) {
+      console.error('Logout failed:', error);
+      toast.error('Failed to sign out');
+    }
+  };
+
+  const handleProcessNotification = async (id: string) => {
+    try {
+      const updated = await appService.updatePayrollSubmissionStatus(id, 'processed');
+      setNotifications(prev => prev.map(n => n.id === id ? updated : n));
+      toast.success('Payroll submission marked as processed');
+    } catch (error) {
+      console.error('Failed to process payroll submission:', error);
+      toast.error(error instanceof ApiError ? error.message : 'Failed to update payroll submission');
+    }
+  };
+
+  const handleRevertNotification = async (id: string) => {
+    try {
+      const updated = await appService.updatePayrollSubmissionStatus(id, 'pending');
+      setNotifications(prev => prev.map(n => n.id === id ? updated : n));
+      toast.success('Payroll submission reverted to pending');
+    } catch (error) {
+      console.error('Failed to revert payroll submission:', error);
+      toast.error(error instanceof ApiError ? error.message : 'Failed to update payroll submission');
+    }
+  };
+
+  // --- Handlers ---
+
+  const handleSaveEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const employeeData = buildEmployeePayload(formData) as ReturnType<typeof buildEmployeePayload> & { allow_blank_pin?: boolean };
+    employeeData.allow_blank_pin = true;
+    if (!editingEmployee && !isSuperAdminRole(auth.user?.role)) {
+      employeeData.emp_id = autoGeneratedEmployeeId || generateAutoEmployeeId(employees);
+    }
+    const validationError = validateEmployeeFormPayload(employeeData);
+
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
+
+    try {
+      if (editingEmployee) {
+        await appService.saveEmployee(employeeData, editingEmployee.id);
+      } else {
+        await appService.saveEmployee(employeeData);
+      }
+
+      await fetchEmployees();
+      setIsEmployeeModalOpen(false);
+      setEditingEmployee(null);
+      setAutoGeneratedEmployeeId('');
+      setPayRateDisplay('R000.0000');
+      setBankNameInput('');
+      setCellLocalDigits('');
+      toast.success(`Employee ${editingEmployee ? 'updated' : 'added'} successfully`);
+    } catch (error) {
+      console.error('Employee save failed (validation/backend):', error);
+      if (error instanceof ApiError) {
+        toast.error(error.message || 'Failed to save employee');
+      } else {
+        toast.error(`An error occurred while saving: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  };
+
+  const handleImportEmployees = async (data: any[]) => {
+    if (!isSuperAdminRole(auth.user?.role)) {
+      toast.error('Only Super Admin can import employee spreadsheet files');
+      return;
+    }
+
+    const activeClientId = getVisibleClientId();
+    if (!activeClientId) {
+      toast.error('Select a client dashboard before importing employees');
+      return;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+    const failures: string[] = [];
+    const toastId = toast.loading('Importing employees...');
+
+    for (const row of data) {
+      const employeeData = {
+        emp_id: String(row.emp_id || row['Employee ID'] || '').trim(),
+        first_name: String(row.first_name || row['First Name'] || '').trim(),
+        last_name: String(row.last_name || row['Last Name'] || '').trim(),
+        email: String(row.email || row['Email'] || '').trim(),
+        cell: String(row.cell || row['Cell'] || '').trim(),
+        department: String(row.department || row['Department'] || 'Unassigned').trim(),
+        job_title: String(row.job_title || row['Job Title'] || 'Unassigned').trim(),
+        pay_rate: parseFloat(row.pay_rate || row['Pay Rate'] || '0') || 0,
+        start_date: normalizeImportedDateValue(row.start_date || row['Start Date'] || new Date()),
+        dob: normalizeImportedDateValue(row.dob || row['Date of Birth'] || ''),
+        id_number: String(row.id_number || row['ID Number'] || '').trim(),
+        passport: String(row.passport || row['Passport'] || '').trim(),
+        country_of_issue: String(row.country_of_issue || row['Country Of Issue'] || row['Country of Issue'] || '').trim(),
+        province: String(row.province || row['Province'] || '').trim(),
+        portal_enabled: String(row.portal_enabled || row['Employee Portal'] || 'no').trim().toLowerCase() === 'yes' ? 'yes' : 'no',
+        bank_name: String(row.bank_name || row['Bank Name'] || '').trim(),
+        account_no: String(row.account_no || row['Account Number'] || '').trim(),
+        account_holder: String(row.account_holder || row['Account Holder'] || '').trim(),
+        account_type: String(row.account_type || row['Account Type'] || '').trim(),
+        tax_number: String(row.tax_number || row['Tax Number'] || '').trim(),
+        paye_credit: String(row.paye_credit || row['PAYE Credit'] || '').trim(),
+        classification: String(row.classification || row['Classification'] || '').trim(),
+        residency: String(row.residency || row['Residency'] || '').trim(),
+        street_number: String(row.street_number || row['Street Number'] || '').trim(),
+        address1: String(row.address1 || row['Address Line 1'] || '').trim(),
+        address2: String(row.address2 || row['Address Line 2'] || '').trim(),
+        address3: String(row.address3 || row['Address Line 3'] || '').trim(),
+        address4: String(row.address4 || row['Address Line 4'] || '').trim(),
+        postal_code: String(row.postal_code || row['Postal Code'] || '').trim(),
+        ismibco: String(row.ismibco || row['MIBCO'] || '').trim().toLowerCase() === 'yes' ? 'yes' : 'no',
+        isunion: String(row.isunion || row['Union'] || '').trim().toLowerCase() === 'yes' ? 'yes' : 'no',
+        union_name: String(row.union_name || row['Union Name'] || '').trim(),
+        annual_leave: parseFloat(row.annual_leave || row['Annual Leave'] || '0') || 0,
+        sick_leave: parseFloat(row.sick_leave || row['Sick Leave'] || '0') || 0,
+        family_leave: parseFloat(row.family_leave || row['Family Leave'] || '0') || 0,
+        pin: String(row.pin || row['PIN'] || row['Pin'] || '').trim(),
+        allow_blank_pin: true,
+      };
+
+      if (!employeeData.dob && employeeData.id_number && isValidSouthAfricanId(employeeData.id_number)) {
+        employeeData.dob = getDobDisplayFromSouthAfricanId(employeeData.id_number);
+      }
+
+      const validationError = validateEmployeeFormPayload(employeeData as ReturnType<typeof buildEmployeePayload>, { allowBlankPin: true });
+      if (validationError) {
+        failCount++;
+        failures.push(`${employeeData.first_name || employeeData.emp_id || 'Row'}: ${validationError}`);
+        continue;
+      }
+
+      try {
+        await appService.saveEmployee(employeeData);
+        successCount++;
+      } catch (error) {
+        console.error('Error importing row:', error);
+        failCount++;
+        failures.push(`${employeeData.first_name || employeeData.emp_id || 'Row'}: ${error instanceof ApiError ? error.message : 'Unknown error'}`);
+      }
+    }
+
+    await fetchEmployees();
+    toast.dismiss(toastId);
+    if (successCount > 0) toast.success(`Successfully imported ${successCount} employees`);
+    if (failCount > 0) toast.error(`Failed to import ${failCount} rows`, { description: failures.slice(0, 3).join(' | ') });
+  };
+
+  const handleDeleteEmployee = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this employee? If payroll history exists, the employee will be offboarded instead of fully deleted.')) return;
+
+    try {
+      const result = await appService.deleteEmployee(id) as { offboarded?: boolean; deleted?: boolean; reason?: string } | undefined;
+      await fetchEmployees();
+      await fetchRoster();
+      await fetchRosterMeta();
+      if (result?.offboarded) {
+        toast.success(`Employee was offboarded instead of deleted${result.reason ? ` (${result.reason})` : ''}`);
+      } else {
+        toast.success('Employee deleted successfully');
+      }
+    } catch (error) {
+      console.error('Error deleting employee:', error);
+      if (error instanceof ApiError) {
+        toast.error(error.message || 'Failed to delete employee');
+      } else {
+        toast.error(`An error occurred during deletion: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  };
+
+  const handleSaveShift = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const shiftData = buildShiftPayload(formData, editingShift?.id);
+    const validationError = validateShiftFormPayload(shiftData);
+
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
+
+    try {
+      if (editingShift) {
+        await appService.saveShift(shiftData, editingShift.id);
+      } else {
+        await appService.saveShift(shiftData);
+      }
+
+      await fetchShifts();
+      setIsShiftModalOpen(false);
+      setEditingShift(null);
+      toast.success(`Shift ${editingShift ? 'updated' : 'added'} successfully`);
+    } catch (error) {
+      console.error('Error saving shift:', error);
+      if (error instanceof ApiError) {
+        toast.error(error.message || 'Failed to save shift');
+      } else {
+        toast.error(`An error occurred while saving shift: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  };
+
+  const handleDeleteShift = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this shift?')) return;
+    try {
+      await appService.deleteShift(id);
+      await fetchShifts();
+      toast.success('Shift deleted successfully');
+    } catch (error) {
+      console.error('Error deleting shift:', error);
+      if (error instanceof ApiError) {
+        toast.error(error.message || 'Failed to delete shift');
+      } else {
+        toast.error(`An error occurred during deletion: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  };
+
+  const handleOffboard = async (data: { 
+    reason: OffboardReason, 
+    otherReason?: string, 
+    lastWorked: string,
+    preparePayslip: boolean,
+    generateUIF: boolean
+  }) => {
+    if (!offboardingEmployee) return;
+    
+    try {
+      const res = await fetch(`/api/employees/${offboardingEmployee.id}/offboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getActiveClientScopeHeaders() },
+        body: JSON.stringify(data),
+      });
+
+      if (res.ok) {
+        await fetchEmployees();
+        setIsOffboardModalOpen(false);
+        setOffboardingEmployee(null);
+        toast.success('Employee off-boarded successfully');
+      } else {
+        const err = await res.json();
+        toast.error(`Failed to offboard employee: ${err.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error offboarding employee:', error);
+      toast.error(`An error occurred during offboarding: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleSupportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmittingSupport(true);
+
+    try {
+      await appService.createSupportTicket({
+        subject: supportSubject,
+        message: supportMessage,
+        priority: supportPriority,
+        client_id: currentClientId,
+        client_name: currentClientName,
+        user_email: auth.user?.email || 'unknown@sightfull.local',
+      });
+      setIsSupportModalOpen(false);
+      setSupportSubject('');
+      setSupportMessage('');
+      setSupportPriority('medium');
+      toast.success('Support ticket submitted successfully. Our team will get back to you soon.');
+      if (auth.user && isSuperAdminRole(auth.user.role)) {
+        await fetchSupportTickets();
+      }
+    } catch (error) {
+      console.error('Failed to submit support ticket:', error);
+      toast.error(error instanceof ApiError ? error.message : 'Failed to submit support ticket');
+    } finally {
+      setIsSubmittingSupport(false);
+    }
+  };
+
+  const getLeaveWarningMessage = (employeeName: string, shiftLabel: string, balance: number) => `Are you sure you want to assign ${shiftLabel} to ${employeeName}? ${employeeName.split(' ')[0]} currently has ${balance.toFixed(4)} leave days available. You can still continue with an admin override if needed.`;
+
+  const updateRoster = async (employeeId: string, dayDate: string, shiftId: string | null) => {
+    try {
+      const employee = employees.find(emp => emp.id === employeeId);
+      const selectedShift = shifts.find(shift => shift.id === shiftId);
+      const normalizedShiftLabel = String(selectedShift?.label || '').trim().toLowerCase();
+      const leaveTypeKey = normalizedShiftLabel === 'annual leave'
+        ? 'annual_leave'
+        : normalizedShiftLabel === 'sick leave'
+          ? 'sick_leave'
+          : normalizedShiftLabel === 'family leave'
+            ? 'family_leave'
+            : null;
+
+      if (employee && leaveTypeKey) {
+        const employeeName = `${employee.first_name} ${employee.last_name}`.trim() || employee.emp_id;
+        const balanceRaw = Number((employee as any)[leaveTypeKey] ?? 0);
+        const balance = Number.isFinite(balanceRaw) ? balanceRaw : 0;
+        const warningKey = employeeId;
+        if (balance <= 0 && !leaveOverrideWarningShownRef.current.has(warningKey)) {
+          const shouldContinue = window.confirm(
+            getLeaveWarningMessage(employeeName, selectedShift?.label || 'leave', balance)
+          );
+          if (!shouldContinue) return;
+          leaveOverrideWarningShownRef.current.add(warningKey);
+        }
+      }
+
+      const res = await fetch('/api/roster', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getActiveClientScopeHeaders() },
+        body: JSON.stringify({ employee_id: employeeId, day_date: dayDate, shift_id: shiftId, admin_override: true, allow_negative_balance: true }),
+      });
+      if (res.ok) {
+        if (!rosterSeedWeekStart) {
+          const nextSeed = format(currentWeekStart, 'yyyy-MM-dd');
+          setRosterSeedWeekStart(nextSeed);
+          void persistRosterPreferences(rosterMode, nextSeed);
+        }
+        await fetchRoster();
+        await fetchLeaveRequests();
+        await fetchEmployees();
+      } else {
+        const err = await res.json();
+        toast.error(`Failed to update roster: ${err.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error updating roster:', error);
+      toast.error(`An error occurred while updating roster: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const updateMeta = async (employeeId: string, field: keyof RosterMeta, value: string) => {
+    try {
+      const res = await fetch('/api/roster-meta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getActiveClientScopeHeaders() },
+        body: JSON.stringify({ 
+          employee_id: employeeId, 
+          week_start: format(currentWeekStart, 'yyyy-MM-dd'), 
+          field, 
+          value 
+        }),
+      });
+      if (res.ok) {
+        await fetchRosterMeta();
+      } else {
+        const err = await res.json();
+        toast.error(`Failed to update additional info: ${err.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error updating roster meta:', error);
+      toast.error(`An error occurred while updating additional info: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  // --- Renderers ---
+
+  if (auth.loading || employeeAuth.loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Loader2 className="w-12 h-12 text-indigo-600 animate-spin" />
+      </div>
+    );
+  }
+
+  if (isEmployeeRoute) {
+    if (!employeeAuth.employee) {
+      return <EmployeeLogin onLogin={async (identifier, pin) => {
+        const employee = await appService.loginEmployee(identifier, pin);
+        setEmployeeAuth({ employee, loading: false });
+        await fetchLeaveRequests(employee.id);
+        toast.success('Welcome to your portal!');
+      }} />;
+    }
+    return (
+      <div className="flex min-h-screen bg-slate-50">
+        <Toaster position="top-right" richColors />
+        <aside className="hidden lg:flex fixed left-0 top-0 bottom-0 w-72 bg-white/80 backdrop-blur-xl border-r border-white/20 p-8 flex-col z-50">
+          <div className="flex items-center gap-3 mb-12 px-2">
+            <div className="w-12 h-12 bg-emerald-600 rounded-2xl flex items-center justify-center shadow-xl shadow-emerald-200">
+              <Users className="w-7 h-7 text-white" />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-2xl font-black text-slate-800 tracking-tighter leading-none">SIGHTFULL</h1>
+              <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em] mt-1">Employee Portal</span>
+            </div>
+          </div>
+
+          <nav className="flex-1 space-y-2">
+            <SidebarItem icon={LayoutDashboard} label="Dashboard" active={employeeSection === 'dashboard'} onClick={() => setEmployeeSection('dashboard')} theme="emerald" />
+            <SidebarItem icon={Plus} label="Apply Leave" active={employeeSection === 'apply-leave'} onClick={() => setEmployeeSection('apply-leave')} theme="emerald" />
+            <SidebarItem icon={Clock} label="My Leave" active={employeeSection === 'my-leave'} onClick={() => setEmployeeSection('my-leave')} theme="emerald" />
+            <SidebarItem icon={CalendarDays} label="Calendar" active={employeeSection === 'calendar'} onClick={() => setEmployeeSection('calendar')} theme="emerald" />
+            <SidebarItem icon={Files} label="Documents" active={employeeSection === 'documents'} onClick={() => setEmployeeSection('documents')} theme="emerald" />
+            <SidebarItem icon={Users} label="Profile" active={employeeSection === 'profile'} onClick={() => setEmployeeSection('profile')} theme="emerald" />
+          </nav>
+
+          <div className="pt-8 mt-8 border-t border-slate-100">
+            <div className="bg-slate-50 rounded-[24px] p-5 mb-6 border border-slate-100 shadow-sm">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-100 flex items-center justify-center text-emerald-600 font-black text-sm shadow-sm">
+                  {employeeAuth.employee.first_name[0]}{employeeAuth.employee.last_name[0]}
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-black text-slate-800 truncate max-w-[120px]">{employeeAuth.employee.first_name}</span>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{employeeAuth.employee.job_title}</span>
+                </div>
+              </div>
+              <button 
+                onClick={handleLogout}
+                className="flex items-center gap-2 w-full text-[10px] font-black text-rose-500 hover:text-rose-600 transition-colors uppercase tracking-widest"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Sign Out
+              </button>
+            </div>
+            <p className="text-[9px] text-slate-400 font-black text-center uppercase tracking-[0.3em]">{getSidebarBrandLabel({ clientName: impersonatedClient?.name || auth.user?.client_name || auth.user?.clientName || null, client_name: auth.user?.client_name || null, isSuperAdmin: auth.user?.role === 'superadmin' })}</p>
+          </div>
+        </aside>
+
+        {/* Mobile Bottom Nav */}
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-slate-100 px-6 py-4 flex items-center justify-between z-50">
+          <button onClick={() => setEmployeeSection('dashboard')} className={cn("p-2 rounded-xl transition-all", employeeSection === 'dashboard' ? "bg-emerald-100 text-emerald-600" : "text-slate-400")}>
+            <LayoutDashboard className="w-6 h-6" />
+          </button>
+          <button onClick={() => setEmployeeSection('apply-leave')} className={cn("p-2 rounded-xl transition-all", employeeSection === 'apply-leave' ? "bg-emerald-100 text-emerald-600" : "text-slate-400")}>
+            <Plus className="w-6 h-6" />
+          </button>
+          <button onClick={() => setEmployeeSection('my-leave')} className={cn("p-2 rounded-xl transition-all", employeeSection === 'my-leave' ? "bg-emerald-100 text-emerald-600" : "text-slate-400")}>
+            <Clock className="w-6 h-6" />
+          </button>
+          <button onClick={() => setEmployeeSection('calendar')} className={cn("p-2 rounded-xl transition-all", employeeSection === 'calendar' ? "bg-emerald-100 text-emerald-600" : "text-slate-400")}>
+            <CalendarDays className="w-6 h-6" />
+          </button>
+          <button onClick={() => setEmployeeSection('profile')} className={cn("p-2 rounded-xl transition-all", employeeSection === 'profile' ? "bg-emerald-100 text-emerald-600" : "text-slate-400")}>
+            <Users className="w-6 h-6" />
+          </button>
+        </nav>
+
+        <main className="flex-1 lg:ml-72 p-6 md:p-12 overflow-y-auto pb-32 lg:pb-12">
+          <motion.div
+            key={employeeSection}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: "easeOut" }}
+            className="max-w-7xl mx-auto"
+          >
+            {employeeSection === 'dashboard' && <EmployeeDashboard employee={employeeAuth.employee} onApplyLeave={() => setEmployeeSection('apply-leave')} />}
+            {employeeSection === 'apply-leave' && <ApplyLeave employee={employeeAuth.employee} onSuccess={async () => { await fetchLeaveRequests(employeeAuth.employee.id); setEmployeeSection('my-leave'); }} onCancel={() => setEmployeeSection('dashboard')} />}
+            {employeeSection === 'my-leave' && <MyLeave employee={employeeAuth.employee} requests={requests.filter(req => req.employee_id === employeeAuth.employee.id)} onCancelRequest={async (id) => { await appService.cancelLeaveRequest(id); await fetchLeaveRequests(employeeAuth.employee.id); toast.success('Leave request cancelled'); }} />}
+            {employeeSection === 'calendar' && <EmployeeCalendar employee={employeeAuth.employee} teamLeave={requests.filter(req => req.status === 'approved')} />}
+            {employeeSection === 'documents' && <EmployeeDocuments employee={employeeAuth.employee} />}
+            {employeeSection === 'profile' && <EmployeeProfile employee={employeeAuth.employee} onLogout={handleLogout} />}
+          </motion.div>
+        </main>
+      </div>
+    );
+  }
+
+  if (!auth.user) {
+    if (isSuperAdminRoute) {
+      return <SuperAdminLogin onLogin={handleLogin} />;
+    }
+    return <Login onLogin={handleLogin} />;
+  }
+
+  if (isSuperAdminRoute && !isSuperAdminRole(auth.user.role)) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+        <div className="bg-slate-800 p-8 rounded-[32px] text-center space-y-4 max-w-md w-full border border-slate-700 shadow-2xl">
+          <ShieldCheck className="w-12 h-12 text-rose-500 mx-auto" />
+          <h2 className="text-2xl font-black text-white tracking-tight">Access Denied</h2>
+          <p className="text-slate-400 font-medium">You do not have permission to access the Super Admin Panel.</p>
+          <button 
+            onClick={() => { window.location.href = '/'; }}
+            className="mt-6 px-6 py-4 bg-indigo-500 text-white rounded-2xl font-black w-full hover:bg-indigo-600 transition-all shadow-xl shadow-indigo-500/20"
+          >
+            Return to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isSuperAdminRole(auth.user.role) && !impersonatedClient) {
+    return (
+      <div className="flex min-h-screen bg-slate-50">
+        <Toaster position="top-right" richColors />
+        <aside className="fixed left-0 top-0 bottom-0 w-72 bg-slate-900 text-white p-8 flex flex-col z-50">
+          <div className="flex items-center gap-3 mb-12 px-2">
+            <div className="w-12 h-12 flex items-center justify-center">
+              <img src={sidebarLogo} alt="Sidebar logo" className="w-full h-full object-contain" />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-2xl font-black tracking-tighter leading-none">SIGHTFULL</h1>
+              <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] mt-1">Super Admin</span>
+            </div>
+          </div>
+
+          <nav className="flex-1 space-y-2">
+            <SuperAdminSidebarItem icon={Building2} label="Client Dashboards" active={superAdminSection === 'internal'} onClick={() => setSuperAdminSection('internal')} />
+            <SuperAdminSidebarItem icon={MessageSquare} label="Support Tickets" active={superAdminSection === 'tickets'} onClick={() => setSuperAdminSection('tickets')} badge={openTicketsCount} />
+            <SuperAdminSidebarItem icon={Inbox} label="Client Notifications" active={superAdminSection === 'notifications'} onClick={() => setSuperAdminSection('notifications')} badge={superAdminPendingNotificationsCount} />
+            <SuperAdminSidebarItem icon={Users} label="User Management" active={superAdminSection === 'admin'} onClick={() => setSuperAdminSection('admin')} />
+            <SuperAdminSidebarItem icon={Activity} label="Activity Logs" active={superAdminSection === 'logs'} onClick={() => setSuperAdminSection('logs')} />
+          </nav>
+
+          <div className="pt-8 mt-8 border-t border-slate-800">
+            <div className="bg-slate-800/50 rounded-[24px] p-5 mb-6 border border-slate-700 shadow-sm">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-2xl bg-white flex items-center justify-center text-indigo-400 font-black text-sm shadow-sm overflow-hidden border border-slate-200">
+                  {auth.user.image || auth.user.fallbackImage ? (
+                    <img src={auth.user.image || auth.user.fallbackImage} alt="" className="w-full h-full object-contain bg-white p-1" />
+                  ) : (
+                    auth.user.email.substring(0, 2).toUpperCase()
+                  )}
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-black text-white truncate max-w-[120px]">{formatAccountDisplayName(auth.user)}</span>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{formatRoleLabel(auth.user.role)}</span>
+                </div>
+              </div>
+              <Tooltip content="Sign out of the Super Admin panel">
+                <button 
+                  onClick={() => {
+                    handleLogout().then(() => {
+                      window.location.href = '/admin';
+                    });
+                  }}
+                  className="flex items-center gap-2 w-full text-[10px] font-black text-rose-400 hover:text-rose-300 transition-colors uppercase tracking-widest"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Sign Out
+                </button>
+              </Tooltip>
+            </div>
+            <p className="text-[9px] text-slate-500 font-black text-center uppercase tracking-[0.3em]">{getSidebarBrandLabel({ isSuperAdmin: true, clientName: impersonatedClient?.name || null })}</p>
+          </div>
+        </aside>
+
+        <main className="flex-1 ml-72 p-12 overflow-y-auto">
+          <motion.div
+            key={superAdminSection}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: "easeOut" }}
+            className="max-w-7xl mx-auto"
+          >
+            {superAdminSection === 'internal' && <InternalPanel 
+              onLoginAsSuperAdmin={(client) => {
+                setImpersonatedClient(client);
+                setLockedFeatures(client.lockedFeatures || []);
+                setEnabledDefinitions(client.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+                setRosterStartDay(client.rosterStartDay ?? 1);
+                setRosterDuration(client.rosterDuration || '1_week');
+          setRosterMode(client.rosterMode || client.roster_mode || 'Manual');
+          setRosterSeedWeekStart(client.rosterSeedWeekStart || client.roster_seed_week_start || null);
+                setCurrentWeekStart(getAlignedRosterStart(new Date(), client.rosterStartDay ?? 1));
+                setActiveSection('analytics');
+                toast.success(`Logged in as Super Admin for ${client.name}`);
+              }} 
+            />}
+            {superAdminSection === 'tickets' && (
+              <SupportTicketsPanel 
+                tickets={clientTickets} 
+                onUpdateTicket={async (updatedTicket) => {
+                  try {
+                    const saved = await appService.updateSupportTicket(updatedTicket.id, {
+                      status: updatedTicket.status,
+                      priority: updatedTicket.priority,
+                      admin_notes: updatedTicket.admin_notes || '',
+                    });
+                    setClientTickets(prev => prev.map(t => t.id === saved.id ? saved : t));
+                    toast.success('Support ticket updated');
+                  } catch (error) {
+                    console.error('Failed to update support ticket:', error);
+                    toast.error(error instanceof ApiError ? error.message : 'Failed to update support ticket');
+                  }
+                }}
+              />
+            )}
+            {superAdminSection === 'notifications' && (
+              <ClientNotificationsPanel 
+                notifications={notifications} 
+                onProcess={handleProcessNotification}
+                onRevert={handleRevertNotification}
+              />
+            )}
+            {superAdminSection === 'admin' && <AdminPanel />}
+            {superAdminSection === 'logs' && <ActivityLogsPanel />}
+          </motion.div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-screen">
+      <Toaster position="top-right" richColors />
+      {/* Sidebar */}
+      <aside className="fixed left-0 top-0 bottom-0 w-72 bg-white/80 backdrop-blur-xl border-r border-white/20 p-8 flex flex-col z-50">
+        <div className="flex items-center gap-3 mb-12 px-2">
+          <div className="w-12 h-12 flex items-center justify-center">
+            <img src={sidebarLogo} alt="Sidebar logo" className="w-full h-full object-contain" />
+          </div>
+          <div className="flex flex-col">
+            <h1 className="text-2xl font-black text-slate-800 tracking-tighter leading-none">SIGHTFULL</h1>
+            <span className="text-[10px] font-black text-indigo-600 uppercase tracking-[0.2em] mt-1">Dashboard</span>
+          </div>
+        </div>
+
+        <nav className="flex-1 space-y-2">
+          <SidebarItem 
+            icon={LayoutDashboard} 
+            label="Analytics" 
+            active={activeSection === 'analytics'} 
+            onClick={() => setActiveSection('analytics')} 
+            isLocked={lockedFeatures.includes('analytics')}
+          />
+          <SidebarItem 
+            icon={Users} 
+            label="Employee Records" 
+            active={activeSection === 'employee-records'} 
+            onClick={() => setActiveSection('employee-records')} 
+            isLocked={lockedFeatures.includes('employee_records')}
+          />
+          <SidebarItem 
+            icon={Clock} 
+            label="Shifts" 
+            active={activeSection === 'shifts'} 
+            onClick={() => setActiveSection('shifts')} 
+          />
+          <SidebarItem 
+            icon={CalendarDays} 
+            label={rosterTitle} 
+            active={activeSection === 'roster'} 
+            onClick={() => setActiveSection('roster')} 
+            isLocked={lockedFeatures.includes('rostering')}
+          />
+          <SidebarItem 
+            icon={FileText} 
+            label="Timesheet" 
+            active={activeSection === 'timesheet'} 
+            onClick={() => setActiveSection('timesheet')} 
+            isLocked={lockedFeatures.includes('timesheets')}
+          />
+          <SidebarItem 
+            icon={History} 
+            label="Payroll Submissions" 
+            active={activeSection === 'payroll-submissions'} 
+            onClick={() => setActiveSection('payroll-submissions')} 
+            badge={currentClientPendingPayrollCount}
+          />
+          <SidebarItem 
+            icon={CalendarDays} 
+            label="Leave Management" 
+            active={activeSection === 'leave'} 
+            onClick={() => setActiveSection('leave')} 
+            badge={requests.filter(r => r.status === 'pending').length}
+            isLocked={lockedFeatures.includes('leave_management')}
+          />
+          <SidebarItem 
+            icon={Files} 
+            label="Document Vault" 
+            active={activeSection === 'files'} 
+            onClick={() => setActiveSection('files')} 
+            isLocked={lockedFeatures.includes('file_vault')}
+          />
+        </nav>
+
+        <div className="pt-8 mt-8 border-t border-slate-100">
+          {impersonatedClient ? (
+            <div className="mb-6 p-4 bg-indigo-600 rounded-[24px] text-white shadow-xl shadow-indigo-200">
+              <div className="flex items-center gap-2 mb-2">
+                <ShieldCheck className="w-4 h-4" />
+                <span className="text-[10px] font-black uppercase tracking-widest">Super Admin Mode</span>
+              </div>
+              <p className="text-xs font-bold mb-3 opacity-90">Managing {impersonatedClient.name}</p>
+              <button 
+                onClick={() => setImpersonatedClient(null)}
+                className="w-full py-2 bg-white/20 hover:bg-white/30 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+              >
+                Exit Super Admin
+              </button>
+            </div>
+          ) : (
+            <div className="bg-slate-50 rounded-[24px] p-5 mb-6 border border-slate-100 shadow-sm">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-2xl bg-white flex items-center justify-center text-indigo-600 font-black text-sm shadow-sm overflow-hidden border border-slate-200">
+                  {auth.user.image || auth.user.fallbackImage || impersonatedClient?.fallbackImage ? (
+                    <img src={auth.user.image || auth.user.fallbackImage || impersonatedClient?.fallbackImage} alt="" className="w-full h-full object-contain bg-white p-1" />
+                  ) : (
+                    auth.user.email.substring(0, 2).toUpperCase()
+                  )}
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-black text-slate-800 truncate max-w-[120px]">{formatAccountDisplayName(auth.user)}</span>
+                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">{formatRoleLabel(auth.user.role)}</span>
+                </div>
+              </div>
+              <button 
+                onClick={handleLogout}
+                className="flex items-center gap-2 w-full text-[10px] font-black text-rose-500 hover:text-rose-600 transition-colors uppercase tracking-widest"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Sign Out
+              </button>
+            </div>
+          )}
+          <p className="text-[9px] text-slate-400 font-black text-center uppercase tracking-[0.3em]">{getSidebarBrandLabel({ clientName: impersonatedClient?.name || auth.user?.client_name || auth.user?.clientName || null, client_name: auth.user?.client_name || null, isSuperAdmin: isSuperAdminRole(auth.user?.role) && !impersonatedClient })}</p>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className={cn("flex-1 ml-72 p-12 overflow-y-auto bg-transparent", (impersonatedClient || auth.user?.isTrial) && "pt-24")}>
+        {/* Super Admin Mode Banner */}
+        {impersonatedClient && (
+          <div className="fixed top-0 left-72 right-0 bg-rose-600 text-white py-3 px-10 flex items-center justify-between z-40 shadow-xl shadow-rose-900/20 backdrop-blur-md bg-rose-600/90">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center border border-white/20">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="font-black text-[10px] uppercase tracking-[0.2em] text-rose-100">Super Admin Mode</p>
+                <p className="font-black text-sm">Impersonating {impersonatedClient.name.toUpperCase()}</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setImpersonatedClient(null)}
+              className="px-6 py-2.5 bg-white text-rose-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-50 transition-all shadow-lg shadow-rose-900/10"
+            >
+              Exit Impersonation
+            </button>
+          </div>
+        )}
+
+        {/* Trial Mode Banner */}
+        {!impersonatedClient && auth.user?.isTrial && (
+          <div className="fixed top-0 left-72 right-0 bg-amber-500 text-white py-3 px-10 flex items-center justify-between z-40 shadow-xl shadow-amber-900/20 backdrop-blur-md bg-amber-500/90">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center border border-white/20">
+                <Clock className="w-6 h-6" />
+              </div>
+              <div>
+                <p className="font-black text-[10px] uppercase tracking-[0.2em] text-amber-100">Trial Mode Active</p>
+                <p className="font-black text-sm">
+                  {auth.user.trialEndDate ? (
+                    <>
+                      {Math.max(0, differenceInDays(new Date(auth.user.trialEndDate), new Date()))} Days Remaining
+                    </>
+                  ) : (
+                    'Trial Active'
+                  )}
+                </p>
+              </div>
+            </div>
+            <button 
+              className="px-6 py-2.5 bg-white text-amber-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-50 transition-all shadow-lg shadow-amber-900/10"
+            >
+              Upgrade Now
+            </button>
+          </div>
+        )}
+
+        <motion.div
+          key={activeSection}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          className="max-w-7xl mx-auto"
+        >
+          {(auth.user as any)?.trialExpired ? (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-6 mb-6">
+              <h2 className="text-2xl font-black mb-2">Trial Expired</h2>
+              <p className="font-medium">This workspace trial ended{(auth.user as any)?.trialEndDate ? ` on ${format(new Date((auth.user as any).trialEndDate), 'dd MMM yyyy')}` : ''}. Core screens remain visible for review, but protected actions may be limited until the account is reactivated.</p>
+            </div>
+          ) : null}
+          {activeSection === 'analytics' && (
+            <FeatureWrapper isLocked={lockedFeatures.includes('analytics')} featureName="Analytics">
+              <AnalyticsSection onViewLeaveEmployeeProfile={handleOpenLeaveEmployeeProfile} />
+            </FeatureWrapper>
+          )}
+          {activeSection === 'employee-records' && (
+            <FeatureWrapper isLocked={lockedFeatures.includes('employee_records')} featureName="Employee Records">
+              <EmployeeSection 
+                employees={employees} 
+                onAdd={() => { setEditingEmployee(null); setAutoGeneratedEmployeeId(isSuperAdminRole(auth.user?.role) ? '' : generateAutoEmployeeId(employees)); setGeneratedPin(''); setShowPin(false); setFormIsUnion(''); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setShowCountryOfIssue(false); setIsEmployeeModalOpen(true); }}
+                onEdit={(emp) => { setEditingEmployee(emp); setAutoGeneratedEmployeeId(emp.emp_id || ''); setGeneratedPin(emp.pin || '1234'); setShowPin(false); setFormIsUnion(emp.isunion || ''); setPayRateDisplay(formatStoredHourlyRate(emp.pay_rate)); setCellLocalDigits(phoneDigitsToLocalSa(emp.cell || '')); setCountryOfIssueInput(emp.country_of_issue || ''); setIsCountryOfIssueFocused(false); setBankNameInput(emp.bank_name || ''); setIsBankNameFocused(false); setShowCountryOfIssue(Boolean(emp.passport)); setIsEmployeeModalOpen(true); }}
+                onDelete={handleDeleteEmployee}
+                onOffboard={(emp) => { setOffboardingEmployee(emp); setIsOffboardModalOpen(true); }}
+                onImport={handleImportEmployees}
+                canImportCsv={isSuperAdminRole(auth.user?.role)}
+                fileVaultReadOnly={!isSuperAdminRole(auth.user?.role)}
+              />
+            </FeatureWrapper>
+          )}
+          {activeSection === 'shifts' && (
+            <ShiftsSection 
+              shifts={shifts}
+              onAdd={() => { setEditingShift(null); setIsShiftModalOpen(true); }}
+              onEdit={(shift) => { setEditingShift(shift); setIsShiftModalOpen(true); }}
+              onDelete={handleDeleteShift}
+              isSuperAdmin={isSuperAdminRole(auth.user?.role)}
+            />
+          )}
+          {activeSection === 'roster' && (
+            <FeatureWrapper isLocked={lockedFeatures.includes('rostering')} featureName={rosterTitle}>
+              <RosterSection 
+                rosterDuration={rosterDuration}
+                rosterMode={rosterMode}
+                rosterSeedWeekStart={rosterSeedWeekStart}
+                onRosterModeChange={(mode) => {
+                  setRosterMode(mode);
+                  void persistRosterPreferences(mode, rosterSeedWeekStart);
+                }}
+                enabledDefinitions={enabledDefinitions}
+                employees={activeEmployees} 
+                shifts={shifts} 
+                roster={roster} 
+                rosterMeta={rosterMeta}
+                currentWeekStart={currentWeekStart}
+                onWeekChange={setCurrentWeekStart}
+                onUpdateRoster={updateRoster}
+                rosterTitle={rosterTitle}
+                payrollSubmissions={currentClientNotifications}
+                onUpdateMeta={updateMeta}
+                isSuperAdmin={isSuperAdminRole(auth.user?.role)}
+                onPayrollSubmit={async () => {
+                  try {
+                    const periodDays = rosterDuration === '2_weeks' ? 14 : rosterDuration === '1_month' ? 28 : 7;
+                    const weekDays = Array.from({ length: periodDays }, (_, i) => addDays(currentWeekStart, i));
+                    const breakdown = activeEmployees.map(emp => {
+                      const payroll = calculateEmployeePayroll(emp.id, weekDays, roster, shifts, rosterMeta);
+                      const regularHours = payroll.normalTime;
+                      const overtimeHours = payroll.ot15 + payroll.sun15 + payroll.sun20 + payroll.pph;
+                      const leaveHours = payroll.leave + payroll.sick + payroll.family;
+                      const grossPay = (
+                        (regularHours + leaveHours) * Number(emp.pay_rate || 0) +
+                        payroll.ot15 * Number(emp.pay_rate || 0) * 1.5 +
+                        payroll.sun15 * Number(emp.pay_rate || 0) * 1.5 +
+                        payroll.sun20 * Number(emp.pay_rate || 0) * 2 +
+                        payroll.pph * Number(emp.pay_rate || 0) * 2
+                      );
+
+                      return {
+                        employeeName: `${emp.first_name} ${emp.last_name}`.trim(),
+                        regularHours: Number(regularHours.toFixed(2)),
+                        overtimeHours: Number(overtimeHours.toFixed(2)),
+                        leaveHours: Number(leaveHours.toFixed(2)),
+                        grossPay: Number(grossPay.toFixed(2)),
+                      };
+                    });
+
+                    const payload = {
+                      clientName: impersonatedClient?.name || 'Your Company',
+                      submittedBy: auth.user?.email || 'Admin',
+                      submittedAt: new Date().toISOString(),
+                      periodStart: format(currentWeekStart, 'yyyy-MM-dd'),
+                      periodEnd: format(addDays(currentWeekStart, periodDays - 1), 'yyyy-MM-dd'),
+                      period: `${format(currentWeekStart, 'MMM dd')} - ${format(addDays(currentWeekStart, periodDays - 1), 'MMM dd, yyyy')}`,
+                      employeeCount: activeEmployees.length,
+                      status: 'pending',
+                      totalHours: Number(breakdown.reduce((acc, curr) => acc + curr.regularHours + curr.overtimeHours + curr.leaveHours, 0).toFixed(2)),
+                      totalPay: Number(breakdown.reduce((acc, curr) => acc + curr.grossPay, 0).toFixed(2)),
+                      employeeBreakdown: breakdown,
+                    };
+
+                    const saved = await appService.createPayrollSubmission(payload);
+                    await fetchPayrollSubmissions();
+                    setCurrentWeekStart(addDays(currentWeekStart, periodDays));
+                    toast.success(saved ? 'Payroll submitted successfully. Moved to the next roster period.' : 'Payroll submitted successfully. Moved to the next roster period.');
+                    toast.message('Previous submitted periods are now locked. Contact admin through Support for changes.');
+                  } catch (error) {
+                    console.error('Payroll submission failed:', error);
+                    const message = error instanceof ApiError ? error.message : (error as any)?.message || 'Failed to submit payroll.';
+                    toast.error(`Payroll submission failed: ${message}`);
+                  }
+                }}
+              />
+            </FeatureWrapper>
+          )}
+          {activeSection === 'timesheet' && (
+            <FeatureWrapper isLocked={lockedFeatures.includes('timesheets')} featureName="Timesheets">
+              <TimesheetSection 
+                rosterDuration={rosterDuration}
+                rosterMode={rosterMode}
+                rosterSeedWeekStart={rosterSeedWeekStart}
+                onRosterModeChange={(mode) => {
+                  setRosterMode(mode);
+                  void persistRosterPreferences(mode, rosterSeedWeekStart);
+                }}
+                enabledDefinitions={enabledDefinitions}
+                employees={activeEmployees} 
+                shifts={shifts} 
+                roster={roster} 
+                rosterMeta={rosterMeta}
+                currentWeekStart={currentWeekStart}
+                payrollSubmissions={currentClientNotifications}
+                rosterTitle={rosterTitle}
+                onWeekChange={setCurrentWeekStart}
+                onPayrollSubmit={async () => {
+                  try {
+                    const periodDays = rosterDuration === '2_weeks' ? 14 : rosterDuration === '1_month' ? 28 : 7;
+                    const weekDays = Array.from({ length: periodDays }, (_, i) => addDays(currentWeekStart, i));
+                    const breakdown = activeEmployees.map(emp => {
+                      const payroll = calculateEmployeePayroll(emp.id, weekDays, roster, shifts, rosterMeta);
+                      const regularHours = payroll.normalTime;
+                      const overtimeHours = payroll.ot15 + payroll.sun15 + payroll.sun20 + payroll.pph;
+                      const leaveHours = payroll.leave + payroll.sick + payroll.family;
+                      const grossPay = (
+                        (regularHours + leaveHours) * Number(emp.pay_rate || 0) +
+                        payroll.ot15 * Number(emp.pay_rate || 0) * 1.5 +
+                        payroll.sun15 * Number(emp.pay_rate || 0) * 1.5 +
+                        payroll.sun20 * Number(emp.pay_rate || 0) * 2 +
+                        payroll.pph * Number(emp.pay_rate || 0) * 2
+                      );
+
+                      return {
+                        employeeName: `${emp.first_name} ${emp.last_name}`.trim(),
+                        regularHours: Number(regularHours.toFixed(2)),
+                        overtimeHours: Number(overtimeHours.toFixed(2)),
+                        leaveHours: Number(leaveHours.toFixed(2)),
+                        grossPay: Number(grossPay.toFixed(2)),
+                      };
+                    });
+
+                    const payload = {
+                      clientName: impersonatedClient?.name || 'Your Company',
+                      submittedBy: auth.user?.email || 'Admin',
+                      submittedAt: new Date().toISOString(),
+                      periodStart: format(currentWeekStart, 'yyyy-MM-dd'),
+                      periodEnd: format(addDays(currentWeekStart, periodDays - 1), 'yyyy-MM-dd'),
+                      period: `${format(currentWeekStart, 'MMM dd')} - ${format(addDays(currentWeekStart, periodDays - 1), 'MMM dd, yyyy')}`,
+                      employeeCount: activeEmployees.length,
+                      status: 'pending',
+                      totalHours: Number(breakdown.reduce((acc, curr) => acc + curr.regularHours + curr.overtimeHours + curr.leaveHours, 0).toFixed(2)),
+                      totalPay: Number(breakdown.reduce((acc, curr) => acc + curr.grossPay, 0).toFixed(2)),
+                      employeeBreakdown: breakdown,
+                    };
+
+                    const saved = await appService.createPayrollSubmission(payload);
+                    await fetchPayrollSubmissions();
+                    setCurrentWeekStart(addDays(currentWeekStart, periodDays));
+                    toast.success(saved ? 'Payroll submitted successfully. Moved to the next roster period.' : 'Payroll submitted successfully. Moved to the next roster period.');
+                    toast.message('Previous submitted periods are now locked. Contact admin through Support for changes.');
+                  } catch (error) {
+                    console.error('Payroll submission failed:', error);
+                    const message = error instanceof ApiError ? error.message : (error as any)?.message || 'Failed to submit payroll.';
+                    toast.error(`Payroll submission failed: ${message}`);
+                  }
+                }}
+              />
+            </FeatureWrapper>
+          )}
+          {activeSection === 'payroll-submissions' && (
+            <PayrollSubmissionsSection 
+              submissions={currentClientNotifications} 
+            />
+          )}
+          {activeSection === 'leave' && (
+            <FeatureWrapper isLocked={lockedFeatures.includes('leave_management')} featureName="Leave Management">
+              <LeaveSection employees={activeEmployees} requests={requests} setRequests={setRequests} onRefresh={fetchLeaveRequests} onRefreshEmployees={fetchEmployees} initialSelectedEmployeeId={leaveManagementEmployeeId} />
+            </FeatureWrapper>
+          )}
+          {activeSection === 'files' && (
+            <FeatureWrapper isLocked={lockedFeatures.includes('file_vault')} featureName="Document Vault">
+              <FilesSection readOnly={!isSuperAdminRole(auth.user?.role)} />
+            </FeatureWrapper>
+          )}
+        </motion.div>
+      </main>
+
+      {/* Modals */}
+      <Modal 
+        isOpen={isEmployeeModalOpen} 
+        onClose={() => { setIsEmployeeModalOpen(false); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setShowCountryOfIssue(false); }} 
+        title={editingEmployee ? "Edit Employee" : "Add Employee"}
+        footer={
+          <>
+            <button onClick={() => { setIsEmployeeModalOpen(false); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setShowCountryOfIssue(false); }} className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all">Cancel</button>
+            <button type="submit" form="employee-form" className="px-8 py-3 rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all">Save Employee</button>
+          </>
+        }
+      >
+        <form id="employee-form" onSubmit={handleSaveEmployee} className="space-y-8" autoComplete="off" data-form-type="other">
+          <input type="text" name="fake-username" autoComplete="username" className="hidden" tabIndex={-1} aria-hidden="true" />
+          <input type="password" name="fake-password" autoComplete="new-password" className="hidden" tabIndex={-1} aria-hidden="true" />
+          <div className="space-y-6">
+            <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest border-b border-indigo-50 pb-2">Personal Information</h4>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Employee ID</label>
+                <input
+                  key={`emp-id-${editingEmployee?.id || 'new'}-${autoGeneratedEmployeeId || 'blank'}-${isSuperAdminRole(auth.user?.role) ? 'superadmin' : 'client'}`}
+                  name="emp_id"
+                  defaultValue={isSuperAdminRole(auth.user?.role) ? editingEmployee?.emp_id : (editingEmployee?.emp_id || autoGeneratedEmployeeId)}
+                  required
+                  placeholder={isSuperAdminRole(auth.user?.role) ? 'EMP001' : 'Auto-generated'}
+                  readOnly={!isSuperAdminRole(auth.user?.role)}
+                  aria-readonly={!isSuperAdminRole(auth.user?.role)}
+                  autoComplete="off"
+                  title={!isSuperAdminRole(auth.user?.role) ? 'Only Super Admin can edit Employee ID' : undefined}
+                  className={`w-full px-4 py-3 rounded-2xl border outline-none text-sm font-bold ${!isSuperAdminRole(auth.user?.role) ? 'border-slate-200 bg-slate-100 text-slate-500 cursor-not-allowed' : 'border-slate-200 focus:ring-2 focus:ring-indigo-600/20'}`}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">First Names</label>
+                <input autoComplete="off" name="first_name" defaultValue={editingEmployee?.first_name} required placeholder="John" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  onInput={handleTextOnlyInput} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Last Name</label>
+                <input autoComplete="off" name="last_name" defaultValue={editingEmployee?.last_name} required placeholder="Doe" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  onInput={handleTextOnlyInput} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ID Number / Passport</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    autoComplete="off"
+                    name="id_number"
+                    placeholder="ID Number"
+                    defaultValue={editingEmployee?.id_number}
+                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
+                    inputMode="numeric"
+                    onInput={handleNumberOnlyInput}
+                    onChange={(e) => {
+                      const next = normalizeDigits(e.currentTarget.value);
+                      const autoDob = getDobDisplayFromSouthAfricanId(next);
+                      if (autoDob) setDobDisplay(autoDob);
+                    }}
+                  />
+                  <input
+                    autoComplete="off"
+                    name="passport"
+                    placeholder="Passport"
+                    defaultValue={editingEmployee?.passport}
+                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
+                    onChange={(e) => {
+                      const next = e.currentTarget.value.trim().toUpperCase();
+                      setPassportDisplay(next);
+                      const hasPassport = Boolean(next);
+                      setShowCountryOfIssue(hasPassport);
+                      if (!hasPassport) {
+                        setCountryOfIssueInput('');
+                        setIsCountryOfIssueFocused(false);
+                        setIsCountryOfIssueFocused(false);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+              {showCountryOfIssue && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Country of Issue</label>
+                  <div className="relative">
+                    <input
+                      autoComplete="off"
+                      name="country_of_issue"
+                      value={countryOfIssueInput}
+                      placeholder="Type to search country"
+                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
+                      onFocus={() => setIsCountryOfIssueFocused(true)}
+                      onBlur={() => window.setTimeout(() => setIsCountryOfIssueFocused(false), 120)}
+                      onChange={(e) => setCountryOfIssueInput(e.currentTarget.value.replace(/\s+/g, ' ').trimStart())}
+                    />
+                    {isCountryOfIssueFocused && filteredCountryOfIssueOptions.length > 0 && (
+                      <div className="absolute z-20 mt-2 max-h-56 w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl">
+                        {filteredCountryOfIssueOptions.map((country) => (
+                          <button
+                            key={country}
+                            type="button"
+                            className="w-full rounded-xl px-3 py-2 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-100"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setCountryOfIssueInput(country);
+                              setIsCountryOfIssueFocused(false);
+                            }}
+                          >
+                            {country}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Date of Birth</label>
+                <input
+                  autoComplete="off"
+                  name="dob"
+                  type="date"
+                  value={dobDisplay}
+                  required={!editingEmployee?.id_number}
+                  onChange={(e) => setDobDisplay(e.currentTarget.value)}
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</label>
+                <input autoComplete="off" name="email" type="email" defaultValue={editingEmployee?.email} placeholder="john.doe@example.com" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Cell</label>
+                <div className="flex items-center rounded-2xl border border-slate-200 bg-white focus-within:ring-2 focus-within:ring-indigo-600/20">
+                  <div className="flex items-center gap-2 border-r border-slate-200 bg-slate-50 px-3 py-3 rounded-l-2xl text-sm font-black text-slate-600">
+                    <span className="text-base leading-none">🇿🇦</span>
+                    <span>+27</span>
+                  </div>
+                  <input
+                    autoComplete="off"
+                    name="cell"
+                    value={cellLocalDigits}
+                    onChange={(e) => setCellLocalDigits(phoneDigitsToLocalSa(e.target.value))}
+                    inputMode="numeric"
+                    placeholder="82 123 4567"
+                    className="w-full bg-transparent px-4 py-3 outline-none text-sm font-bold text-slate-700"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Start Date</label>
+                <input
+                  autoComplete="off"
+                  name="start_date"
+                  type="date"
+                  defaultValue={toDateInputValue(editingEmployee?.start_date || "")}
+                  required
+                  min="1900-01-01"
+                  max="9999-12-31"
+                  onInput={(e) => {
+                    const input = e.currentTarget;
+                    const value = input.value;
+                    if (!value) return;
+                    const parts = value.split('-');
+                    if (parts.length !== 3) return;
+                    const [year, month, day] = parts;
+                    if (year.length > 4) {
+                      input.value = `${year.slice(0, 4)}-${month}-${day}`;
+                    }
+                  }}
+                  className="w-full min-w-0 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest border-b border-indigo-50 pb-2">Residency</h4>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Street Number</label>
+                <input autoComplete="off" name="street_number" defaultValue={editingEmployee?.street_number} placeholder="123A" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" inputMode="text" pattern="^[A-Za-z0-9\s'.,\/\#-]+$" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Address Line 1 (Street Name)</label>
+                <input autoComplete="off" name="address1" defaultValue={editingEmployee?.address1} placeholder="Main Street" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" inputMode="text" pattern="^[A-Za-z0-9\s'.,\/\#-]+$" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Address Line 2 (Suburb)</label>
+                <input autoComplete="off" name="address2" defaultValue={editingEmployee?.address2} placeholder="Suburbia" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" inputMode="text" pattern="^[A-Za-z0-9\s'.,\/\#-]+$" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Address Line 3 (City)</label>
+                <input autoComplete="off" name="address3" defaultValue={editingEmployee?.address3} placeholder="Cape Town" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" inputMode="text" pattern="^[A-Za-z0-9\s'.,\/\#-]+$" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Province</label>
+                <select autoComplete="off" name="province" defaultValue={editingEmployee?.province} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
+                  <option value="">Select Province</option>
+                  <option value="Eastern Cape">Eastern Cape</option>
+                  <option value="Free State">Free State</option>
+                  <option value="Gauteng">Gauteng</option>
+                  <option value="KwaZulu-Natal">KwaZulu-Natal</option>
+                  <option value="Limpopo">Limpopo</option>
+                  <option value="Mpumalanga">Mpumalanga</option>
+                  <option value="North West">North West</option>
+                  <option value="Northern Cape">Northern Cape</option>
+                  <option value="Western Cape">Western Cape</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Postal Code</label>
+                <input autoComplete="off" name="postal_code" defaultValue={editingEmployee?.postal_code} placeholder="8001" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" inputMode="numeric" onInput={handleNumberOnlyInput} />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest border-b border-indigo-50 pb-2">Financial</h4>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tax Number</label>
+                <input autoComplete="off" name="tax_number" defaultValue={editingEmployee?.tax_number} placeholder="1234567890" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  inputMode="numeric" onInput={handleNumberOnlyInput} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bank Name</label>
+                <div className="relative">
+                  <input
+                    autoComplete="off"
+                    name="bank_name"
+                    value={bankNameInput}
+                    placeholder="Type to search bank"
+                    className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
+                    onFocus={() => setIsBankNameFocused(true)}
+                    onBlur={() => window.setTimeout(() => setIsBankNameFocused(false), 120)}
+                    onChange={(e) => setBankNameInput(e.currentTarget.value.replace(/\s+/g, ' ').trimStart())}
+                  />
+                  {isBankNameFocused && filteredBankNameOptions.length > 0 && (
+                    <div className="absolute z-20 mt-2 max-h-56 w-full overflow-y-auto rounded-2xl border border-slate-200 bg-white p-1 shadow-xl">
+                      {filteredBankNameOptions.map((bank) => (
+                        <button
+                          key={bank}
+                          type="button"
+                          className="w-full rounded-xl px-3 py-2 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-100"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setBankNameInput(bank);
+                            setIsBankNameFocused(false);
+                          }}
+                        >
+                          {bank}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Account Number</label>
+                <input autoComplete="off" name="account_no" defaultValue={editingEmployee?.account_no} placeholder="123456789" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  inputMode="numeric" onInput={handleNumberOnlyInput} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Account Type</label>
+                <select autoComplete="off" name="account_type" defaultValue={editingEmployee?.account_type} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
+                  <option value="">Select...</option>
+                  <option value="savings">Savings</option>
+                  <option value="cheque">Cheque</option>
+                  <option value="current">Current</option>
+                  <option value="transmission">Transmission</option>
+                  <option value="bond">Bond</option>
+                </select>
+              </div>
+              {isSuperAdminRole(auth.user?.role) && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">PAYE Credit</label>
+                  <input autoComplete="off" name="paye_credit" defaultValue={editingEmployee?.paye_credit} placeholder="e.g. 0.00" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  inputMode="decimal" />
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest border-b border-indigo-50 pb-2">Classification</h4>
+            <div className="grid grid-cols-2 gap-6">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Job Title</label>
+                <input autoComplete="off" name="job_title" defaultValue={editingEmployee?.job_title} required placeholder="Petrol Attendant" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  onInput={handleTextOnlyInput} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Department</label>
+                <input autoComplete="off" name="department" defaultValue={editingEmployee?.department} required placeholder="Forecourt" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  onInput={handleTextOnlyInput} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Hourly Rate (R/hr)</label>
+                <input
+                  autoComplete="off"
+                  name="pay_rate"
+                  type="text"
+                  inputMode="decimal"
+                  value={payRateDisplay}
+                  onChange={(e) => setPayRateDisplay(formatHourlyRateInput(e.target.value))}
+                  required
+                  placeholder="R000.0000"
+                  className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
+                />
+              </div>
+            </div>
+          </div>
+
+          {isSuperAdminRole(auth.user?.role) && (
+            <>
+              <div className="space-y-6">
+                <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest border-b border-indigo-50 pb-2">Membership & Leave</h4>
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">MIBCO</label>
+                    <select autoComplete="off" name="ismibco" defaultValue={editingEmployee?.ismibco} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
+                      <option value="">Select...</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Union</label>
+                    <select 
+                      autoComplete="off"
+                      name="isunion" 
+                      value={formIsUnion} 
+                      onChange={(e) => setFormIsUnion(e.target.value as any)}
+                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white"
+                    >
+                      <option value="">Select...</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </div>
+                  {formIsUnion === 'yes' && (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Select Union</label>
+                      <select autoComplete="off" name="union_name" defaultValue={editingEmployee?.union_name} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
+                        <option value="">Select Union...</option>
+                        <option value="numsa">NUMSA</option>
+                        <option value="misa bronze">MISA Bronze</option>
+                        <option value="misa silver">MISA Silver</option>
+                        <option value="misa gold">MISA Gold</option>
+                        <option value="misa platinum">MISA Platinum</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest border-b border-indigo-50 pb-2">Leave Balances</h4>
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Annual Leave (Days)</label>
+                    <input autoComplete="off" name="annual_leave" type="text" inputMode="decimal" value={annualLeaveDisplay} onChange={(e) => setAnnualLeaveDisplay(formatLeaveInput(e.target.value))} placeholder="00.0000" disabled={!isSuperAdminRole(auth.user?.role)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sick Leave (Days)</label>
+                    <input autoComplete="off" name="sick_leave" type="text" inputMode="decimal" value={sickLeaveDisplay} onChange={(e) => setSickLeaveDisplay(formatLeaveInput(e.target.value))} placeholder="00.0000" disabled={!isSuperAdminRole(auth.user?.role)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Family Leave (Days)</label>
+                    <input autoComplete="off" name="family_leave" type="text" inputMode="decimal" value={familyLeaveDisplay} onChange={(e) => setFamilyLeaveDisplay(formatLeaveInput(e.target.value))} placeholder="00.0000" disabled={!isSuperAdminRole(auth.user?.role)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </form>
+      </Modal>
+
+      <Modal 
+        isOpen={isShiftModalOpen} 
+        onClose={() => setIsShiftModalOpen(false)} 
+        title={editingShift ? "Edit Shift" : "Create Shift"}
+        footer={
+          <>
+            <button onClick={() => setIsShiftModalOpen(false)} className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all">Cancel</button>
+            <button type="submit" form="shift-form" className="px-8 py-3 rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all">Save Shift</button>
+          </>
+        }
+      >
+        <form id="shift-form" onSubmit={handleSaveShift} className="space-y-6">
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Shift Label</label>
+            <input name="label" defaultValue={editingShift?.label} required placeholder="Day Shift" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" />
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Start Time</label>
+              <input name="start" type="time" defaultValue={editingShift?.start} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">End Time</label>
+              <input name="end" type="time" defaultValue={editingShift?.end} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lunch (min)</label>
+              <input name="lunch" type="number" min={0} defaultValue={editingShift?.lunch} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" />
+            </div>
+          </div>
+        </form>
+      </Modal>
+
+      <OffboardModal 
+        isOpen={isOffboardModalOpen} 
+        onClose={() => setIsOffboardModalOpen(false)} 
+        onConfirm={handleOffboard} 
+        employee={offboardingEmployee} 
+      />
+
+      {/* Support Floating Button */}
+      {!impersonatedClient && !isSuperAdminRole(auth.user.role) && (
+        <div className="fixed bottom-8 right-8 z-[60]">
+          <motion.button
+            whileHover={{ scale: 1.05, y: -2 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setIsSupportModalOpen(true)}
+            className="flex items-center gap-3 px-6 py-4 bg-indigo-600 text-white rounded-[24px] font-black text-sm shadow-2xl shadow-indigo-200 border border-indigo-500 group"
+          >
+            <MessageSquare className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+            <span className="tracking-tight">Support</span>
+          </motion.button>
+        </div>
+      )}
+
+      {/* Support Ticket Modal */}
+      <Modal
+        isOpen={isSupportModalOpen}
+        onClose={() => setIsSupportModalOpen(false)}
+        title="Submit Support Ticket"
+        footer={
+          <>
+            <button 
+              onClick={() => setIsSupportModalOpen(false)} 
+              className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
+            >
+              Cancel
+            </button>
+            <button 
+              type="submit" 
+              form="support-form" 
+              disabled={isSubmittingSupport}
+              className="px-8 py-3 rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all disabled:opacity-50 flex items-center gap-2"
+            >
+              {isSubmittingSupport ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                'Submit Ticket'
+              )}
+            </button>
+          </>
+        }
+      >
+        <form id="support-form" onSubmit={handleSupportSubmit} className="space-y-6">
+          <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 mb-6">
+            <div className="flex gap-3">
+              <AlertCircle className="w-5 h-5 text-indigo-600 shrink-0" />
+              <p className="text-xs font-bold text-indigo-900 leading-relaxed">
+                Need help? Submit a ticket and our support team will respond within 24 hours.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject</label>
+            <input 
+              required
+              value={supportSubject}
+              onChange={(e) => setSupportSubject(e.target.value)}
+              placeholder="Briefly describe the issue" 
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" 
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Message</label>
+            <textarea 
+              required
+              value={supportMessage}
+              onChange={(e) => setSupportMessage(e.target.value)}
+              placeholder="Provide more details about your request..." 
+              rows={5}
+              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold resize-none" 
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Priority</label>
+              <select value={supportPriority} onChange={(e) => setSupportPriority(e.target.value as any)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Category</label>
+              <select value={supportPriority} onChange={(e) => setSupportPriority(e.target.value as any)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
+                <option value="payroll">Payroll</option>
+                <option value="roster">Rostering</option>
+                <option value="account">Account</option>
+                <option value="technical">Technical Issue</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+        </form>
+      </Modal>
+    </div>
+  );
+}
