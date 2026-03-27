@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
+import { isDataUrl, randomId, uploadDataUrlToBucket } from '../utils/supabaseStorage';
 import bcrypt from 'bcryptjs';
 import type { Express, Request } from 'express';
 
@@ -10,7 +11,7 @@ type RegisterAdminRoutesDeps = {
   db: any;
   isSuperAdmin: Middleware;
   logActivity: (req: Request, action: string, details?: any) => void;
-  ensureClientVaultStructure: (clientId: string) => void;
+  ensureClientVaultStructure: (clientId: string) => Promise<void> | void;
   hydrateFileRow: (row: any) => any;
   serializePayrollSubmission: (row: any) => any;
   normalizeClientTrialColumns: (input: any) => any;
@@ -105,6 +106,21 @@ const countSupabaseEmployees = async (clientId: string) => {
 };
 
 
+
+const resolveClientFallbackImage = async (clientId: string, value: string | null | undefined) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  if (!isDataUrl(normalized)) return normalized;
+  const upload = await uploadDataUrlToBucket({
+    bucket: env.supabaseBucketClientAssets,
+    path: `clients/${clientId}/fallback-image-${randomId()}.png`,
+    dataUrl: normalized,
+    contentType: 'image/png',
+    upsert: true,
+  });
+  return upload.public_url || null;
+};
+
 export function registerAdminRoutes({
   app,
   db,
@@ -196,8 +212,9 @@ export function registerAdminRoutes({
   });
 
   app.post("/api/admin/clients/:id/users", isSuperAdmin, async (req, res) => {
-    const { email, password, role, name, image } = req.body || {};
-    if (!email || !password || !role) return res.status(400).json({ error: 'Email, password and role are required' });
+    const { email, password, name, image } = req.body || {};
+    const role = String(req.body?.role || 'admin').trim().toLowerCase();
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
     try {
       const id = Math.random().toString(36).substr(2, 9);
@@ -515,9 +532,10 @@ export function registerAdminRoutes({
 
   app.post("/api/admin/users", isSuperAdmin, async (req, res) => {
     console.log("Creating user with data:", { ...req.body, password: "[REDACTED]" });
-    const { email, password, role, image } = req.body;
+    const { email, password, image } = req.body;
+    const role = String(req.body?.role || 'superadmin').trim().toLowerCase();
 
-    if (!email || !password || !role) {
+    if (!email || !password) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
@@ -709,7 +727,7 @@ export function registerAdminRoutes({
         id,
         name,
         status: req.body.status || 'active',
-        fallback_image: req.body.fallbackImage || null,
+        fallback_image: await resolveClientFallbackImage(id, req.body.fallbackImage || null),
         dashboard_type: req.body.dashboardType || 'rostering',
         locked_features: req.body.lockedFeatures || [],
         enabled_definitions: mergeDefinitions(req.body.enabledDefinitions || []),
@@ -730,6 +748,7 @@ export function registerAdminRoutes({
         throw error;
       }
 
+      await ensureClientVaultStructure(id);
       logActivity(req, 'CREATE_CLIENT', { clientId: id, name });
       return res.status(201).json(serializeSupabaseClient(data, { users: 0, employees: 0, files: 0 }));
     } catch (error: any) {
@@ -777,7 +796,7 @@ export function registerAdminRoutes({
     const updatePayload = {
       name: req.body.name ?? existing.name,
       status: req.body.status ?? existing.status,
-      fallback_image: req.body.fallbackImage ?? existing.fallback_image ?? null,
+      fallback_image: await resolveClientFallbackImage(req.params.id, req.body.fallbackImage ?? existing.fallback_image ?? null),
       dashboard_type: req.body.dashboardType ?? existing.dashboard_type,
       locked_features: req.body.lockedFeatures ?? parseJsonArray(existing.locked_features),
       enabled_definitions: mergeDefinitions(req.body.enabledDefinitions ?? parseJsonArray(existing.enabled_definitions)),

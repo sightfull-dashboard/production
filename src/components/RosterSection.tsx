@@ -6,7 +6,7 @@ import { isSAPublicHoliday } from '../constants';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { downloadCSV, exportToPDF } from '../utils/exportUtils';
-import { sortShiftsBaseFirst } from '../lib/shifts';
+import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../lib/shifts';
 
 import { Tooltip } from './Tooltip';
 
@@ -208,6 +208,38 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
     if (isLeaveShiftId(sourceShiftId)) return "";
 
     return sourceShiftId;
+  };
+
+  const getPreviousDayShift = (employee: Employee, dayDate: string) => {
+    const previousDayIso = format(subDays(new Date(`${dayDate}T00:00:00`), 1), 'yyyy-MM-dd');
+    const previousShiftId = getRosterValue(employee, previousDayIso);
+    return previousShiftId ? shifts.find(s => s.id === previousShiftId) || null : null;
+  };
+
+  const isShiftBlockedForCell = (employee: Employee, dayDate: string, shiftId: string | null | undefined) => {
+    if (isSuperAdmin || !shiftId) return false;
+    const candidateShift = shifts.find(s => s.id === shiftId);
+    if (!candidateShift) return false;
+    const previousShift = getPreviousDayShift(employee, dayDate);
+    return doesShiftStartOverlapPrevious(previousShift, candidateShift);
+  };
+
+  const getShiftBlockedReason = (employee: Employee, dayDate: string, shiftId: string | null | undefined) => {
+    if (!shiftId) return null;
+    const candidateShift = shifts.find(s => s.id === shiftId);
+    const previousShift = getPreviousDayShift(employee, dayDate);
+    if (!candidateShift || !previousShift) return null;
+    if (!doesShiftStartOverlapPrevious(previousShift, candidateShift)) return null;
+    return `${candidateShift.label} cannot be allocated because it starts before the previous shift ends at ${formatShiftTimeLabel(previousShift.end)}.`;
+  };
+
+  const handleShiftSelectChange = (employee: Employee, dayDate: string, nextShiftId: string | null) => {
+    const blockedReason = getShiftBlockedReason(employee, dayDate, nextShiftId);
+    if (blockedReason) {
+      toast.warning(blockedReason);
+      return;
+    }
+    onUpdateRoster(employee.id, dayDate, nextShiftId);
   };
 
   const getRosterValue = (employee: Employee, dayDate: string) => {
@@ -521,7 +553,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                             <div className="relative group/select overflow-visible">
                               <select
                                 value={val}
-                                onChange={(e) => onUpdateRoster(emp.id, dayIso, e.target.value || null)}
+                                onChange={(e) => handleShiftSelectChange(emp, dayIso, e.target.value || null)}
                                 disabled={!editable}
                                 className={cn(
                                   "relative w-full text-[11px] font-black border-2 rounded-xl px-3 py-2.5 transition-all appearance-none outline-none text-center tracking-wider disabled:cursor-not-allowed disabled:opacity-60",
@@ -531,9 +563,19 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                                 )}
                               >
                                 <option value="" className="font-sans">To Be Rostered</option>
-                                {orderedShifts.map(s => (
-                                  <option key={s.id} value={s.id} className="font-sans text-slate-900">{s.label}</option>
-                                ))}
+                                {orderedShifts.map(s => {
+                                  const blocked = isShiftBlockedForCell(emp, dayIso, s.id);
+                                  return (
+                                    <option
+                                      key={s.id}
+                                      value={s.id}
+                                      className={cn('font-sans', blocked ? 'text-slate-400' : 'text-slate-900')}
+                                      aria-disabled={blocked}
+                                    >
+                                      {blocked ? `${s.label} (Overlaps previous shift)` : s.label}
+                                    </option>
+                                  );
+                                })}
                               </select>
                               <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover/select:opacity-100 transition-opacity">
                                 <ChevronRight className="w-3 h-3 text-indigo-400 rotate-90" />

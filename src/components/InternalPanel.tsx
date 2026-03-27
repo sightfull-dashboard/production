@@ -44,7 +44,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
-import type { FileItem, PayrollSubmission, SupportTicket } from '../types';
+import type { FileItem, PayrollSubmission, RosterDefinition, SupportTicket } from '../types';
 import { BrandedState } from './BrandedStates';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
@@ -363,7 +363,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
     const payload = {
       name: formData.get('name') as string,
       email: formData.get('email') as string,
-      role: formData.get('role') as string,
+      role: editingUser ? String(formData.get('role') || 'admin') : 'admin',
       password: formData.get('password') as string,
     };
 
@@ -625,7 +625,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
         </div>
       </div>
 
-      <div className="flex gap-2 p-1.5 bg-white/80 backdrop-blur-md rounded-2xl shadow-sm border border-slate-100 w-fit">
+      <div className="flex overflow-x-auto no-scrollbar gap-2 p-1.5 bg-white/80 backdrop-blur-md rounded-2xl shadow-sm border border-slate-100 w-full mb-6">
         {[
           { id: 'overview', icon: BarChart3, label: 'Overview' },
           { id: 'users', icon: Users, label: 'Users' },
@@ -640,7 +640,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
             className={cn(
-              "flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all",
+              "flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all whitespace-nowrap",
               activeTab === tab.id 
                 ? "bg-indigo-600 text-white shadow-md shadow-indigo-200" 
                 : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
@@ -1277,7 +1277,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
         {activeTab === 'support_tickets' && (
           <SupportTicketsPanel
             tickets={clientSupportTickets}
-            hideClientFilter
+            clientScoped={true}
             onUpdateTicket={async (updatedTicket) => {
               try {
                 const saved = await appService.updateSupportTicket(updatedTicket.id, {
@@ -1298,9 +1298,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
         {activeTab === 'payroll_notifications' && (
           <ClientNotificationsPanel
             notifications={clientPayrollNotifications}
-            title="Payroll Notifications"
-            subtitle="Monitor payroll submissions for this client only"
-            searchPlaceholder="Search submitters or periods..."
+            clientScoped={true}
             onProcess={async (id) => {
               try {
                 const saved = await appService.updatePayrollSubmissionStatus(id, 'processed');
@@ -2040,14 +2038,23 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                       </div>
                     </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
-                    <select name="role" defaultValue={editingUser?.role || 'User'} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm appearance-none bg-white">
-                      <option value="Admin">Admin</option>
-                      <option value="Manager">Manager</option>
-                      <option value="User">User</option>
-                    </select>
-                  </div>
+                  {editingUser ? (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
+                      <select name="role" defaultValue={String(editingUser?.role || 'admin').toLowerCase()} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm appearance-none bg-white">
+                        <option value="admin">Admin</option>
+                        <option value="manager">Manager</option>
+                        <option value="user">User</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
+                      <div className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-bold text-slate-600">
+                        Admin
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex gap-3 pt-4">
                     <button 

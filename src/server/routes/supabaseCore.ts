@@ -2,7 +2,8 @@ import bcrypt from 'bcryptjs';
 import type { Express } from 'express';
 import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
-import { sortShiftsBaseFirst } from '../../lib/shifts';
+import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../../lib/shifts';
+import { isDataUrl, randomId, uploadDataUrlToBucket } from '../utils/supabaseStorage';
 
 const parseJsonArray = (value: any) => Array.isArray(value) ? value : (() => {
   try { return value ? JSON.parse(value) : []; } catch { return []; }
@@ -19,6 +20,14 @@ const getSessionClientId = (req: any) => (req.session as any)?.employeeClientId 
 const getRequestedClientId = (req: any) => {
   const header = String(req.headers['x-active-client-id'] || '').trim();
   return header || null;
+};
+
+
+const getPreviousDayIso = (dayDate: string) => {
+  const date = new Date(`${dayDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setDate(date.getDate() - 1);
+  return date.toISOString().slice(0, 10);
 };
 
 async function fetchUserById(id: string) {
@@ -71,6 +80,21 @@ async function listEmployeesForClient(clientId: string | null) {
     if (!current || String(row.day_date) > current) maxMap.set(row.employee_id, String(row.day_date));
   }
   return employees.map((employee) => ({ ...employee, last_worked_date: maxMap.get(employee.id) || null }));
+}
+
+
+async function resolveEmployeeImage(clientId: string | null, employeeId: string, imageValue: any) {
+  const raw = String(imageValue || '').trim();
+  if (!raw) return null;
+  if (!isDataUrl(raw)) return raw;
+  const upload = await uploadDataUrlToBucket({
+    bucket: env.supabaseBucketClientAssets,
+    path: `employees/${clientId || 'shared'}/${employeeId}/avatar-${randomId()}.png`,
+    dataUrl: raw,
+    contentType: 'image/png',
+    upsert: true,
+  });
+  return upload.public_url || null;
 }
 
 async function nextEmployeeId(clientId: string | null) {
@@ -154,6 +178,61 @@ function ensureUser(req: any, res: any) {
 function ensureUserOrEmployee(req: any, res: any) {
   if (!getSessionUserId(req) && !getSessionEmployeeId(req)) {
     res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+  return true;
+}
+
+
+async function getClientTrialStateSupabase(clientId: string | null | undefined) {
+  const client = await fetchClientById(clientId);
+  if (!client || !client.is_trial) return { isTrial: false, trialEndDate: null, trialExpired: false, trialDaysRemaining: null, client };
+  const trialEndDate = client.trial_end_date || null;
+  const msRemaining = trialEndDate ? (new Date(trialEndDate).getTime() - Date.now()) : 0;
+  return {
+    isTrial: true,
+    trialEndDate,
+    trialExpired: Boolean(trialEndDate && msRemaining < 0),
+    trialDaysRemaining: trialEndDate ? Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24))) : null,
+    client,
+  };
+}
+
+async function enforceSupabaseFeatureGate(req: any, res: any, featureKey: string) {
+  const sessionRole = getSessionRole(req);
+  if (sessionRole === 'superadmin') return true;
+
+  const employeeSessionId = getSessionEmployeeId(req);
+  if (employeeSessionId) {
+    const employee = await fetchEmployeeById(employeeSessionId);
+    const trialState = await getClientTrialStateSupabase(employee?.client_id || getSessionClientId(req));
+    if (trialState.isTrial && trialState.trialExpired) {
+      res.status(402).json({ error: 'Trial expired', trialExpired: true, trialEndDate: trialState.trialEndDate, trialDaysRemaining: 0, client_id: employee?.client_id || null, client_name: trialState.client?.name || null });
+      return false;
+    }
+    const lockedFeatures = parseJsonArray(trialState.client?.locked_features);
+    if (lockedFeatures.includes(featureKey)) {
+      res.status(423).json({ error: 'Feature locked', feature: featureKey, client_id: employee?.client_id || null, client_name: trialState.client?.name || null });
+      return false;
+    }
+    return true;
+  }
+
+  const userId = getSessionUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+
+  const user = await fetchUserById(userId);
+  const trialState = await getClientTrialStateSupabase(user?.client_id || null);
+  if (trialState.isTrial && trialState.trialExpired) {
+    res.status(402).json({ error: 'Trial expired', trialExpired: true, trialEndDate: trialState.trialEndDate, trialDaysRemaining: 0, client_id: user?.client_id || null, client_name: trialState.client?.name || null });
+    return false;
+  }
+  const lockedFeatures = parseJsonArray(trialState.client?.locked_features);
+  if (lockedFeatures.includes(featureKey)) {
+    res.status(423).json({ error: 'Feature locked', feature: featureKey, client_id: user?.client_id || null, client_name: trialState.client?.name || null });
     return false;
   }
   return true;
@@ -276,6 +355,7 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/employees', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const role = getSessionRole(req);
     const activeClientId = role === 'superadmin' ? getRequestedClientId(req) : (await fetchUserById(getSessionUserId(req)))?.client_id || null;
     const employees = await listEmployeesForClient(activeClientId);
@@ -284,6 +364,7 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/employees', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const actor = await fetchUserById(getSessionUserId(req));
     const actorRole = getSessionRole(req);
     const actorClientId = actorRole === 'superadmin' ? (getRequestedClientId(req) || actor?.client_id || null) : actor?.client_id || null;
@@ -312,6 +393,7 @@ export function registerSupabaseCoreRoutes({
     const employeePayload = sanitizeEmployeeForSupabase({
       id,
       ...persistableData,
+      image: await resolveEmployeeImage(actorClientId, id, persistableData.image),
       pin: data.pin || null,
       client_id: actorClientId,
       annual_leave_last_accrual_date: data.start_date,
@@ -325,6 +407,7 @@ export function registerSupabaseCoreRoutes({
 
   app.put('/api/employees/:id', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const actor = await fetchUserById(getSessionUserId(req));
     const actorRole = getSessionRole(req);
     const actorClientId = actorRole === 'superadmin' ? (getRequestedClientId(req) || actor?.client_id || null) : actor?.client_id || null;
@@ -335,13 +418,15 @@ export function registerSupabaseCoreRoutes({
     const errors = validateEmployeePayload(data);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
     const { allow_blank_pin: _allowBlankPin, ...persistableData } = data as any;
-    const { data: updated, error } = await supabaseAdmin.from('employees').update(sanitizeEmployeeForSupabase(persistableData)).eq('id', req.params.id).select('*').single();
+    const updatePayload = sanitizeEmployeeForSupabase({ ...persistableData, image: await resolveEmployeeImage(actorClientId, req.params.id, persistableData.image) });
+    const { data: updated, error } = await supabaseAdmin.from('employees').update(updatePayload).eq('id', req.params.id).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(updated);
   });
 
   app.post('/api/employees/:id/offboard', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const payload = {
       status: 'offboarded',
       last_worked: req.body?.last_worked || null,
@@ -355,12 +440,15 @@ export function registerSupabaseCoreRoutes({
 
   app.delete('/api/employees/:id', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const { error } = await supabaseAdmin.from('employees').delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
   });
 
-  app.get('/api/shifts', async (_req, res) => {
+  app.get('/api/shifts', async (req, res) => {
+    if (!ensureUserOrEmployee(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const { data, error } = await supabaseAdmin.from('shifts').select('*');
     if (error) return res.status(500).json({ error: error.message });
     res.json(sortShiftsBaseFirst((data || []) as any));
@@ -368,6 +456,7 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/shifts', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const payload = normalizeShiftPayload(req.body);
     const errors = validateShiftPayload(payload);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
@@ -379,6 +468,7 @@ export function registerSupabaseCoreRoutes({
 
   app.put('/api/shifts/:id', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const payload = normalizeShiftPayload({ ...req.body, id: req.params.id });
     const errors = validateShiftPayload(payload);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
@@ -389,6 +479,7 @@ export function registerSupabaseCoreRoutes({
 
   app.delete('/api/shifts/:id', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const { error } = await supabaseAdmin.from('shifts').delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
@@ -396,6 +487,7 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/roster', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const actor = await fetchUserById(getSessionUserId(req));
     const actorRole = getSessionRole(req);
     const clientId = actorRole === 'superadmin' ? (getRequestedClientId(req) || actor?.client_id || null) : actor?.client_id || null;
@@ -420,6 +512,7 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/roster', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const payload = {
       employee_id: String(req.body?.employee_id || '').trim(),
       day_date: String(req.body?.day_date || '').trim(),
@@ -427,6 +520,38 @@ export function registerSupabaseCoreRoutes({
       updated_at: new Date().toISOString(),
     };
     if (!payload.employee_id || !payload.day_date) return res.status(400).json({ error: 'employee_id and day_date are required' });
+
+    const actorRole = getSessionRole(req);
+    if (actorRole !== 'superadmin' && payload.shift_id) {
+      const previousDayIso = getPreviousDayIso(payload.day_date);
+      if (previousDayIso) {
+        const { data: previousRosterRow } = await supabaseAdmin
+          .from('roster')
+          .select('shift_id')
+          .eq('employee_id', payload.employee_id)
+          .eq('day_date', previousDayIso)
+          .maybeSingle();
+
+        const previousShiftId = previousRosterRow?.shift_id ? String(previousRosterRow.shift_id) : null;
+        if (previousShiftId) {
+          const shiftIds = [previousShiftId, String(payload.shift_id)];
+          const { data: shiftRows, error: shiftError } = await supabaseAdmin
+            .from('shifts')
+            .select('id,label,start,end')
+            .in('id', shiftIds);
+          if (shiftError) return res.status(500).json({ error: shiftError.message });
+
+          const previousShift = (shiftRows || []).find((row: any) => String(row.id) === previousShiftId) as any;
+          const nextShift = (shiftRows || []).find((row: any) => String(row.id) === String(payload.shift_id)) as any;
+          if (doesShiftStartOverlapPrevious(previousShift, nextShift)) {
+            return res.status(400).json({
+              error: `${String(nextShift?.label || 'Selected shift')} cannot be allocated because it starts before the previous shift ends at ${formatShiftTimeLabel(previousShift?.end)}.`,
+            });
+          }
+        }
+      }
+    }
+
     const { data, error } = await supabaseAdmin.from('roster').upsert(payload, { onConflict: 'employee_id,day_date' }).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
@@ -434,6 +559,7 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/roster-meta', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'timesheets')) return;
     const actor = await fetchUserById(getSessionUserId(req));
     const actorRole = getSessionRole(req);
     const clientId = actorRole === 'superadmin' ? (getRequestedClientId(req) || actor?.client_id || null) : actor?.client_id || null;
@@ -452,6 +578,7 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/roster-meta', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'timesheets')) return;
     const employeeId = String(req.body?.employee_id || '').trim();
     const weekStart = String(req.body?.week_start || '').trim();
     const field = String(req.body?.field || '').trim();
@@ -469,6 +596,7 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/analytics', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'analytics')) return;
     try {
       const month = String(req.query.month || new Date().toISOString().slice(0, 7));
       const [yearStr, monthStr] = month.split('-');
@@ -629,6 +757,7 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/leave-requests', async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
     const employeeSessionId = getSessionEmployeeId(req);
     let employeeId = typeof req.query.employee_id === 'string' ? req.query.employee_id : null;
     if (employeeSessionId) employeeId = employeeSessionId;
@@ -647,6 +776,7 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/leave-requests', async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
     const employeeSessionId = getSessionEmployeeId(req);
     const employee_id = String(req.body?.employee_id || employeeSessionId || '').trim();
     if (!employee_id) return res.status(400).json({ error: 'Employee is required' });
@@ -671,8 +801,32 @@ export function registerSupabaseCoreRoutes({
     res.status(201).json(data);
   });
 
+  app.patch('/api/leave-requests/:id', async (req, res) => {
+    if (!ensureUserOrEmployee(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
+    const { data: existing, error: fetchError } = await supabaseAdmin.from('leave_requests').select('*').eq('id', req.params.id).single();
+    if (fetchError || !existing) return res.status(404).json({ error: 'Leave request not found' });
+    const employeeSessionId = getSessionEmployeeId(req);
+    if (employeeSessionId && existing.employee_id !== employeeSessionId) return res.status(403).json({ error: 'Forbidden' });
+    if (existing.status && !['pending','approved'].includes(String(existing.status))) return res.status(400).json({ error: 'Only pending or approved leave requests can be updated.' });
+    const payload = {
+      type: String(req.body?.type || existing.type || '').trim(),
+      start_date: String(req.body?.start_date || existing.start_date || '').slice(0, 10),
+      end_date: String(req.body?.end_date || existing.end_date || '').slice(0, 10),
+      is_half_day: typeof req.body?.is_half_day === 'boolean' ? !!req.body.is_half_day : !!existing.is_half_day,
+      notes: req.body?.notes ?? existing.notes ?? '',
+      admin_notes: req.body?.admin_notes ?? existing.admin_notes ?? '',
+      days: Number(req.body?.days ?? existing.days ?? 0),
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabaseAdmin.from('leave_requests').update(payload).eq('id', req.params.id).select('*').single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  });
+
   app.put('/api/leave-requests/:id/status', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
     const status = String(req.body?.status || '').trim();
     if (!['approved','declined'].includes(status)) return res.status(400).json({ error: 'Valid status is required' });
     const { data, error } = await supabaseAdmin.from('leave_requests').update({ status, admin_notes: String(req.body?.admin_notes || ''), updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
@@ -682,6 +836,7 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/leave-requests/:id/cancel', async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
+    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
     const { data, error } = await supabaseAdmin.from('leave_requests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);

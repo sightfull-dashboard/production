@@ -44,12 +44,18 @@ export const ClientNotificationsPanel = ({
   notifications = [], 
   onProcess,
   onRevert,
-  clientScoped = false
+  clientScoped = false,
+  title,
+  subtitle,
+  searchPlaceholder,
 }: { 
   notifications?: PayrollSubmission[],
-  onProcess?: (id: string) => void;
-  onRevert?: (id: string) => void;
+  onProcess?: (id: string) => void | Promise<void>;
+  onRevert?: (id: string) => void | Promise<void>;
   clientScoped?: boolean;
+  title?: string;
+  subtitle?: string;
+  searchPlaceholder?: string;
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'processed'>('all');
@@ -153,8 +159,8 @@ export const ClientNotificationsPanel = ({
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <h2 className="text-4xl font-black text-slate-800 tracking-tight">{clientScoped ? 'Payroll Notifications' : 'Client Notifications'}</h2>
-          <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">{clientScoped ? 'Monitor this client\'s payroll submissions only' : 'Monitor Payroll Submissions & Activity'}</p>
+          <h2 className="text-4xl font-black text-slate-800 tracking-tight">{title || (clientScoped ? 'Payroll Notifications' : 'Client Notifications')}</h2>
+          <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">{subtitle || (clientScoped ? 'Monitor this client\'s payroll submissions only' : 'Monitor Payroll Submissions & Activity')}</p>
         </div>
         <div className="flex items-center gap-3">
           <div className="bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-2">
@@ -170,7 +176,7 @@ export const ClientNotificationsPanel = ({
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Search clients or submitters..."
+            placeholder={searchPlaceholder || 'Search clients or submitters...'}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-100 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all text-sm font-medium"

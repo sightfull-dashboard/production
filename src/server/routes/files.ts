@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import type { Express, Request } from 'express';
+import { buildZipBuffer, downloadStoredObjectBuffer, extensionFromName, getDownloadUrlForStoredObject, guessMimeType, isDataUrl, parseDataUrl, randomId, removeStoredObjects, uploadDataUrlToBucket } from '../utils/supabaseStorage';
 
 type Middleware = (req: any, res: any, next: any) => unknown;
 
@@ -13,7 +14,7 @@ type FilesRoutesDeps = {
   canAccessEmployeeFiles: (req: any, employeeId: string | null | undefined) => boolean;
   canMutateVaultItems: (req: any) => boolean;
   getActorClientId: (req: any) => string | null;
-  ensureClientVaultStructure: (clientId: string | null | undefined) => void;
+  ensureClientVaultStructure: (clientId: string | null | undefined) => Promise<void> | void;
   hydrateFileRow: (row: any) => any;
   buildFolderDownloadPayload: (folderRow: any) => any;
   serializePayrollSubmission: (row: any) => any;
@@ -69,6 +70,100 @@ const fetchSupabaseFileById = async (id: string | null | undefined) => {
     .maybeSingle();
   if (error) throw error;
   return data as any;
+};
+
+
+const sanitizeStorageSegment = (value: string | null | undefined) => String(value || '').trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'file';
+
+const buildSupabaseFileStoragePayload = async ({
+  id,
+  name,
+  url,
+  ownerEmployeeId,
+  ownerClientId,
+}: {
+  id: string;
+  name: string;
+  url: string;
+  ownerEmployeeId: string | null;
+  ownerClientId: string | null;
+}) => {
+  if (!url) {
+    return {
+      storage_bucket: null,
+      storage_path: null,
+      public_url: null,
+      size_bytes: null,
+      mime_type: guessMimeType(name),
+    };
+  }
+
+  if (!isDataUrl(url)) {
+    return {
+      storage_bucket: null,
+      storage_path: null,
+      public_url: url,
+      size_bytes: null,
+      mime_type: guessMimeType(name),
+    };
+  }
+
+  const bucket = ownerEmployeeId ? env.supabaseBucketEmployeeDocuments : env.supabaseBucketVaultFiles;
+  const scope = ownerEmployeeId ? `employee/${ownerEmployeeId}` : `client/${ownerClientId || 'shared'}`;
+  const finalName = sanitizeStorageSegment(name);
+  const parsed = parseDataUrl(url);
+  const contentType = parsed?.mimeType || guessMimeType(name);
+  return uploadDataUrlToBucket({
+    bucket,
+    path: `${scope}/${id}/${finalName}`,
+    dataUrl: url,
+    contentType,
+    upsert: true,
+  });
+};
+
+const collectSupabaseFileTree = async (rootId: string) => {
+  const rows: any[] = [];
+  const walk = async (id: string) => {
+    const { data: children, error } = await supabaseAdmin.from('files').select('*').eq('parent_id', id).order('type', { ascending: false }).order('name', { ascending: true });
+    if (error) throw error;
+    for (const child of children || []) {
+      rows.push(child);
+      if (child.type === 'folder') await walk(child.id);
+    }
+  };
+  await walk(rootId);
+  return rows;
+};
+
+const buildSupabaseFolderDownloadPayload = async (folderRow: any) => {
+  const filesToZip: Array<{ name: string; data: Buffer }> = [];
+  const walkFolder = async (folderId: string, prefix: string) => {
+    const { data: children, error } = await supabaseAdmin.from('files').select('*').eq('parent_id', folderId).order('type', { ascending: false }).order('name', { ascending: true });
+    if (error) throw error;
+    for (const child of children || []) {
+      if (child.type === 'folder') {
+        await walkFolder(child.id, `${prefix}${child.name}/`);
+        continue;
+      }
+      let buffer = Buffer.alloc(0);
+      if (child.storage_bucket && child.storage_path) {
+        buffer = await downloadStoredObjectBuffer({ bucket: child.storage_bucket, path: child.storage_path });
+      } else if (child.public_url && isDataUrl(child.public_url)) {
+        buffer = parseDataUrl(child.public_url)?.buffer || Buffer.alloc(0);
+      }
+      filesToZip.push({ name: `${prefix}${child.name}`, data: buffer });
+    }
+  };
+  await walkFolder(folderRow.id, `${folderRow.name}/`);
+  const zipBuffer = buildZipBuffer(filesToZip);
+  return {
+    id: folderRow.id,
+    name: `${folderRow.name}.zip`,
+    url: `data:application/zip;base64,${zipBuffer.toString('base64')}`,
+    extension: 'zip',
+    size: `${(zipBuffer.length / 1024 / 1024).toFixed(2)} MB`,
+  };
 };
 
 
@@ -132,6 +227,9 @@ export function registerFilesRoutes({
         return res.json(rows.map(hydrateFileRow));
       }
 
+      if (!employeeId && actorClientId) {
+        await ensureClientVaultStructure(actorClientId);
+      }
       let query = supabaseAdmin.from('files').select('*').order('type', { ascending: false }).order('name', { ascending: true });
       if (employeeId) {
         query = query.eq('employee_id', employeeId);
@@ -193,7 +291,10 @@ export function registerFilesRoutes({
         const { data: parent } = await supabaseAdmin.from('files').select('id,type').eq('id', parent_id).single();
         if (!parent || parent.type !== 'folder') return res.status(400).json({ error: 'Parent folder not found' });
       }
-      const id = Math.random().toString(36).substr(2, 9);
+      const id = randomId();
+      const storagePayload = type === 'file'
+        ? await buildSupabaseFileStoragePayload({ id, name, url, ownerEmployeeId, ownerClientId })
+        : { storage_bucket: null, storage_path: null, public_url: null, size_bytes: null, mime_type: null };
       const payload = {
         id,
         client_id: ownerClientId,
@@ -201,11 +302,11 @@ export function registerFilesRoutes({
         employee_id: ownerEmployeeId,
         name,
         type,
-        mime_type: extension || null,
-        size_bytes: size || null,
-        storage_bucket: type === 'file' ? env.supabaseBucketVaultFiles : null,
-        storage_path: type === 'file' ? `${ownerEmployeeId ? `employee/${ownerEmployeeId}` : `client/${ownerClientId || 'shared'}`}/${id}/${name}` : null,
-        public_url: url || null,
+        mime_type: type === 'file' ? (storagePayload.mime_type || extension || guessMimeType(name)) : null,
+        size_bytes: type === 'file' ? (storagePayload.size_bytes ?? null) : null,
+        storage_bucket: storagePayload.storage_bucket,
+        storage_path: storagePayload.storage_path,
+        public_url: storagePayload.public_url,
         password: password || null,
         uploaded_by: (req.session as any)?.userId || null,
       };
@@ -250,12 +351,14 @@ export function registerFilesRoutes({
       const sessionRole = (req.session as any)?.userRole;
       if (actorClientId && sessionRole !== 'superadmin' && existing.client_id && existing.client_id !== actorClientId) return res.status(403).json({ error: 'Forbidden' });
 
-      const removeRecursively = async (fileId: string) => {
-        const { data: children } = await supabaseAdmin.from('files').select('id').eq('parent_id', fileId);
-        for (const child of children || []) await removeRecursively(child.id);
-        await supabaseAdmin.from('files').delete().eq('id', fileId);
-      };
-      await removeRecursively(req.params.id);
+      const descendants = await collectSupabaseFileTree(req.params.id);
+      const rowsToRemove = [existing, ...descendants];
+      await removeStoredObjects(rowsToRemove.map((row: any) => ({ bucket: row.storage_bucket, path: row.storage_path })));
+      const idsToRemove = rowsToRemove.map((row: any) => row.id).filter(Boolean);
+      if (idsToRemove.length) {
+        const { error: deleteError } = await supabaseAdmin.from('files').delete().in('id', idsToRemove);
+        if (deleteError) throw deleteError;
+      }
       logActivity(req, 'DELETE_FILE', { fileId: req.params.id, name: existing.name, employeeId: existing.employee_id || null, clientId: existing.client_id || null });
       return res.json({ success: true });
     } catch (error) {
@@ -279,10 +382,16 @@ export function registerFilesRoutes({
         return res.status(403).json({ error: 'Forbidden' });
       }
       if (existing.type === 'folder') {
-        const payload = buildFolderDownloadPayload(existing);
+        const payload = env.databaseProvider !== 'supabase'
+          ? buildFolderDownloadPayload(existing)
+          : await buildSupabaseFolderDownloadPayload(existing);
         return res.json(payload);
       }
-      res.json({ id: existing.id, name: existing.name, url: existing.url || existing.public_url || existing.storage_path || null, extension: existing.extension || existing.mime_type || null, size: existing.size || existing.size_bytes || null });
+      let downloadUrl = existing.url || existing.public_url || existing.storage_path || null;
+      if (env.databaseProvider === 'supabase' && existing.storage_bucket && existing.storage_path) {
+        downloadUrl = await getDownloadUrlForStoredObject({ bucket: existing.storage_bucket, path: existing.storage_path });
+      }
+      res.json({ id: existing.id, name: existing.name, url: downloadUrl, extension: existing.extension || extensionFromName(existing.name) || existing.mime_type || null, size: existing.size || existing.size_bytes || null });
     } catch (error) {
       console.error('Failed to prepare file download:', error);
       res.status(500).json({ error: 'Failed to prepare file download' });

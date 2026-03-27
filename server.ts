@@ -7,7 +7,7 @@ import { assertRuntimeConfiguration, env, isProduction, isSmtpConfigured, isSupa
 import { db, getDatabaseReadiness } from "./src/server/db/index";
 import { getLastMailEvent, getMailerReadiness, sendMailMessage, setLastMailEvent, verifyMailTransport } from "./src/server/integrations/mailer";
 import { buildRosterAndTimesheetAttachments, sendPayrollSubmissionEmail, type PayrollMailBreakdownRow } from "./src/server/utils/payrollMail";
-import { getSupabaseReadiness } from "./src/server/integrations/supabase";
+import { getSupabaseReadiness, supabaseAdmin } from "./src/server/integrations/supabase";
 import { registerAdminRoutes } from "./src/server/routes/admin";
 import { registerAuthSystemRoutes } from "./src/server/routes/authSystem";
 import { registerFilesRoutes } from "./src/server/routes/files";
@@ -15,19 +15,25 @@ import { registerLeaveRoutes } from "./src/server/routes/leave";
 import { registerWorkforceRoutes } from "./src/server/routes/workforce";
 import { registerSupabaseCoreRoutes } from "./src/server/routes/supabaseCore";
 import { getActorClientId, getEffectiveClientId } from "./src/server/utils/tenant";
+import { ensureClientVaultStructureSupabase } from "./src/server/utils/vaultScaffold";
 
 assertRuntimeConfiguration();
 runtimeConfigWarnings.forEach((warning) => console.warn(`[CONFIG] ${warning}`));
 
-async function getSessionUser(req: any) {
+function getSessionUser(req: any) {
   const userId = (req.session as any)?.userId;
   if (!userId) return null;
   if (env.databaseProvider === "supabase") {
-    const { supabaseAdmin } = await import("./src/server/integrations/supabase");
-    const { data: user } = await supabaseAdmin.from('users').select('id,email,role,client_id,is_trial,trial_end_date,name,image').eq('id', userId).single();
-    if (!user) return null;
-    const { data: client } = user.client_id ? await supabaseAdmin.from('clients').select('name,locked_features').eq('id', user.client_id).single() : { data: null as any };
-    return { ...user, client_name: client?.name || null, locked_features: client?.locked_features || [] } as any;
+    return {
+      id: userId,
+      email: (req.session as any)?.userEmail || null,
+      role: (req.session as any)?.userRole || null,
+      client_id: (req.session as any)?.userClientId || null,
+      is_trial: 0,
+      trial_end_date: null,
+      client_name: null,
+      locked_features: [],
+    } as any;
   }
   return db.prepare(`
     SELECT u.id, u.email, u.role, u.client_id, u.is_trial, u.trial_end_date, c.name as client_name, c.locked_features
@@ -1502,6 +1508,94 @@ if (isSmtpConfigured) {
       requireAuth,
       requireAuthOrLocalMailDebug,
     });
+
+  }
+
+  if (env.databaseProvider === 'supabase') {
+    app.get('/api/auth/debug', (req, res) => {
+      res.json({
+        hasSession: !!req.session,
+        userId: (req.session as any)?.userId,
+        userRole: (req.session as any)?.userRole,
+        employeeId: (req.session as any)?.employeeId,
+        cookie: req.session?.cookie,
+      });
+    });
+
+    app.get('/api/system/mail-status', requireAuthOrLocalMailDebug, (_req, res) => {
+      res.json({ readiness: getMailerReadiness(), lastEvent: getLastMailEvent() });
+    });
+
+    const sendSupabaseTestEmail = async (target: string) => {
+      const info = await sendMailMessage({
+        to: target,
+        subject: 'Sightfull test email',
+        html: '<p>This is a test email from Sightfull Dashboard.</p>',
+        text: 'This is a test email from Sightfull Dashboard.',
+      });
+      setLastMailEvent({
+        at: new Date().toISOString(),
+        kind: 'test',
+        ok: true,
+        to: target,
+        subject: 'Sightfull test email',
+        messageId: info.messageId,
+        accepted: Array.isArray(info.accepted) ? info.accepted.map(String) : [],
+        rejected: Array.isArray(info.rejected) ? info.rejected.map(String) : [],
+        response: info.response,
+      });
+      return info;
+    };
+
+    app.post('/api/system/test-email', requireAuthOrLocalMailDebug, async (req, res) => {
+      try {
+        const target = String(req.body?.to || '').trim() || env.smtpUser || env.smtpFromEmail;
+        if (!target) return res.status(400).json({ error: 'No destination email provided' });
+        const info = await sendSupabaseTestEmail(target);
+        res.json({ ok: true, to: target, messageId: info.messageId, accepted: info.accepted, rejected: info.rejected, response: info.response });
+      } catch (error: any) {
+        setLastMailEvent({ at: new Date().toISOString(), kind: 'test', ok: false, to: String(req.body?.to || '').trim() || env.smtpUser || env.smtpFromEmail, subject: 'Sightfull test email', error: error?.message || 'Failed to send test email' });
+        res.status(500).json({ error: error?.message || 'Failed to send test email' });
+      }
+    });
+
+    app.get('/api/system/test-email', requireAuthOrLocalMailDebug, async (req, res) => {
+      try {
+        const target = String(req.query?.to || '').trim() || env.smtpUser || env.smtpFromEmail;
+        if (!target) return res.status(400).json({ error: 'No destination email provided' });
+        const info = await sendSupabaseTestEmail(target);
+        res.json({ ok: true, to: target, messageId: info.messageId, accepted: info.accepted, rejected: info.rejected, response: info.response });
+      } catch (error: any) {
+        setLastMailEvent({ at: new Date().toISOString(), kind: 'test', ok: false, to: String(req.query?.to || '').trim() || env.smtpUser || env.smtpFromEmail, subject: 'Sightfull test email', error: error?.message || 'Failed to send test email' });
+        res.status(500).json({ error: error?.message || 'Failed to send test email' });
+      }
+    });
+
+    app.post('/api/client/roster-preferences', requireAuth, async (req, res) => {
+      const sessionUser = await getSessionUser(req);
+      const sessionRole = (req.session as any)?.userRole;
+      const targetClientId = sessionRole === 'superadmin'
+        ? (String(req.headers['x-active-client-id'] || '').trim() || sessionUser?.client_id || null)
+        : sessionUser?.client_id || null;
+      if (!targetClientId) return res.status(400).json({ error: 'No client context' });
+      const { data: existing, error: fetchError } = await supabaseAdmin
+        .from('clients')
+        .select('roster_mode, roster_seed_week_start')
+        .eq('id', targetClientId)
+        .maybeSingle();
+      if (fetchError) return res.status(500).json({ error: fetchError.message });
+      if (!existing) return res.status(404).json({ error: 'Client not found' });
+      const nextMode = String(req.body?.rosterMode || existing.roster_mode || 'Manual');
+      const nextSeed = req.body?.rosterSeedWeekStart ?? existing.roster_seed_week_start ?? null;
+      const { data, error } = await supabaseAdmin
+        .from('clients')
+        .update({ roster_mode: nextMode, roster_seed_week_start: nextSeed })
+        .eq('id', targetClientId)
+        .select('roster_mode, roster_seed_week_start')
+        .single();
+      if (error) return res.status(500).json({ error: error.message });
+      res.json({ rosterMode: data?.roster_mode || 'Manual', rosterSeedWeekStart: data?.roster_seed_week_start || null });
+    });
   }
 
   const getSessionEmployee = (req: any) => {
@@ -1636,10 +1730,7 @@ if (isSmtpConfigured) {
 
   const canMutateVaultItems = (req: any) => {
     const sessionRole = (req.session as any)?.userRole;
-    const sessionEmployeeId = (req.session as any)?.employeeId;
-    if (sessionRole === 'superadmin') return true;
-    if (sessionEmployeeId) return true;
-    return false;
+    return sessionRole === 'superadmin';
   };
 
   const getEffectiveTenantClientId = (req: any) => getEffectiveClientId(db, req) || null;
@@ -1778,9 +1869,13 @@ if (isSmtpConfigured) {
     };
   };
 
-  const ensureClientVaultStructure = (clientId: string | null | undefined) => {
+  const ensureClientVaultStructure = async (clientId: string | null | undefined) => {
     const normalizedClientId = String(clientId || '').trim();
     if (!normalizedClientId) return;
+    if (env.databaseProvider === 'supabase') {
+      await ensureClientVaultStructureSupabase(normalizedClientId);
+      return;
+    }
 
     const ensureFolder = (name: string, parentId: string | null = null) => {
       const existing = db.prepare("SELECT id FROM files WHERE client_id = ? AND type = 'folder' AND employee_id IS NULL AND name = ? AND ((parent_id IS NULL AND ? IS NULL) OR parent_id = ?) LIMIT 1").get(

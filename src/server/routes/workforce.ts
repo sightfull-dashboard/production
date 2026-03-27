@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from 'express';
 import { getEffectiveClientId, getSessionRole } from '../utils/tenant';
-import { sortShiftsBaseFirst } from '../../lib/shifts';
+import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../../lib/shifts';
 
 type Middleware = (req: Request, res: Response, next: NextFunction) => unknown;
 
@@ -588,6 +588,23 @@ export function registerWorkforceRoutes({
     }
     if (role !== 'superadmin' && isPayrollLockedForDate(db, clientId, String(day_date || ''))) {
       return res.status(403).json({ error: 'This payroll-submitted roster period is locked. Contact admin through Support for changes.' });
+    }
+    if (role !== 'superadmin' && shift_id) {
+      const previousDate = new Date(`${String(day_date || '')}T00:00:00`);
+      if (!Number.isNaN(previousDate.getTime())) {
+        previousDate.setDate(previousDate.getDate() - 1);
+        const previousDayIso = previousDate.toISOString().slice(0, 10);
+        const previousRoster = db.prepare('SELECT shift_id FROM roster WHERE employee_id = ? AND day_date = ?').get(employee_id, previousDayIso) as any;
+        if (previousRoster?.shift_id) {
+          const previousShift = db.prepare('SELECT id, label, start, end FROM shifts WHERE id = ?').get(previousRoster.shift_id) as any;
+          const nextShift = db.prepare('SELECT id, label, start, end FROM shifts WHERE id = ?').get(shift_id) as any;
+          if (doesShiftStartOverlapPrevious(previousShift, nextShift)) {
+            return res.status(400).json({
+              error: `${String(nextShift?.label || 'Selected shift')} cannot be allocated because it starts before the previous shift ends at ${formatShiftTimeLabel(previousShift?.end)}.`,
+            });
+          }
+        }
+      }
     }
     if (shift_id === null) {
       db.prepare('DELETE FROM roster WHERE employee_id = ? AND day_date = ?').run(employee_id, day_date);

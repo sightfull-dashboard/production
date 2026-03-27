@@ -26,3 +26,42 @@ export const sortShiftsBaseFirst = <T extends Pick<Shift, 'label'>>(shifts: T[])
     return String(a.label || '').localeCompare(String(b.label || ''));
   });
 };
+
+
+export const parseShiftTimeToMinutes = (value: string | null | undefined): number | null => {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return (hours * 60) + minutes;
+};
+
+export const formatShiftTimeLabel = (value: string | null | undefined): string => {
+  const minutes = parseShiftTimeToMinutes(value);
+  if (minutes === null) return 'N/A';
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+};
+
+export const doesShiftStartOverlapPrevious = (
+  previousShift: Pick<Shift, 'start' | 'end' | 'label'> | null | undefined,
+  nextShift: Pick<Shift, 'start' | 'end' | 'label'> | null | undefined,
+): boolean => {
+  if (!previousShift || !nextShift) return false;
+  if (isAdministrativeShift(previousShift) || isAdministrativeShift(nextShift)) return false;
+
+  const previousStart = parseShiftTimeToMinutes(previousShift.start);
+  const previousEnd = parseShiftTimeToMinutes(previousShift.end);
+  const nextStart = parseShiftTimeToMinutes(nextShift.start);
+
+  if (previousStart === null || previousEnd === null || nextStart === null) return false;
+
+  const previousEndAbsolute = previousEnd <= previousStart ? previousEnd + 1440 : previousEnd;
+  const nextStartAbsolute = nextStart + 1440;
+
+  return nextStartAbsolute < previousEndAbsolute;
+};
