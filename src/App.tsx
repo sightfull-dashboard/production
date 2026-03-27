@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { 
-  LayoutDashboard, 
-  Users, 
-  Clock, 
-  CalendarDays, 
-  FileText, 
+import {
+  LayoutDashboard,
+  Users,
+  Clock,
+  CalendarDays,
+  FileText,
   Files,
   LogOut,
   X,
@@ -24,366 +24,31 @@ import {
   ClipboardList,
   History,
   MessageSquare,
-  AlertCircle
+  AlertCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfWeek, addDays, differenceInDays } from 'date-fns';
-import type { RosterDefinition } from './types';
+import type { RosterDefinition, Shift, Employee, RosterAssignment, RosterMeta, OffboardReason, User, AuthStatus, LeaveRequest, SupportTicket, PayrollSubmission } from './types';
 import { cn } from './lib/utils';
 import { ApiError } from './lib/api';
+import { buildActiveClientHeaders, clearStoredActiveClientId, setStoredActiveClientId } from './lib/activeClient';
 import { isEmployeePath, isSuperAdminPath, isSuperAdminRole, normalizeUserRole } from './lib/auth';
-
-const toTitleCase = (value?: string | null) => {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  return raw
-    .replace(/[._-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(' ');
-};
-
-const formatAccountDisplayName = (user?: { name?: string | null; email?: string | null }) => {
-  return toTitleCase(user?.name || user?.email?.split('@')[0] || 'User') || 'User';
-};
-
-const formatRoleLabel = (role?: string | null) => {
-  return toTitleCase(role || 'user') || 'User';
-};
-
-const getSidebarBrandLabel = (opts?: { clientName?: string | null; client_name?: string | null; isSuperAdmin?: boolean }) => {
-  const clientName = String(opts?.clientName || opts?.client_name || '').trim();
-  if (clientName) return clientName;
-  return opts?.isSuperAdmin ? 'Sightfull Pro v2.0' : 'Client';
-};
-
-const employeeIdNumericValue = (value?: string | null) => {
-  const match = String(value || '').trim().toUpperCase().match(/^EMP(\d+)$/);
-  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
-};
-
-const compareEmployeeIds = (left?: string | null, right?: string | null) => {
-  const leftNum = employeeIdNumericValue(left);
-  const rightNum = employeeIdNumericValue(right);
-  if (Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum !== rightNum) {
-    return leftNum - rightNum;
-  }
-  return String(left || '').localeCompare(String(right || ''), undefined, { numeric: true, sensitivity: 'base' });
-};
-
-const generateAutoEmployeeId = (existingEmployees: Array<{ emp_id?: string | null }>) => {
-  const nextSequence = existingEmployees.reduce((maxValue, employee) => {
-    const numericValue = employeeIdNumericValue(employee.emp_id);
-    return Number.isFinite(numericValue) ? Math.max(maxValue, numericValue) : maxValue;
-  }, 0) + 1;
-  return `EMP${String(nextSequence).padStart(3, '0')}`;
-};
-
-const COUNTRY_OF_ISSUE_OPTIONS = [
-  'Afghanistan',
-  'Aland Islands',
-  'Albania',
-  'Algeria',
-  'American Samoa',
-  'Andorra',
-  'Angola',
-  'Anguilla',
-  'Antarctica',
-  'Antigua and Barbuda',
-  'Argentina',
-  'Armenia',
-  'Aruba',
-  'Australia',
-  'Austria',
-  'Azerbaijan',
-  'Bahamas',
-  'Bahrain',
-  'Bangladesh',
-  'Barbados',
-  'Belarus',
-  'Belgium',
-  'Belize',
-  'Benin',
-  'Bermuda',
-  'Bhutan',
-  'Bolivia (Plurinational State of)',
-  'Sint Eustatius and Saba',
-  'Bosnia and Herzegovina',
-  'Botswana',
-  'Bouvet Island',
-  'Brazil',
-  'British Indian Ocean Territory',
-  'Brunei Darussalam',
-  'Bulgaria',
-  'Burkina Faso',
-  'Burundi',
-  'Cambodia',
-  'Cameroon',
-  'Canada',
-  'Cape Verde',
-  'Cayman Islands',
-  'Central African Republic',
-  'Chad',
-  'Chile',
-  'China',
-  'Christmas Island',
-  'Cocos (Keeling) Island',
-  'Colombia',
-  'Comoros',
-  'Congo',
-  'Congo (The Democratic Republic of)',
-  'Cook Islands',
-  'Costa Rica',
-  "Cote d Ivoire",
-  'Croatia',
-  'Cuba',
-  'Curacao',
-  'Cyprus',
-  'Czech Republic',
-  'Denmark',
-  'Djibouti',
-  'Dominica',
-  'Dominican Republic',
-  'Ecuador',
-  'Egypt',
-  'El Salvador',
-  'Equatorial Guinea',
-  'Eritrea',
-  'Estonia',
-  'Ethiopia',
-  'Falkland Islands (Malvinas)',
-  'Faroe Islands',
-  'Fiji',
-  'Finland',
-  'France',
-  'French Guiana',
-  'French Polynesia',
-  'French Southern Territories',
-  'Gabon',
-  'Gambia',
-  'Georgia',
-  'Germany',
-  'Ghana',
-  'Gibraltar',
-  'Greece',
-  'Greenland',
-  'Grenada',
-  'Guadeloupe',
-  'Guam',
-  'Guatemala',
-  'Guernsey',
-  'Guinea',
-  'Guinea-Bissau',
-  'Guyana',
-  'Haiti',
-  'Heard and McDonald Islands',
-  'Holy See (Vatican City State)',
-  'Honduras',
-  'Hong Kong Special Administrative Region of China',
-  'Hungary',
-  'Iceland',
-  'India',
-  'Indonesia',
-  'Iran (Islamic Republic of)',
-  'Iraq',
-  'Ireland',
-  'Isle of Man',
-  'Israel',
-  'Italy',
-  'Jamaica',
-  'Japan',
-  'Jersey',
-  'Jordan',
-  'Kazakhstan',
-  'Kenya',
-  'Kiribati',
-  "Korea (Democratic People's Republic of)",
-  'Korea (Republic of)',
-  'Kuwait',
-  'Kyrgyzstan',
-  "Lao People's Democratic Republic",
-  'Latvia',
-  'Lebanon',
-  'Lesotho',
-  'Liberia',
-  'Libya',
-  'Liechtenstein',
-  'Lithuania',
-  'Luxembourg',
-  'Macao Special Administrative Region of China',
-  'Macedonia (The former Yugoslav Republic of)',
-  'Madagascar',
-  'Malawi',
-  'Malaysia',
-  'Maldives',
-  'Mali',
-  'Malta',
-  'Marshall Islands',
-  'Martinique',
-  'Mauritania',
-  'Mauritius',
-  'Mayotte',
-  'Mexico',
-  'Micronesia (Federated States of)',
-  'Moldova (Republic of)',
-  'Monaco',
-  'Mongolia',
-  'Montenegro',
-  'Montserrat',
-  'Morocco',
-  'Mozambique',
-  'Myanmar',
-  'Namibia',
-  'Nauru',
-  'Nepal',
-  'Netherlands',
-  'New Caledonia',
-  'New Zealand',
-  'Nicaragua',
-  'Niger',
-  'Nigeria',
-  'Niue',
-  'Norfolk Island',
-  'Northern Mariana Islands',
-  'Norway',
-  'Oman',
-  'Pakistan',
-  'Palau',
-  'Palestine (State of)',
-  'Panama',
-  'Papua New Guinea',
-  'Paraguay',
-  'Peru',
-  'Philippines',
-  'Pitcairn',
-  'Poland',
-  'Portugal',
-  'Puerto Rico',
-  'Qatar',
-  'Reunion',
-  'Romania',
-  'Russian Federation',
-  'Rwanda',
-  'Saint Barthelemy',
-  'Ascension and Tristan da Cunha',
-  'Saint Kitts and Nevis',
-  'Saint Lucia',
-  'Saint Martin (French Part)',
-  'Saint Pierre and Miquelon',
-  'Saint Vincent and the Grenadines',
-  'Samoa',
-  'San Marino',
-  'Sao Tome and Principe',
-  'Saudi Arabia',
-  'Senegal',
-  'Serbia',
-  'Seychelles',
-  'Sierra Leone',
-  'Singapore',
-  'Sint Maarten (Dutch Part)',
-  'Slovakia',
-  'Slovenia',
-  'Solomon Islands',
-  'Somalia',
-  'South Africa',
-  'South Georgia and South Sandwich Islands',
-  'South Sudan',
-  'Spain',
-  'Sri Lanka',
-  'Sudan',
-  'Suriname',
-  'Svalbard and Jan Mayen',
-  'Swaziland',
-  'Sweden',
-  'Switzerland',
-  'Syrian Arab Republic',
-  'Taiwan Province of China',
-  'Tajikistan',
-  'Tanzania (United Republic of)',
-  'Thailand',
-  'Timor-Leste',
-  'Togo',
-  'Tokelau',
-  'Tonga',
-  'Trinidad and Tobago',
-  'Tunisia',
-  'Turkey',
-  'Turkmenistan',
-  'Turks and Caicos Islands',
-  'Tuvalu',
-  'Uganda',
-  'Ukraine',
-  'United Arab Emirates',
-  'United Kingdom',
-  'United States',
-  'United States Minor Outlying Islands',
-  'Uruguay',
-  'Uzbekistan',
-  'Vanuatu',
-  'Venezuela (Bolivarian Republic of)',
-  'Viet Nam',
-  'Virgin Islands (British)',
-  'Virgin Islands (United States)',
-  'Wallis and Futuna',
-  'Western Sahara',
-  'Yemen',
-  'Zambia',
-  'Zimbabwe',
-] as const;
-
-
-const digitsOnly = (value?: string | number | null) => String(value ?? '').replace(/\D/g, '');
-
-const formatHourlyRateInput = (value?: string | number | null) => {
-  const digits = digitsOnly(value).padStart(8, '0');
-  const whole = digits.slice(0, -4).replace(/^0+(?=\d)/, '') || '0';
-  const decimals = digits.slice(-4);
-  return `R${whole.padStart(3, '0')}.${decimals}`;
-};
-
-const parseHourlyRateInputToNumber = (value?: string | null) => {
-  const digits = digitsOnly(value).padStart(8, '0');
-  const whole = digits.slice(0, -4).replace(/^0+(?=\d)/, '') || '0';
-  const decimals = digits.slice(-4);
-  return Number(`${whole}.${decimals}`);
-};
-
-const formatStoredHourlyRate = (value?: string | number | null) => {
-  const normalized = String(value ?? '').replace(/[^0-9.-]/g, '').trim();
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed)) return 'R000.0000';
-  const [wholePart, decimalPart = '0000'] = parsed.toFixed(4).split('.');
-  return `R${wholePart.padStart(3, '0')}.${decimalPart}`;
-};
-
-const formatLeaveInput = (value?: string | number | null) => {
-  const digits = digitsOnly(value).padStart(6, '0');
-  const whole = digits.slice(0, -4).replace(/^0+(?=\d)/, '') || '0';
-  const decimals = digits.slice(-4);
-  return `${whole.padStart(2, '0')}.${decimals}`;
-};
-
-const parseLeaveInputToNumber = (value?: string | null) => {
-  const digits = digitsOnly(value).padStart(6, '0');
-  const whole = digits.slice(0, -4).replace(/^0+(?=\d)/, '') || '0';
-  const decimals = digits.slice(-4);
-  return Number(`${whole}.${decimals}`);
-};
-
-const phoneDigitsToLocalSa = (value?: string | null) => {
-  let digits = String(value || '').replace(/\D/g, '');
-  if (digits.startsWith('27')) digits = digits.slice(2);
-  if (digits.startsWith('0')) digits = digits.slice(1);
-  return digits.slice(0, 9);
-};
-
-const normalizeSouthAfricanCell = (value?: string | null) => {
-  const localDigits = phoneDigitsToLocalSa(value);
-  return localDigits ? `+27${localDigits}` : '';
-};
-import { Shift, Employee, RosterAssignment, RosterMeta, OffboardReason, User, AuthStatus, LeaveRequest, SupportTicket, PayrollSubmission } from './types';
+import { COUNTRY_OF_ISSUE_OPTIONS, BANK_NAME_OPTIONS, SIDEBAR_LOGO as sidebarLogo } from './app/shared/formOptions';
+import {
+  compareEmployeeIds,
+  formatAccountDisplayName,
+  formatHourlyRateInput,
+  formatLeaveInput,
+  formatRoleLabel,
+  formatStoredHourlyRate,
+  generateAutoEmployeeId,
+  getSidebarBrandLabel,
+  normalizeSouthAfricanCell,
+  parseHourlyRateInputToNumber,
+  parseLeaveInputToNumber,
+  phoneDigitsToLocalSa,
+} from './app/shared/formatters';
+import { Card, FeatureWrapper, Modal, SidebarItem, SuperAdminSidebarItem } from './app/shared/chrome';
 import { EmployeeSection } from './components/EmployeeSection';
 import { RosterSection } from './components/RosterSection';
 import { TimesheetSection } from './components/TimesheetSection';
@@ -411,193 +76,6 @@ import { Tooltip } from './components/Tooltip';
 import { Toaster, toast } from 'sonner';
 import { calculateEmployeePayroll } from './services/PayrollService';
 import { appService } from './services/appService';
-const sidebarLogo = '/sd-logo.png';
-
-// --- UI Components ---
-
-const BANK_NAME_OPTIONS = [
-  'ABN AMRO BANK',
-  'ABSA',
-  'AFRICAN BANK',
-  'ALBARAKA BANK',
-  'GROBANK',
-  'BIDVEST BANK',
-  'CAPITEC BANK',
-  'CITI BANK',
-  'FBC FIDELITY BANK',
-  'FNB',
-  'GRINDROD BANK',
-  'HABIB OVERSEAS BANK',
-  'HBZ BANK',
-  'INVESTEC',
-  'ITHALA BANK',
-  'MEEG BANK',
-  'MERCANTILE BANK',
-  'NBS',
-  'NEDBANK',
-  'ACCESS BANK',
-  'PEP BANK',
-  'POSTBANK',
-  'STANDARD BANK',
-  'STATE BANK OF INDIA',
-  'UNIBANK',
-  'ABSA (RELOAD CARD)',
-  'STANDARD BANK (MUKURU CARD)',
-  'WIZZIT Bank',
-  'IMB FINANCIAL SERVICES (ABSA)',
-  'TYMEBANK',
-  'UBANK',
-  'SASFIN BANK',
-  'DISCOVERY BANK',
-  'BANK ZERO MUTUAL BANK',
-  'FINBOND MUTUAL BANK',
-  'VBS MUTUAL BANK',
-  'NEDBANK (CORPORATE SAVER ACCOUNT)',
-  'RMB Private Bank',
-  'OLD MUTUAL',
-  'BIDVEST BANK ALLIANCE',
-];
-
-const SidebarItem = ({ icon: Icon, label, active, onClick, badge, theme = 'indigo', isLocked = false }: { icon: any, label: string, active: boolean, onClick: () => void, badge?: number, theme?: 'indigo' | 'emerald' | 'rose', isLocked?: boolean }) => {
-  const themes = {
-    indigo: {
-      active: "bg-indigo-600 text-white shadow-lg shadow-indigo-200",
-      hover: "text-slate-600 hover:bg-white/50 hover:translate-x-1",
-      iconActive: "text-white",
-      iconHover: "text-slate-400 group-hover:text-indigo-600"
-    },
-    emerald: {
-      active: "bg-emerald-600 text-white shadow-lg shadow-emerald-200",
-      hover: "text-slate-600 hover:bg-white/50 hover:translate-x-1",
-      iconActive: "text-white",
-      iconHover: "text-slate-400 group-hover:text-emerald-600"
-    },
-    rose: {
-      active: "bg-rose-600 text-white shadow-lg shadow-rose-200",
-      hover: "text-slate-400 hover:bg-white/10 hover:translate-x-1",
-      iconActive: "text-white",
-      iconHover: "text-slate-500 group-hover:text-rose-400"
-    }
-  };
-
-  const currentTheme = themes[theme];
-
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-3 w-full px-4 py-3 rounded-xl transition-all duration-200 group relative",
-        active ? currentTheme.active : currentTheme.hover,
-        isLocked && "opacity-70 grayscale-[0.3]"
-      )}
-    >
-      <Icon className={cn("w-5 h-5", active ? currentTheme.iconActive : currentTheme.iconHover)} />
-      <span className="font-bold text-sm tracking-tight">{label}</span>
-      {isLocked && (
-        <span className="absolute right-3">
-          <Lock className="w-3.5 h-3.5 text-slate-400" />
-        </span>
-      )}
-      {badge !== undefined && badge > 0 && !isLocked && (
-        <span className="absolute right-3 w-5 h-5 bg-rose-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-sm">
-          {badge}
-        </span>
-      )}
-    </button>
-  );
-};
-
-const Card = ({ children, className }: { children: React.ReactNode, className?: string }) => (
-  <div className={cn("bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 p-6", className)}>
-    {children}
-  </div>
-);
-
-const FeatureWrapper = ({ isLocked, featureName, children }: { isLocked: boolean, featureName: string, children: React.ReactNode }) => {
-  if (!isLocked) return <>{children}</>;
-  
-  return (
-    <div className="relative min-h-[60vh]">
-      <div className="absolute inset-0 blur-md pointer-events-none select-none opacity-40 transition-all duration-300 overflow-hidden">
-        {children}
-      </div>
-      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center text-center px-4 bg-white/30 backdrop-blur-sm rounded-[32px]">
-        <div className="w-24 h-24 bg-rose-50 rounded-[32px] flex items-center justify-center mb-8 border border-rose-100 shadow-xl shadow-rose-100/50">
-          <Lock className="w-10 h-10 text-rose-500" />
-        </div>
-        <h2 className="text-3xl font-black text-slate-800 mb-4 tracking-tight">Feature Locked</h2>
-        <p className="text-slate-500 max-w-md mb-8 text-lg leading-relaxed">
-          The <span className="font-bold text-slate-700">{featureName}</span> feature is not available in your current plan. Please contact your administrator to upgrade your account and unlock this feature.
-        </p>
-        <button className="px-8 py-4 bg-slate-900 text-white rounded-2xl font-black text-sm hover:bg-slate-800 transition-all shadow-xl shadow-slate-900/20 hover:shadow-2xl hover:shadow-slate-900/30 hover:-translate-y-1">
-          Contact Administrator
-        </button>
-      </div>
-    </div>
-  );
-};
-
-const Modal = ({ isOpen, onClose, title, children, footer }: { isOpen: boolean, onClose: () => void, title: string, children: React.ReactNode, footer?: React.ReactNode }) => (
-  <AnimatePresence>
-    {isOpen && (
-      <>
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          onClick={onClose}
-          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]"
-        />
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 20 }}
-          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl bg-white rounded-[40px] shadow-2xl z-[101] overflow-hidden"
-        >
-          <div className="flex items-center justify-between p-8 border-b border-slate-100">
-            <h3 className="text-2xl font-black text-slate-800 tracking-tight">{title}</h3>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
-              <X className="w-5 h-5 text-slate-400" />
-            </button>
-          </div>
-          <div className="p-8 max-h-[70vh] overflow-y-auto">
-            {children}
-          </div>
-          {footer && (
-            <div className="p-8 bg-slate-50 flex justify-end gap-3">
-              {footer}
-            </div>
-          )}
-        </motion.div>
-      </>
-    )}
-  </AnimatePresence>
-);
-
-const SuperAdminSidebarItem = ({ icon: Icon, label, active, onClick, badge }: { icon: any, label: string, active: boolean, onClick: () => void, badge?: number }) => (
-  <button
-    onClick={onClick}
-    className={cn(
-      "flex items-center justify-between w-full px-4 py-3 rounded-xl transition-all duration-200 group",
-      active 
-        ? "bg-indigo-500 text-white shadow-lg shadow-indigo-500/20" 
-        : "text-slate-400 hover:bg-white/10 hover:translate-x-1"
-    )}
-  >
-    <div className="flex items-center gap-3">
-      <Icon className={cn("w-5 h-5", active ? "text-white" : "text-slate-500 group-hover:text-indigo-400")} />
-      <span className="font-bold text-sm tracking-tight">{label}</span>
-    </div>
-    {badge !== undefined && badge > 0 && (
-      <span className={cn(
-        "px-2 py-0.5 rounded-full text-[10px] font-black",
-        active ? "bg-white/20 text-white" : "bg-rose-500/20 text-rose-400"
-      )}>
-        {badge}
-      </span>
-    )}
-  </button>
-);
 
 export default function App() {
   const [isSuperAdminRoute, setIsSuperAdminRoute] = useState(isSuperAdminPath(window.location.pathname));
@@ -875,9 +353,9 @@ export default function App() {
   useEffect(() => {
     try {
       if (impersonatedClient?.id) {
-        localStorage.setItem('sightfull:active-client-id', impersonatedClient.id);
+        setStoredActiveClientId(impersonatedClient.id);
       } else if ((auth.user?.role || '').toLowerCase() !== 'superadmin') {
-        localStorage.removeItem('sightfull:active-client-id');
+        clearStoredActiveClientId();
       }
     } catch {}
   }, [impersonatedClient?.id, auth.user?.role]);
@@ -916,7 +394,7 @@ export default function App() {
       setAuth({ user: normalizedUser, loading: false });
       if (!isSuperAdminRole(normalizedUser.role)) {
         setImpersonatedClient(null);
-        try { localStorage.removeItem('sightfull:active-client-id'); } catch {}
+        clearStoredActiveClientId();
       }
       setLockedFeatures(normalizedUser.lockedFeatures || []);
       setEnabledDefinitions(normalizedUser.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
@@ -980,15 +458,6 @@ export default function App() {
 
 
   const getRosterPrefsStorageKey = (clientId?: string | null) => `sightfull:roster-prefs:${clientId || 'default'}`;
-  const getActiveClientScopeHeaders = () => {
-    try {
-      const activeClientId = localStorage.getItem('sightfull:active-client-id');
-      return activeClientId ? { 'x-active-client-id': activeClientId } : {};
-    } catch {
-      return {};
-    }
-  };
-
 
   const persistRosterPreferences = async (nextMode: 'Automated' | 'Hybrid' | 'Manual', nextSeedWeekStart: string | null) => {
     const clientId = getVisibleClientId();
@@ -1001,7 +470,7 @@ export default function App() {
     try {
       await fetch('/api/client/roster-preferences', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getActiveClientScopeHeaders() },
+        headers: { 'Content-Type': 'application/json', ...buildActiveClientHeaders() },
         body: JSON.stringify({ rosterMode: nextMode, rosterSeedWeekStart: nextSeedWeekStart }),
       });
     } catch (error) {
@@ -1627,7 +1096,7 @@ export default function App() {
     try {
       const res = await fetch(`/api/employees/${offboardingEmployee.id}/offboard`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getActiveClientScopeHeaders() },
+        headers: { 'Content-Type': 'application/json', ...buildActiveClientHeaders() },
         body: JSON.stringify(data),
       });
 
@@ -1706,7 +1175,7 @@ export default function App() {
 
       const res = await fetch('/api/roster', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getActiveClientScopeHeaders() },
+        headers: { 'Content-Type': 'application/json', ...buildActiveClientHeaders() },
         body: JSON.stringify({ employee_id: employeeId, day_date: dayDate, shift_id: shiftId, admin_override: true, allow_negative_balance: true }),
       });
       if (res.ok) {
@@ -1732,7 +1201,7 @@ export default function App() {
     try {
       const res = await fetch('/api/roster-meta', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getActiveClientScopeHeaders() },
+        headers: { 'Content-Type': 'application/json', ...buildActiveClientHeaders() },
         body: JSON.stringify({ 
           employee_id: employeeId, 
           week_start: format(currentWeekStart, 'yyyy-MM-dd'), 
@@ -2184,7 +1653,7 @@ export default function App() {
               <EmployeeSection 
                 employees={employees} 
                 onAdd={() => { setEditingEmployee(null); setAutoGeneratedEmployeeId(isSuperAdminRole(auth.user?.role) ? '' : generateAutoEmployeeId(employees)); setGeneratedPin(''); setShowPin(false); setFormIsUnion(''); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setShowCountryOfIssue(false); setIsEmployeeModalOpen(true); }}
-                onEdit={(emp) => { setEditingEmployee(emp); setAutoGeneratedEmployeeId(emp.emp_id || ''); setGeneratedPin(emp.pin || '1234'); setShowPin(false); setFormIsUnion(emp.isunion || ''); setPayRateDisplay(formatStoredHourlyRate(emp.pay_rate)); setCellLocalDigits(phoneDigitsToLocalSa(emp.cell || '')); setCountryOfIssueInput(emp.country_of_issue || ''); setIsCountryOfIssueFocused(false); setBankNameInput(emp.bank_name || ''); setIsBankNameFocused(false); setShowCountryOfIssue(Boolean(emp.passport)); setIsEmployeeModalOpen(true); }}
+                onEdit={(emp) => { setEditingEmployee(emp); setAutoGeneratedEmployeeId(emp.emp_id || ''); setGeneratedPin(emp.pin || ''); setShowPin(false); setFormIsUnion(emp.isunion || ''); setPayRateDisplay(formatStoredHourlyRate(emp.pay_rate)); setCellLocalDigits(phoneDigitsToLocalSa(emp.cell || '')); setCountryOfIssueInput(emp.country_of_issue || ''); setIsCountryOfIssueFocused(false); setBankNameInput(emp.bank_name || ''); setIsBankNameFocused(false); setShowCountryOfIssue(Boolean(emp.passport)); setIsEmployeeModalOpen(true); }}
                 onDelete={handleDeleteEmployee}
                 onOffboard={(emp) => { setOffboardingEmployee(emp); setIsOffboardModalOpen(true); }}
                 onImport={handleImportEmployees}

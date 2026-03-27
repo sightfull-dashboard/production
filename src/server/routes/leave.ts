@@ -135,7 +135,7 @@ export function registerLeaveRoutes({
         return emailMatch || cellMatch || exactCellMatch;
       });
 
-      if (!employee || String(employee.pin ?? '1234') !== pin) {
+      if (!employee || String(employee.pin ?? '') !== pin) {
         return res.status(401).json({ error: 'Invalid Email/Phone or PIN' });
       }
 

@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { Loader2, TrendingUp, Users, CalendarDays, Search, ChevronRight } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { buildActiveClientHeaders } from '../lib/activeClient';
 import { format, subMonths } from 'date-fns';
 
 const Card = ({ children, className }: { children: React.ReactNode, className?: string }) => (
@@ -32,9 +33,8 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
-      const activeClientId = typeof window !== 'undefined' ? localStorage.getItem('sightfull:active-client-id') : null;
       const res = await fetch(`/api/analytics?month=${month}`, {
-        headers: activeClientId ? { 'x-active-client-id': activeClientId } : {},
+        headers: buildActiveClientHeaders(),
       });
       if (res.ok) {
         const json = await res.json();

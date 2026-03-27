@@ -1,3 +1,5 @@
+import { buildActiveClientHeaders } from './activeClient';
+
 type ApiOptions = Omit<RequestInit, 'body'> & { body?: unknown };
 
 export class ApiError extends Error {
@@ -12,20 +14,11 @@ export class ApiError extends Error {
   }
 }
 
-const getActiveClientScopeHeaders = () => {
-  try {
-    const activeClientId = window.localStorage.getItem('sightfull:active-client-id');
-    return activeClientId ? { 'x-active-client-id': activeClientId } : {};
-  } catch {
-    return {};
-  }
-};
-
 const buildInit = (options: ApiOptions = {}): RequestInit => {
   const { body, ...rest } = options;
   const headers = new Headers(rest.headers ?? {});
 
-  const scopedHeaders = getActiveClientScopeHeaders();
+  const scopedHeaders = buildActiveClientHeaders();
   Object.entries(scopedHeaders).forEach(([key, value]) => {
     if (!headers.has(key)) headers.set(key, value);
   });

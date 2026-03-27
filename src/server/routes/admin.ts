@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '../supabaseClient';
+import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import bcrypt from 'bcryptjs';
 import type { Express, Request } from 'express';

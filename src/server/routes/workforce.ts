@@ -1,33 +1,5 @@
 import type { Express, Request, Response, NextFunction } from 'express';
-import type Database from 'better-sqlite3';
-
-const getSessionRole = (req: Request) => {
-  return String((req.session as any)?.userRole || (req.session as any)?.role || '').toLowerCase();
-};
-
-const getEffectiveClientId = (db: Database, req: Request) => {
-  const sessionRole = getSessionRole(req);
-  const activeClientIdHeader = typeof req.headers['x-active-client-id'] === 'string' ? req.headers['x-active-client-id'] : null;
-
-  if (sessionRole === 'superadmin') {
-    return activeClientIdHeader || null;
-  }
-
-  const userId = (req.session as any)?.userId as string | undefined;
-  if (userId) {
-    const user = db.prepare('SELECT client_id FROM users WHERE id = ?').get(userId) as any;
-    if (user?.client_id) return user.client_id as string;
-  }
-
-  const employeeId = (req.session as any)?.employeeId as string | undefined;
-  if (employeeId) {
-    const employee = db.prepare('SELECT client_id FROM employees WHERE id = ?').get(employeeId) as any;
-    if (employee?.client_id) return employee.client_id as string;
-  }
-
-  return null;
-};
-
+import { getEffectiveClientId, getSessionRole } from '../utils/tenant';
 
 type Middleware = (req: Request, res: Response, next: NextFunction) => unknown;
 
