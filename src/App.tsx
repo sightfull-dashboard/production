@@ -452,9 +452,14 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (isSuperAdminRole(auth.user?.role) && !impersonatedClient) {
+      document.title = 'Super Admin Panel - Sightfull Dashboard';
+      return;
+    }
+
     const clientName = String(impersonatedClient?.name || auth.user?.client_name || auth.user?.clientName || '').trim();
     document.title = clientName ? `${clientName} - Sightfull Dashboard` : 'Sightfull Dashboard';
-  }, [impersonatedClient?.name, auth.user?.client_name, auth.user?.clientName]);
+  }, [auth.user?.role, impersonatedClient?.name, auth.user?.client_name, auth.user?.clientName]);
 
 
   const getRosterPrefsStorageKey = (clientId?: string | null) => `sightfull:roster-prefs:${clientId || 'default'}`;
