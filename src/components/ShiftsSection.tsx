@@ -2,14 +2,14 @@ import React, { useState, useMemo } from 'react';
 import { Plus, Clock, Edit3, Trash2, Search } from 'lucide-react';
 import { Shift } from '../types';
 import { Tooltip } from './Tooltip';
+import { isAdministrativeShift, sortShiftsBaseFirst } from '../lib/shifts';
 
-const PROTECTED_LEAVE_SHIFT_LABELS = ['absent', 'annual leave', 'sick leave', 'family leave', 'unshifted'];
 const PAID_LEAVE_SHIFT_HOURS: Record<string, number> = {
   'annual leave': 9,
   'sick leave': 9,
   'family leave': 9,
 };
-const isProtectedLeaveShift = (shift: Shift) => PROTECTED_LEAVE_SHIFT_LABELS.includes(String(shift.label || '').trim().toLowerCase());
+const isProtectedLeaveShift = (shift: Shift) => isAdministrativeShift(shift);
 
 const getShiftTotalHours = (shift: Shift) => {
   const label = String(shift.label || '').trim().toLowerCase();
@@ -39,12 +39,14 @@ export const ShiftsSection: React.FC<ShiftsSectionProps> = ({ shifts, onAdd, onE
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredShifts = useMemo(() => {
-    return shifts.filter(s => {
+    const visible = shifts.filter(s => {
       if (!isSuperAdmin && isProtectedLeaveShift(s)) return false;
       return s.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (s.start && s.start.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (s.end && s.end.toLowerCase().includes(searchTerm.toLowerCase()));
     });
+
+    return sortShiftsBaseFirst(visible);
   }, [shifts, searchTerm, isSuperAdmin]);
 
   return (

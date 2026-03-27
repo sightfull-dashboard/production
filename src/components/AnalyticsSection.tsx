@@ -36,12 +36,18 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
       const res = await fetch(`/api/analytics?month=${month}`, {
         headers: buildActiveClientHeaders(),
       });
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok) {
+        throw new Error(`Analytics request failed with status ${res.status}`);
       }
+      if (!contentType.includes('application/json')) {
+        throw new Error('Analytics endpoint did not return JSON.');
+      }
+      const json = await res.json();
+      setData(json);
     } catch (error) {
       console.error("Failed to fetch analytics", error);
+      setData(null);
     } finally {
       setLoading(false);
     }

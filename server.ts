@@ -13,14 +13,22 @@ import { registerAuthSystemRoutes } from "./src/server/routes/authSystem";
 import { registerFilesRoutes } from "./src/server/routes/files";
 import { registerLeaveRoutes } from "./src/server/routes/leave";
 import { registerWorkforceRoutes } from "./src/server/routes/workforce";
+import { registerSupabaseCoreRoutes } from "./src/server/routes/supabaseCore";
 import { getActorClientId, getEffectiveClientId } from "./src/server/utils/tenant";
 
 assertRuntimeConfiguration();
 runtimeConfigWarnings.forEach((warning) => console.warn(`[CONFIG] ${warning}`));
 
-function getSessionUser(req: any) {
+async function getSessionUser(req: any) {
   const userId = (req.session as any)?.userId;
   if (!userId) return null;
+  if (env.databaseProvider === "supabase") {
+    const { supabaseAdmin } = await import("./src/server/integrations/supabase");
+    const { data: user } = await supabaseAdmin.from('users').select('id,email,role,client_id,is_trial,trial_end_date,name,image').eq('id', userId).single();
+    if (!user) return null;
+    const { data: client } = user.client_id ? await supabaseAdmin.from('clients').select('name,locked_features').eq('id', user.client_id).single() : { data: null as any };
+    return { ...user, client_name: client?.name || null, locked_features: client?.locked_features || [] } as any;
+  }
   return db.prepare(`
     SELECT u.id, u.email, u.role, u.client_id, u.is_trial, u.trial_end_date, c.name as client_name, c.locked_features
     FROM users u
@@ -529,7 +537,12 @@ const serializePayrollSubmission = (row: any) => ({
     : safeJsonParse(row.employee_breakdown, safeJsonParse(row.breakdown_json, [])),
 });
 
+const superAdminEmails = ["superadmin@sightfull.co.za", "mudassar.khopatkar@offernet.net"];
+const allowedSuperAdminEmails = new Set(superAdminEmails.map((email) => String(email).trim().toLowerCase()));
+const defaultSuperAdminPasswordHash = bcrypt.hashSync("superadmin123", 10);
+
 // Initialize Database
+if (env.databaseProvider !== "supabase") {
 try {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -986,9 +999,6 @@ db.prepare("UPDATE clients SET enabled_definitions = ? WHERE enabled_definitions
 // No default client seed data. Clients are created through Super Admin.
 
 // Seed/repair default super admin accounts
-const superAdminEmails = ["superadmin@sightfull.co.za", "mudassar.khopatkar@offernet.net"];
-const defaultSuperAdminPasswordHash = bcrypt.hashSync("superadmin123", 10);
-const allowedSuperAdminEmails = new Set(superAdminEmails.map((email) => String(email).trim().toLowerCase()));
 superAdminEmails.forEach(email => {
   const normalizedEmail = String(email).trim().toLowerCase();
   const exists = db.prepare("SELECT * FROM users WHERE lower(email) = ?").get(normalizedEmail) as any;
@@ -1036,11 +1046,35 @@ const unshiftedShift = db.prepare("SELECT id FROM shifts WHERE lower(label) = 'u
 if (!unshiftedShift) {
   db.prepare("INSERT INTO shifts (id, label, start, end, lunch) VALUES (?, ?, ?, ?, ?)").run('900005', 'Unshifted', '', '', 0);
 }
+}
 
-function logActivity(req: any, action: string, details: any = {}) {
+async function logActivity(req: any, action: string, details: any = {}) {
   try {
     const userId = req.session?.userId || null;
     let userEmail = 'System/Unknown';
+    if (env.databaseProvider === 'supabase') {
+      const { supabaseAdmin } = await import('./src/server/integrations/supabase');
+      if (userId) {
+        const { data: user } = await supabaseAdmin.from('users').select('email,client_id').eq('id', userId).single();
+        if (user) {
+          userEmail = user.email;
+          if (!details.clientId && user.client_id) details.clientId = user.client_id;
+        }
+      } else if (details.email) {
+        userEmail = details.email;
+      }
+      const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+      await supabaseAdmin.from('activity_logs').insert({
+        id: Math.random().toString(36).substr(2, 9),
+        user_id: userId,
+        user_email: userEmail,
+        action,
+        details: JSON.stringify(details),
+        ip_address: ip,
+        client_id: details.clientId || null,
+      });
+      return;
+    }
     if (userId) {
       const user = db.prepare("SELECT email, client_id FROM users WHERE id = ?").get(userId) as any;
       if (user) {
@@ -1323,8 +1357,8 @@ if (isSmtpConfigured) {
       errors.push('account_no must be 6 to 20 digits.');
     }
 
-    const hasBankingData = Boolean(data.bank_name || data.account_holder || data.account_no || data.account_type);
-    if (hasBankingData && !(data.bank_name && data.account_holder && data.account_no && data.account_type)) {
+    const hasBankingData = Boolean(data.bank_name || data.account_no || data.account_type);
+    if (hasBankingData && !(data.bank_name && data.account_no && data.account_type)) {
       errors.push('complete all banking fields when capturing bank details.');
     }
 
@@ -1429,33 +1463,53 @@ if (isSmtpConfigured) {
   }));
 
 
-  registerAuthSystemRoutes({
-    app,
-    db,
-    env,
-    isSupabaseConfigured,
-    isSmtpConfigured,
-    getDatabaseReadiness,
-    getSupabaseReadiness,
-    getMailerReadiness,
-    getLastMailEvent,
-    sendMailMessage,
-    setLastMailEvent,
-    logActivity,
-    getSessionUser,
-    safeJsonParse,
-    mergeDefinitions,
-    allowedSuperAdminEmails,
-    baseRosterDefinitions: BASE_ROSTER_DEFINITIONS,
-    getUserTrialState,
-    getClientTrialState,
-    requireAuth,
-    requireAuthOrLocalMailDebug,
-  });
+  if (env.databaseProvider === "supabase") {
+    registerSupabaseCoreRoutes({
+      app,
+      normalizeEmployeePayload,
+      validateEmployeePayload,
+      normalizeShiftPayload,
+      validateShiftPayload,
+      allowedSuperAdminEmails,
+      mergeDefinitions,
+      baseRosterDefinitions: BASE_ROSTER_DEFINITIONS,
+      getDatabaseReadiness,
+      getSupabaseReadiness,
+      getMailerReadiness,
+      logActivity,
+    });
+  } else {
+    registerAuthSystemRoutes({
+      app,
+      db,
+      env,
+      isSupabaseConfigured,
+      isSmtpConfigured,
+      getDatabaseReadiness,
+      getSupabaseReadiness,
+      getMailerReadiness,
+      getLastMailEvent,
+      sendMailMessage,
+      setLastMailEvent,
+      logActivity,
+      getSessionUser,
+      safeJsonParse,
+      mergeDefinitions,
+      allowedSuperAdminEmails,
+      baseRosterDefinitions: BASE_ROSTER_DEFINITIONS,
+      getUserTrialState,
+      getClientTrialState,
+      requireAuth,
+      requireAuthOrLocalMailDebug,
+    });
+  }
 
   const getSessionEmployee = (req: any) => {
     const employeeId = (req.session as any)?.employeeId;
     if (!employeeId) return null;
+    if (env.databaseProvider === "supabase") {
+      return { id: employeeId, client_id: (req.session as any)?.employeeClientId || null, client_name: null, locked_features: [] } as any;
+    }
     return db.prepare(`
       SELECT e.*, c.name as client_name, c.locked_features
       FROM employees e
@@ -1465,6 +1519,7 @@ if (isSmtpConfigured) {
   };
 
   const requireActiveTrial = (req: any, res: any, next: any) => {
+    if (env.databaseProvider === "supabase") return next();
     const sessionRole = (req.session as any)?.userRole;
     if (sessionRole === 'superadmin') return next();
 
@@ -1505,6 +1560,7 @@ if (isSmtpConfigured) {
 
   const requireUnlockedFeature = (featureKey: string) => {
     return (req: any, res: any, next: any) => {
+      if (env.databaseProvider === "supabase") return next();
       const sessionRole = (req.session as any)?.userRole;
       if (sessionRole === 'superadmin') return next();
 
@@ -1927,7 +1983,7 @@ if (isSmtpConfigured) {
     buildRosterAndTimesheetAttachments: (payload: any, context: any) => buildRosterAndTimesheetAttachments(payload, context, { mergeDefinitions, toLocalIsoDate }),
   });
 
-  registerWorkforceRoutes({
+  if (env.databaseProvider !== "supabase") registerWorkforceRoutes({
     app,
     db,
     requireActiveTrial,
@@ -1939,7 +1995,7 @@ if (isSmtpConfigured) {
     validateShiftPayload,
   });
 
-  registerLeaveRoutes({
+  if (env.databaseProvider !== "supabase") registerLeaveRoutes({
     app,
     db,
     requireActiveTrial,

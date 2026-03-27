@@ -1,12 +1,11 @@
 import type { Request } from 'express';
-import type Database from 'better-sqlite3';
 
 const normalizeClientId = (value: unknown) => {
   const normalized = String(value ?? '').trim();
   return normalized || null;
 };
 
-const clientExists = (db: Database | any, clientId: string) => {
+const clientExists = (db: any, clientId: string) => {
   try {
     const row = db.prepare('SELECT id FROM clients WHERE id = ?').get(clientId) as { id?: string } | undefined;
     return Boolean(row?.id);
@@ -26,9 +25,11 @@ export const getRequestedActiveClientId = (req: Request) => {
   return normalizeClientId(headerValue);
 };
 
-export const getActorClientId = (db: Database | any, req: Request) => {
+export const getActorClientId = (db: any, req: Request) => {
   const sessionUserId = normalizeClientId((req.session as any)?.userId);
-  if (sessionUserId) {
+  const sessionUserClientId = normalizeClientId((req.session as any)?.userClientId);
+  if (sessionUserClientId) return sessionUserClientId;
+  if (sessionUserId && db && typeof db.prepare === 'function') {
     const user = db.prepare('SELECT client_id FROM users WHERE id = ?').get(sessionUserId) as any;
     const userClientId = normalizeClientId(user?.client_id);
     if (userClientId) return userClientId;
@@ -40,7 +41,7 @@ export const getActorClientId = (db: Database | any, req: Request) => {
   }
 
   const sessionEmployeeId = normalizeClientId((req.session as any)?.employeeId);
-  if (sessionEmployeeId) {
+  if (sessionEmployeeId && db && typeof db.prepare === 'function') {
     const employee = db.prepare('SELECT client_id FROM employees WHERE id = ?').get(sessionEmployeeId) as any;
     const resolvedClientId = normalizeClientId(employee?.client_id);
     if (resolvedClientId) return resolvedClientId;
@@ -49,19 +50,19 @@ export const getActorClientId = (db: Database | any, req: Request) => {
   return null;
 };
 
-export const getEffectiveClientId = (db: Database | any, req: Request) => {
+export const getEffectiveClientId = (db: any, req: Request) => {
   const sessionRole = getSessionRole(req);
   const requestedClientId = getRequestedActiveClientId(req);
 
   if (sessionRole === 'superadmin') {
     if (!requestedClientId) return null;
-    return clientExists(db, requestedClientId) ? requestedClientId : null;
+    return db && typeof db.prepare === 'function' ? (clientExists(db, requestedClientId) ? requestedClientId : null) : requestedClientId;
   }
 
   return getActorClientId(db, req);
 };
 
-export const getTenantResolution = (db: Database | any, req: Request) => {
+export const getTenantResolution = (db: any, req: Request) => {
   const sessionRole = getSessionRole(req);
   const requestedClientId = getRequestedActiveClientId(req);
   const actorClientId = getActorClientId(db, req);

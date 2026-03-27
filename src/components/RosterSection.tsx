@@ -6,6 +6,7 @@ import { isSAPublicHoliday } from '../constants';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { downloadCSV, exportToPDF } from '../utils/exportUtils';
+import { sortShiftsBaseFirst } from '../lib/shifts';
 
 import { Tooltip } from './Tooltip';
 
@@ -36,7 +37,6 @@ const ROSTER_DEFINITIONS: { id: RosterDefinition; label: string; placeholder: st
   { id: 'notes', label: 'Notes', placeholder: 'Add notes...' },
 ];
 
-const ADMINISTRATIVE_SHIFT_LABELS = ['absent', 'annual leave', 'sick leave', 'family leave', 'unshifted'];
 const sanitizeDefinitionValue = (definitionId: RosterDefinition, value: string) => {
   if (definitionId === 'notes') return value;
 
@@ -49,15 +49,7 @@ const sanitizeDefinitionValue = (definitionId: RosterDefinition, value: string) 
   return fractional ? `${whole}.${fractional}` : whole;
 };
 
-const isAdministrativeShift = (shift: Shift | undefined | null) => ADMINISTRATIVE_SHIFT_LABELS.includes(String(shift?.label || '').trim().toLowerCase());
-const isUnshiftedShift = (shift: Shift | undefined | null) => String(shift?.label || '').trim().toLowerCase() === 'unshifted';
-const getOrderedShiftOptions = (shifts: Shift[]) => {
-  const sorted = [...shifts].sort((a, b) => String(a.label || '').localeCompare(String(b.label || '')));
-  const unshifted = sorted.filter(isUnshiftedShift);
-  const regular = sorted.filter(shift => !isAdministrativeShift(shift) && !isUnshiftedShift(shift));
-  const admin = sorted.filter(shift => isAdministrativeShift(shift) && !isUnshiftedShift(shift));
-  return [...unshifted, ...regular, ...admin];
-};
+const getOrderedShiftOptions = (shifts: Shift[]) => sortShiftsBaseFirst(shifts);
 
 interface RosterSectionProps {
   employees: Employee[];

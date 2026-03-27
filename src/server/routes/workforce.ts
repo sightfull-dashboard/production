@@ -1,5 +1,6 @@
 import type { Express, Request, Response, NextFunction } from 'express';
 import { getEffectiveClientId, getSessionRole } from '../utils/tenant';
+import { sortShiftsBaseFirst } from '../../lib/shifts';
 
 type Middleware = (req: Request, res: Response, next: NextFunction) => unknown;
 
@@ -460,7 +461,7 @@ export function registerWorkforceRoutes({
 
   app.get('/api/shifts', requireActiveTrial, requireUnlockedFeature('rostering'), (_req, res) => {
     const shifts = db.prepare('SELECT * FROM shifts').all();
-    res.json(shifts);
+    res.json(sortShiftsBaseFirst((shifts || []) as any));
   });
 
   app.post('/api/shifts', requireActiveTrial, requireUnlockedFeature('rostering'), (req, res) => {

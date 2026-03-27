@@ -25,6 +25,53 @@ type FilesRoutesDeps = {
   buildRosterAndTimesheetAttachments: (payload: any, context: any) => Array<{ filename: string; content: Buffer; contentType: string }>;
 };
 
+
+const fetchSupabaseUserById = async (id: string | null | undefined) => {
+  if (!id) return null;
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('id, email, client_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return data as any;
+};
+
+const fetchSupabaseClientById = async (id: string | null | undefined) => {
+  if (!id) return null;
+  const { data, error } = await supabaseAdmin
+    .from('clients')
+    .select('id, name, payroll_email, payroll_cc')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return data as any;
+};
+
+const fetchSupabaseClientByName = async (name: string | null | undefined) => {
+  const normalized = String(name || '').trim();
+  if (!normalized) return null;
+  const { data, error } = await supabaseAdmin
+    .from('clients')
+    .select('id, name, payroll_email, payroll_cc')
+    .eq('name', normalized)
+    .maybeSingle();
+  if (error) throw error;
+  return data as any;
+};
+
+const fetchSupabaseFileById = async (id: string | null | undefined) => {
+  if (!id) return null;
+  const { data, error } = await supabaseAdmin
+    .from('files')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return data as any;
+};
+
+
 export function registerFilesRoutes({
   app,
   db,
@@ -219,7 +266,9 @@ export function registerFilesRoutes({
 
   app.get('/api/files/:id/download', ensureFileAccess, async (req, res) => {
     try {
-      const existing = db.prepare('SELECT * FROM files WHERE id = ?').get(req.params.id) as any;
+      const existing = env.databaseProvider !== 'supabase'
+        ? db.prepare('SELECT * FROM files WHERE id = ?').get(req.params.id) as any
+        : await fetchSupabaseFileById(req.params.id);
       if (!existing) return res.status(404).json({ error: 'File not found' });
       if (existing.employee_id && !canAccessEmployeeFiles(req, existing.employee_id)) {
         return res.status(403).json({ error: 'Forbidden' });
@@ -233,7 +282,7 @@ export function registerFilesRoutes({
         const payload = buildFolderDownloadPayload(existing);
         return res.json(payload);
       }
-      res.json({ id: existing.id, name: existing.name, url: existing.url || null, extension: existing.extension || null, size: existing.size || null });
+      res.json({ id: existing.id, name: existing.name, url: existing.url || existing.public_url || existing.storage_path || null, extension: existing.extension || existing.mime_type || null, size: existing.size || existing.size_bytes || null });
     } catch (error) {
       console.error('Failed to prepare file download:', error);
       res.status(500).json({ error: 'Failed to prepare file download' });
@@ -287,9 +336,7 @@ export function registerFilesRoutes({
     }
 
     try {
-      const user = sessionUserId
-        ? db.prepare("SELECT id, email, client_id FROM users WHERE id = ?").get(sessionUserId) as any
-        : null;
+      const user = await fetchSupabaseUserById(sessionUserId);
 
       let query = supabaseAdmin
         .from('payroll_submissions')
@@ -333,33 +380,78 @@ export function registerFilesRoutes({
       return res.status(400).json({ error: 'Missing required payroll submission fields' });
     }
 
-    const user = sessionUserId
-      ? db.prepare("SELECT id, email, client_id FROM users WHERE id = ?").get(sessionUserId) as any
-      : null;
-    const effectiveClientId = getEffectiveClientId(db, req) || user?.client_id || null;
-    const client = effectiveClientId
-      ? db.prepare("SELECT id, name, payroll_email, payroll_cc FROM clients WHERE id = ?").get(effectiveClientId) as any
-      : (clientNameFromBody
-          ? db.prepare("SELECT id, name, payroll_email, payroll_cc FROM clients WHERE name = ?").get(clientNameFromBody) as any
-          : null);
+    const user = env.databaseProvider !== 'supabase'
+      ? (sessionUserId ? db.prepare("SELECT id, email, client_id FROM users WHERE id = ?").get(sessionUserId) as any : null)
+      : await fetchSupabaseUserById(sessionUserId);
+    const effectiveClientId = getEffectiveClientId(env.databaseProvider !== 'supabase' ? db : null, req) || user?.client_id || null;
+    const client = env.databaseProvider !== 'supabase'
+      ? (effectiveClientId
+          ? db.prepare("SELECT id, name, payroll_email, payroll_cc FROM clients WHERE id = ?").get(effectiveClientId) as any
+          : (clientNameFromBody
+              ? db.prepare("SELECT id, name, payroll_email, payroll_cc FROM clients WHERE name = ?").get(clientNameFromBody) as any
+              : null))
+      : (effectiveClientId
+          ? await fetchSupabaseClientById(effectiveClientId)
+          : await fetchSupabaseClientByName(clientNameFromBody));
 
-    const activeEmployees = client?.id
-      ? db.prepare("SELECT id, first_name, last_name FROM employees WHERE client_id = ? AND COALESCE(status, 'active') != 'offboarded'").all(client.id) as any[]
-      : [];
     const startDate = new Date(`${periodStart}T00:00:00`);
     const endDate = new Date(`${periodEnd}T00:00:00`);
     const missingAssignments: string[] = [];
+
     if (client?.id) {
-      for (const emp of activeEmployees) {
-        for (let cursor = new Date(startDate); cursor <= endDate; cursor.setDate(cursor.getDate() + 1)) {
-          const dayIso = toLocalIsoDate(cursor);
-          const row: any = db.prepare("SELECT shift_id FROM roster WHERE employee_id = ? AND day_date = ?").get(emp.id, dayIso);
-          if (!row?.shift_id) {
-            missingAssignments.push(`${emp.first_name} ${emp.last_name}`.trim() + ` on ${dayIso}`);
-            break;
+      if (env.databaseProvider !== 'supabase') {
+        const activeEmployees = db.prepare("SELECT id, first_name, last_name FROM employees WHERE client_id = ? AND COALESCE(status, 'active') != 'offboarded'").all(client.id) as any[];
+        for (const emp of activeEmployees) {
+          for (let cursor = new Date(startDate); cursor <= endDate; cursor.setDate(cursor.getDate() + 1)) {
+            const dayIso = toLocalIsoDate(cursor);
+            const row: any = db.prepare("SELECT shift_id FROM roster WHERE employee_id = ? AND day_date = ?").get(emp.id, dayIso);
+            if (!row?.shift_id) {
+              missingAssignments.push(`${emp.first_name} ${emp.last_name}`.trim() + ` on ${dayIso}`);
+              break;
+            }
           }
+          if (missingAssignments.length > 0) break;
         }
-        if (missingAssignments.length > 0) break;
+      } else {
+        const { data: employeeRows, error: employeeError } = await supabaseAdmin
+          .from('employees')
+          .select('id, first_name, last_name, status')
+          .eq('client_id', client.id);
+        if (employeeError) {
+          console.error('Failed to load employees for payroll submission:', employeeError);
+          return res.status(500).json({ error: 'Failed to validate payroll submission' });
+        }
+        const activeEmployees = (employeeRows || []).filter((emp: any) => String(emp.status || 'active').toLowerCase() !== 'offboarded');
+        const employeeIds = activeEmployees.map((emp: any) => emp.id);
+        const { data: rosterRows, error: rosterError } = employeeIds.length
+          ? await supabaseAdmin
+              .from('roster')
+              .select('employee_id, day_date, shift_id')
+              .in('employee_id', employeeIds)
+              .gte('day_date', periodStart)
+              .lte('day_date', periodEnd)
+          : { data: [], error: null } as any;
+        if (rosterError) {
+          console.error('Failed to load roster rows for payroll submission:', rosterError);
+          return res.status(500).json({ error: 'Failed to validate payroll submission' });
+        }
+        const rosterMap = new Map<string, Set<string>>();
+        for (const row of rosterRows || []) {
+          if (!row?.shift_id) continue;
+          const current = rosterMap.get(row.employee_id) || new Set<string>();
+          current.add(String(row.day_date));
+          rosterMap.set(row.employee_id, current);
+        }
+        for (const emp of activeEmployees as any[]) {
+          for (let cursor = new Date(startDate); cursor <= endDate; cursor.setDate(cursor.getDate() + 1)) {
+            const dayIso = toLocalIsoDate(cursor);
+            if (!rosterMap.get(emp.id)?.has(dayIso)) {
+              missingAssignments.push(`${emp.first_name} ${emp.last_name}`.trim() + ` on ${dayIso}`);
+              break;
+            }
+          }
+          if (missingAssignments.length > 0) break;
+        }
       }
     }
     if (missingAssignments.length > 0) {
@@ -434,29 +526,80 @@ export function registerFilesRoutes({
     } else {
       try {
         console.log('[PAYROLL MAIL] Sending payroll submission email now');
-        const attachmentEmployees = clientId
-          ? db.prepare(`SELECT * FROM employees WHERE client_id = ? ORDER BY first_name, last_name`).all(clientId)
-          : [];
-        const attachmentShifts = db.prepare(`SELECT * FROM shifts ORDER BY label`).all();
-        const attachmentRoster = clientId
-          ? db.prepare(`
-              SELECT r.*
-              FROM roster r
-              INNER JOIN employees e ON e.id = r.employee_id
-              WHERE e.client_id = ?
-                AND r.day_date >= ?
-                AND r.day_date <= ?
-              ORDER BY r.employee_id, r.day_date
-            `).all(clientId, periodStart, periodEnd)
-          : [];
-        const attachmentRosterMeta = clientId
-          ? db.prepare(`
-              SELECT rm.*
-              FROM roster_meta rm
-              INNER JOIN employees e ON e.id = rm.employee_id
-              WHERE e.client_id = ?
-            `).all(clientId)
-          : [];
+        let attachmentEmployees: any[] = [];
+        let attachmentShifts: any[] = [];
+        let attachmentRoster: any[] = [];
+        let attachmentRosterMeta: any[] = [];
+
+        if (env.databaseProvider !== 'supabase') {
+          attachmentEmployees = clientId
+            ? db.prepare(`SELECT * FROM employees WHERE client_id = ? ORDER BY first_name, last_name`).all(clientId)
+            : [];
+          attachmentShifts = db.prepare(`SELECT * FROM shifts ORDER BY label`).all();
+          attachmentRoster = clientId
+            ? db.prepare(`
+                SELECT r.*
+                FROM roster r
+                INNER JOIN employees e ON e.id = r.employee_id
+                WHERE e.client_id = ?
+                  AND r.day_date >= ?
+                  AND r.day_date <= ?
+                ORDER BY r.employee_id, r.day_date
+              `).all(clientId, periodStart, periodEnd)
+            : [];
+          attachmentRosterMeta = clientId
+            ? db.prepare(`
+                SELECT rm.*
+                FROM roster_meta rm
+                INNER JOIN employees e ON e.id = rm.employee_id
+                WHERE e.client_id = ?
+              `).all(clientId)
+            : [];
+        } else if (clientId) {
+          const { data: employeesData, error: employeesError } = await supabaseAdmin
+            .from('employees')
+            .select('*')
+            .eq('client_id', clientId)
+            .order('first_name', { ascending: true })
+            .order('last_name', { ascending: true });
+          if (employeesError) throw employeesError;
+          attachmentEmployees = employeesData || [];
+
+          const { data: shiftsData, error: shiftsError } = await supabaseAdmin
+            .from('shifts')
+            .select('*')
+            .order('label', { ascending: true });
+          if (shiftsError) throw shiftsError;
+          attachmentShifts = shiftsData || [];
+
+          const employeeIds = attachmentEmployees.map((row: any) => row.id).filter(Boolean);
+          if (employeeIds.length > 0) {
+            const { data: rosterData, error: rosterError } = await supabaseAdmin
+              .from('roster')
+              .select('*')
+              .in('employee_id', employeeIds)
+              .gte('day_date', periodStart)
+              .lte('day_date', periodEnd)
+              .order('employee_id', { ascending: true })
+              .order('day_date', { ascending: true });
+            if (rosterError) throw rosterError;
+            attachmentRoster = rosterData || [];
+
+            const uniqueWeekStarts = [...new Set((employeeBreakdown || [])
+              .map((row: any) => String(row?.weekStart || row?.week_start || '').trim())
+              .filter(Boolean))];
+            if (uniqueWeekStarts.length > 0) {
+              const { data: rosterMetaData, error: rosterMetaError } = await supabaseAdmin
+                .from('roster_meta')
+                .select('*')
+                .in('employee_id', employeeIds)
+                .in('week_start', uniqueWeekStarts);
+              if (rosterMetaError) throw rosterMetaError;
+              attachmentRosterMeta = rosterMetaData || [];
+            }
+          }
+        }
+
         const attachments = buildRosterAndTimesheetAttachments({
           clientName,
           periodStart,
@@ -535,9 +678,9 @@ export function registerFilesRoutes({
       return res.status(400).json({ error: 'Invalid payroll submission status' });
     }
 
-    const actingUser = sessionUserId
-      ? db.prepare("SELECT id, email, client_id FROM users WHERE id = ?").get(sessionUserId) as any
-      : null;
+    const actingUser = env.databaseProvider !== 'supabase'
+      ? (sessionUserId ? db.prepare("SELECT id, email, client_id FROM users WHERE id = ?").get(sessionUserId) as any : null)
+      : await fetchSupabaseUserById(sessionUserId);
 
     if (env.databaseProvider !== 'supabase') {
       const existing = db.prepare("SELECT * FROM payroll_submissions WHERE id = ?").get(id) as any;
@@ -615,9 +758,9 @@ export function registerFilesRoutes({
 
     const sessionUserId = (req.session as any)?.userId;
     const sessionRole = (req.session as any)?.userRole;
-    const actingUser = sessionUserId
-      ? db.prepare("SELECT id, email, client_id FROM users WHERE id = ?").get(sessionUserId) as any
-      : null;
+    const actingUser = env.databaseProvider !== 'supabase'
+      ? (sessionUserId ? db.prepare("SELECT id, email, client_id FROM users WHERE id = ?").get(sessionUserId) as any : null)
+      : await fetchSupabaseUserById(sessionUserId);
 
     if (env.databaseProvider !== 'supabase') {
       if (sessionRole === 'superadmin' && !actingUser?.client_id) {
@@ -635,7 +778,7 @@ export function registerFilesRoutes({
     try {
       let query = supabaseAdmin.from('support_tickets').select('*').order('updated_at', { ascending: false }).order('created_at', { ascending: false });
       if (!(sessionRole === 'superadmin' && !actingUser?.client_id)) {
-        const effectiveClientId = getEffectiveClientId(db, req) || actingUser?.client_id || null;
+        const effectiveClientId = getEffectiveClientId(env.databaseProvider !== 'supabase' ? db : null, req) || actingUser?.client_id || null;
         if (!effectiveClientId) return res.json([]);
         query = query.eq('client_id', effectiveClientId);
       }
