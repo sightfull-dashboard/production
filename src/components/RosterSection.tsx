@@ -471,14 +471,14 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                       "px-5 py-5 text-center min-w-[155px] border-b border-slate-200 transition-colors relative",
                       dayIndex === 0 && "min-w-[195px]",
                       isSun && "bg-emerald-100 text-emerald-900",
-                      isHol && "bg-orange-100 text-orange-900",
+                      isHol && "bg-amber-100 text-amber-900",
                       isTdy && "bg-indigo-50/50 text-indigo-700"
                     )}>
                       <div className="flex flex-col gap-0.5">
                         <span className="text-[11px] font-black">{format(day, 'EEEE')}</span>
                         <span className="text-[10px] font-bold opacity-60 font-mono">{format(day, 'dd MMM')}</span>
                         {isHol && (
-                          <div className="mt-1.5 px-2 py-0.5 rounded-md bg-orange-200 text-[8px] font-black text-orange-900 inline-block mx-auto">
+                          <div className="mt-1.5 px-2 py-0.5 rounded-md bg-amber-200 text-[8px] font-black text-amber-900 inline-block mx-auto">
                             Public Holiday
                           </div>
                         )}
@@ -546,7 +546,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                             "px-3 py-5 transition-colors relative overflow-visible",
                             dayIndex === 0 && "pl-10 min-w-[195px]",
                             isSun && "bg-emerald-100/70",
-                            isHol && "bg-orange-100/80",
+                            isHol && "bg-amber-100/80",
                             isTdy && "bg-indigo-50/10",
                             "border-r border-slate-100/50 last:border-r-0"
                           )}>

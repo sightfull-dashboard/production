@@ -1,6 +1,5 @@
 import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
-import { isDataUrl, randomId, uploadDataUrlToBucket } from '../utils/supabaseStorage';
 import bcrypt from 'bcryptjs';
 import type { Express, Request } from 'express';
 
@@ -11,7 +10,7 @@ type RegisterAdminRoutesDeps = {
   db: any;
   isSuperAdmin: Middleware;
   logActivity: (req: Request, action: string, details?: any) => void;
-  ensureClientVaultStructure: (clientId: string) => Promise<void> | void;
+  ensureClientVaultStructure: (clientId: string) => void;
   hydrateFileRow: (row: any) => any;
   serializePayrollSubmission: (row: any) => any;
   normalizeClientTrialColumns: (input: any) => any;
@@ -106,21 +105,6 @@ const countSupabaseEmployees = async (clientId: string) => {
 };
 
 
-
-const resolveClientFallbackImage = async (clientId: string, value: string | null | undefined) => {
-  const normalized = String(value || '').trim();
-  if (!normalized) return null;
-  if (!isDataUrl(normalized)) return normalized;
-  const upload = await uploadDataUrlToBucket({
-    bucket: env.supabaseBucketClientAssets,
-    path: `clients/${clientId}/fallback-image-${randomId()}.png`,
-    dataUrl: normalized,
-    contentType: 'image/png',
-    upsert: true,
-  });
-  return upload.public_url || null;
-};
-
 export function registerAdminRoutes({
   app,
   db,
@@ -212,9 +196,8 @@ export function registerAdminRoutes({
   });
 
   app.post("/api/admin/clients/:id/users", isSuperAdmin, async (req, res) => {
-    const { email, password, name, image } = req.body || {};
-    const role = String(req.body?.role || 'admin').trim().toLowerCase();
-    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+    const { email, password, role, name, image } = req.body || {};
+    if (!email || !password || !role) return res.status(400).json({ error: 'Email, password and role are required' });
 
     try {
       const id = Math.random().toString(36).substr(2, 9);
@@ -532,10 +515,9 @@ export function registerAdminRoutes({
 
   app.post("/api/admin/users", isSuperAdmin, async (req, res) => {
     console.log("Creating user with data:", { ...req.body, password: "[REDACTED]" });
-    const { email, password, image } = req.body;
-    const role = String(req.body?.role || 'superadmin').trim().toLowerCase();
+    const { email, password, role, image } = req.body;
 
-    if (!email || !password) {
+    if (!email || !password || !role) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
@@ -642,32 +624,37 @@ export function registerAdminRoutes({
   app.get("/api/admin/clients", isSuperAdmin, async (_req, res) => {
     const { start, end } = getWeekBounds();
     if (env.databaseProvider !== 'supabase') {
-      const rows = db.prepare(`
-        SELECT c.*, 
-          (SELECT COUNT(*) FROM users u WHERE u.client_id = c.id) as users,
-          (SELECT COUNT(*) FROM employees e WHERE e.client_id = c.id AND COALESCE(e.status, 'active') != 'offboarded') as employees,
-          (SELECT COUNT(*) FROM files f WHERE f.client_id = c.id) as files,
-          (SELECT COALESCE(MAX(created_at), c.updated_at) FROM activity_logs al WHERE al.client_id = c.id) as last_activity,
-          (SELECT COUNT(*) FROM roster r JOIN employees e ON e.id = r.employee_id WHERE e.client_id = c.id AND r.day_date BETWEEN ? AND ?) as shiftsThisWeek,
-          (
-            SELECT COALESCE(SUM(
-              CASE
-                WHEN s.start IS NOT NULL AND s.end IS NOT NULL THEN
-                  MAX(((CAST(substr(s.end,1,2) AS INTEGER) * 60 + CAST(substr(s.end,4,2) AS INTEGER)) -
-                       (CAST(substr(s.start,1,2) AS INTEGER) * 60 + CAST(substr(s.start,4,2) AS INTEGER)) -
-                       COALESCE(s.lunch, 0)) / 60.0, 0)
-                ELSE 0
-              END
-            ), 0)
-            FROM roster r
-            JOIN employees e ON e.id = r.employee_id
-            LEFT JOIN shifts s ON s.id = r.shift_id
-            WHERE e.client_id = c.id AND r.day_date BETWEEN ? AND ?
-          ) as totalHours
-        FROM clients c
-        ORDER BY datetime(c.created_at) DESC
-      `).all(start, end, start, end) as any[];
-      return res.json(rows.map(serializeAdminClient));
+      try {
+        const rows = db.prepare(`
+          SELECT c.*, 
+            (SELECT COUNT(*) FROM users u WHERE u.client_id = c.id) as users,
+            (SELECT COUNT(*) FROM employees e WHERE e.client_id = c.id AND COALESCE(e.status, 'active') != 'offboarded') as employees,
+            (SELECT COUNT(*) FROM files f WHERE f.client_id = c.id) as files,
+            (SELECT COALESCE(MAX(created_at), c.updated_at) FROM activity_logs al WHERE al.client_id = c.id) as last_activity,
+            (SELECT COUNT(*) FROM roster r JOIN employees e ON e.id = r.employee_id WHERE e.client_id = c.id AND r.day_date BETWEEN ? AND ?) as shiftsThisWeek,
+            (
+              SELECT COALESCE(SUM(
+                CASE
+                  WHEN s.start IS NOT NULL AND s.end IS NOT NULL THEN
+                    MAX(((CAST(substr(s.end,1,2) AS INTEGER) * 60 + CAST(substr(s.end,4,2) AS INTEGER)) -
+                         (CAST(substr(s.start,1,2) AS INTEGER) * 60 + CAST(substr(s.start,4,2) AS INTEGER)) -
+                         COALESCE(s.lunch, 0)) / 60.0, 0)
+                  ELSE 0
+                END
+              ), 0)
+              FROM roster r
+              JOIN employees e ON e.id = r.employee_id
+              LEFT JOIN shifts s ON s.id = r.shift_id
+              WHERE e.client_id = c.id AND r.day_date BETWEEN ? AND ?
+            ) as totalHours
+          FROM clients c
+          ORDER BY datetime(c.created_at) DESC
+        `).all(start, end, start, end) as any[];
+        return res.json(rows.map(serializeAdminClient));
+      } catch (error) {
+        console.error('Failed to load clients from SQLite:', error);
+        return res.status(500).json({ error: 'Failed to load clients' });
+      }
     }
 
     try {
@@ -727,7 +714,7 @@ export function registerAdminRoutes({
         id,
         name,
         status: req.body.status || 'active',
-        fallback_image: await resolveClientFallbackImage(id, req.body.fallbackImage || null),
+        fallback_image: req.body.fallbackImage || null,
         dashboard_type: req.body.dashboardType || 'rostering',
         locked_features: req.body.lockedFeatures || [],
         enabled_definitions: mergeDefinitions(req.body.enabledDefinitions || []),
@@ -748,7 +735,6 @@ export function registerAdminRoutes({
         throw error;
       }
 
-      await ensureClientVaultStructure(id);
       logActivity(req, 'CREATE_CLIENT', { clientId: id, name });
       return res.status(201).json(serializeSupabaseClient(data, { users: 0, employees: 0, files: 0 }));
     } catch (error: any) {
@@ -796,7 +782,7 @@ export function registerAdminRoutes({
     const updatePayload = {
       name: req.body.name ?? existing.name,
       status: req.body.status ?? existing.status,
-      fallback_image: await resolveClientFallbackImage(req.params.id, req.body.fallbackImage ?? existing.fallback_image ?? null),
+      fallback_image: req.body.fallbackImage ?? existing.fallback_image ?? null,
       dashboard_type: req.body.dashboardType ?? existing.dashboard_type,
       locked_features: req.body.lockedFeatures ?? parseJsonArray(existing.locked_features),
       enabled_definitions: mergeDefinitions(req.body.enabledDefinitions ?? parseJsonArray(existing.enabled_definitions)),

@@ -57,12 +57,8 @@ export const AdminPanel: React.FC = () => {
     setError(null);
     setSubmitting(true);
     const formData = new FormData(e.currentTarget);
-    const data = Object.fromEntries(formData.entries()) as Record<string, FormDataEntryValue>;
-
-    if (!editingUser) {
-      data.role = 'superadmin';
-    }
-
+    const data = Object.fromEntries(formData.entries());
+    
     // Add image if present
     if (userImage) {
       data.image = userImage;
@@ -414,28 +410,18 @@ export const AdminPanel: React.FC = () => {
                       />
                     </div>
 
-                    {editingUser ? (
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
-                        <select 
-                          name="role" 
-                          required 
-                          defaultValue={editingUser?.role || 'superadmin'}
-                          className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm appearance-none bg-white"
-                        >
-                          <option value="superadmin">Super Admin</option>
-                          <option value="admin">Admin</option>
-                          <option value="user">User</option>
-                        </select>
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
-                        <div className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-bold text-slate-600">
-                          Super Admin
-                        </div>
-                      </div>
-                    )}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
+                      <select 
+                        name="role" 
+                        required 
+                        defaultValue={editingUser?.role || 'user'}
+                        className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm appearance-none bg-white"
+                      >
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div className="flex gap-3 pt-4">

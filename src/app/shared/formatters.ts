@@ -21,7 +21,7 @@ export const formatRoleLabel = (role?: string | null) => {
 export const getSidebarBrandLabel = (opts?: { clientName?: string | null; client_name?: string | null; isSuperAdmin?: boolean }) => {
   const clientName = String(opts?.clientName || opts?.client_name || '').trim();
   if (clientName) return clientName;
-  return opts?.isSuperAdmin ? 'Sightfull Pro v2.0' : 'Client';
+  return opts?.isSuperAdmin ? 'SIGHTFULL DASHBOARD' : 'Client';
 };
 
 export const employeeIdNumericValue = (value?: string | null) => {

@@ -25,6 +25,7 @@ import {
   History,
   MessageSquare,
   AlertCircle,
+  Send,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfWeek, addDays, differenceInDays } from 'date-fns';
@@ -169,20 +170,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (auth.user || isEmployeeRoute) {
+    if (auth.user || (isEmployeeRoute && employeeAuth.employee)) {
       void fetchEmployees();
       void fetchShifts();
       void fetchRoster();
       void fetchRosterMeta();
     }
-  }, [auth.user, isEmployeeRoute, currentWeekStart]);
+  }, [auth.user, isEmployeeRoute, employeeAuth.employee, currentWeekStart]);
 
   useEffect(() => {
-    if (auth.user || isEmployeeRoute) {
+    if (auth.user || (isEmployeeRoute && employeeAuth.employee)) {
       void fetchRoster();
       void fetchRosterMeta();
     }
-  }, [employees]);
+  }, [employees, auth.user, isEmployeeRoute, employeeAuth.employee]);
 
   const fetchEmployees = async () => {
     try {
@@ -2249,108 +2250,136 @@ export default function App() {
         employee={offboardingEmployee} 
       />
 
-      {/* Support Floating Button */}
+      {/* Support Floating Chat */}
       {!impersonatedClient && !isSuperAdminRole(auth.user.role) && (
-        <div className="fixed bottom-8 right-8 z-[60]">
-          <motion.button
-            whileHover={{ scale: 1.05, y: -2 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setIsSupportModalOpen(true)}
-            className="flex items-center gap-3 px-6 py-4 bg-indigo-600 text-white rounded-[24px] font-black text-sm shadow-2xl shadow-indigo-200 border border-indigo-500 group"
-          >
-            <MessageSquare className="w-5 h-5 group-hover:rotate-12 transition-transform" />
-            <span className="tracking-tight">Support</span>
-          </motion.button>
+        <div className="fixed bottom-8 right-8 z-[60] flex flex-col items-end">
+          <AnimatePresence>
+            {isSupportModalOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 20, scale: 0.95 }}
+                transition={{ duration: 0.2 }}
+                className="mb-4 w-[380px] bg-white rounded-[24px] shadow-2xl border border-slate-200 overflow-hidden flex flex-col origin-bottom-right"
+              >
+                {/* Header */}
+                <div className="bg-indigo-600 p-4 flex items-center justify-between text-white">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                      <MessageSquare className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="font-black text-sm">Support</h3>
+                      <p className="text-[10px] text-indigo-200 font-bold uppercase tracking-widest">We typically reply in 24h</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setIsSupportModalOpen(false)} className="p-2 hover:bg-white/20 rounded-full transition-colors">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div className="p-6 overflow-y-auto max-h-[60vh] bg-slate-50/50">
+                  <form id="support-form" onSubmit={handleSupportSubmit} className="space-y-5">
+                    <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
+                      <div className="flex gap-3">
+                        <AlertCircle className="w-5 h-5 text-indigo-600 shrink-0" />
+                        <p className="text-xs font-bold text-indigo-900 leading-relaxed">
+                          Need help? Submit a ticket and our support team will respond within 24 hours.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject</label>
+                      <input 
+                        required
+                        value={supportSubject}
+                        onChange={(e) => setSupportSubject(e.target.value)}
+                        placeholder="Briefly describe the issue" 
+                        className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold bg-white" 
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Message</label>
+                      <textarea 
+                        required
+                        value={supportMessage}
+                        onChange={(e) => setSupportMessage(e.target.value)}
+                        placeholder="Provide more details about your request..." 
+                        rows={4}
+                        className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold resize-none bg-white" 
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Priority</label>
+                        <select value={supportPriority} onChange={(e) => setSupportPriority(e.target.value as any)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="urgent">Urgent</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Category</label>
+                        <select className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
+                          <option value="payroll">Payroll</option>
+                          <option value="roster">Rostering</option>
+                          <option value="account">Account</option>
+                          <option value="technical">Technical Issue</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Footer */}
+                <div className="p-4 border-t border-slate-100 bg-white">
+                  <button 
+                    type="submit" 
+                    form="support-form" 
+                    disabled={isSubmittingSupport}
+                    className="w-full py-3 rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isSubmittingSupport ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        Send Message
+                      </>
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {!isSupportModalOpen && (
+              <motion.button
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                whileHover={{ scale: 1.05, y: -2 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setIsSupportModalOpen(true)}
+                className="flex items-center gap-3 px-6 py-4 bg-indigo-600 text-white rounded-[24px] font-black text-sm shadow-2xl shadow-indigo-200 border border-indigo-500 group"
+              >
+                <MessageSquare className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+                <span className="tracking-tight">Support</span>
+              </motion.button>
+            )}
+          </AnimatePresence>
         </div>
       )}
-
-      {/* Support Ticket Modal */}
-      <Modal
-        isOpen={isSupportModalOpen}
-        onClose={() => setIsSupportModalOpen(false)}
-        title="Submit Support Ticket"
-        footer={
-          <>
-            <button 
-              onClick={() => setIsSupportModalOpen(false)} 
-              className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
-            >
-              Cancel
-            </button>
-            <button 
-              type="submit" 
-              form="support-form" 
-              disabled={isSubmittingSupport}
-              className="px-8 py-3 rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all disabled:opacity-50 flex items-center gap-2"
-            >
-              {isSubmittingSupport ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Submitting...
-                </>
-              ) : (
-                'Submit Ticket'
-              )}
-            </button>
-          </>
-        }
-      >
-        <form id="support-form" onSubmit={handleSupportSubmit} className="space-y-6">
-          <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100 mb-6">
-            <div className="flex gap-3">
-              <AlertCircle className="w-5 h-5 text-indigo-600 shrink-0" />
-              <p className="text-xs font-bold text-indigo-900 leading-relaxed">
-                Need help? Submit a ticket and our support team will respond within 24 hours.
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Subject</label>
-            <input 
-              required
-              value={supportSubject}
-              onChange={(e) => setSupportSubject(e.target.value)}
-              placeholder="Briefly describe the issue" 
-              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" 
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Message</label>
-            <textarea 
-              required
-              value={supportMessage}
-              onChange={(e) => setSupportMessage(e.target.value)}
-              placeholder="Provide more details about your request..." 
-              rows={5}
-              className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold resize-none" 
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Priority</label>
-              <select value={supportPriority} onChange={(e) => setSupportPriority(e.target.value as any)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="urgent">Urgent</option>
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Category</label>
-              <select value={supportPriority} onChange={(e) => setSupportPriority(e.target.value as any)} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold appearance-none bg-white">
-                <option value="payroll">Payroll</option>
-                <option value="roster">Rostering</option>
-                <option value="account">Account</option>
-                <option value="technical">Technical Issue</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

@@ -39,12 +39,21 @@ import {
   MessageSquare,
   Bell,
   ArrowRight,
-  Home
+  Home,
+  MessageCircle,
+  Send,
+  UploadCloud,
+  AlertTriangle,
+  CheckCircle,
+  Download,
+  FileArchive,
+  X,
+  Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
-import type { FileItem, PayrollSubmission, RosterDefinition, SupportTicket } from '../types';
+import type { FileItem, PayrollSubmission, SupportTicket, RosterDefinition } from '../types';
 import { BrandedState } from './BrandedStates';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
@@ -55,6 +64,20 @@ import { ClientNotificationsPanel } from './ClientNotificationsPanel';
 import { INTERNAL_PANEL_ROSTER_DEFINITIONS as ROSTER_DEFINITIONS, PRESET_CLIENT_LOGOS } from './internal-panel/config';
 
 
+const WhatsAppIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+  </svg>
+);
+
+const mockWaRows = [
+  { id: 1, file: 'EMP001.pdf', empId: 'EMP001', name: 'John Daniels', mobile: '27821234567', waStatus: 'Ready', matchStatus: 'Matched', ready: true },
+  { id: 2, file: 'EMP002.pdf', empId: 'EMP002', name: 'Aisha Khan', mobile: '27837654321', waStatus: 'Ready', matchStatus: 'Matched', ready: true },
+  { id: 3, file: 'EMP003.pdf', empId: 'EMP003', name: '—', mobile: '—', waStatus: '—', matchStatus: 'No employee found', ready: false },
+  { id: 4, file: 'EMP004.pdf', empId: 'EMP004', name: 'Kabelo Mokoena', mobile: '—', waStatus: 'Missing', matchStatus: 'Missing number', ready: false },
+  { id: 5, file: 'EMP005.pdf', empId: 'EMP005', name: 'Sarah Smith', mobile: '27811111111', waStatus: 'Ready', matchStatus: 'Duplicate EMP ID', ready: false },
+];
+
 interface InternalPanelProps {
   onLoginAsSuperAdmin?: (client: any) => void;
 }
@@ -62,7 +85,7 @@ interface InternalPanelProps {
 export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmin }) => {
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<any | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'files' | 'logs' | 'settings' | 'activity' | 'payroll_logs' | 'support_tickets' | 'payroll_notifications'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'files' | 'logs' | 'settings' | 'activity' | 'payroll_logs' | 'support_tickets' | 'payroll_notifications' | 'whatsapp'>('overview');
   
   const [clientUsers, setClientUsers] = useState<any[]>([]);
   const [clientFiles, setClientFiles] = useState<any[]>([]);
@@ -89,6 +112,12 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   const [payrollEmail, setPayrollEmail] = useState<string>('');
   const [payrollCc, setPayrollCc] = useState<string>('');
   const [payrollSubmissionDay, setPayrollSubmissionDay] = useState<number>(1); // Default to Monday or 1st
+
+  // WhatsApp State
+  const [waStep, setWaStep] = useState<'upload' | 'review'>('upload');
+  const [waFilter, setWaFilter] = useState('all');
+  const [waSelected, setWaSelected] = useState<number[]>([1, 2]);
+  const [isWaConfirmOpen, setIsWaConfirmOpen] = useState(false);
 
   const filteredPayrollLogs = payrollLogs.filter((submission: any) => {
     const query = payrollLogSearchTerm.trim().toLowerCase();
@@ -363,7 +392,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
     const payload = {
       name: formData.get('name') as string,
       email: formData.get('email') as string,
-      role: editingUser ? String(formData.get('role') || 'admin') : 'admin',
+      role: formData.get('role') as string,
       password: formData.get('password') as string,
     };
 
@@ -597,67 +626,337 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
     </div>
   );
 
+  const renderWhatsAppTab = () => {
+    if (waStep === 'upload') {
+      return (
+        <div className="max-w-3xl mx-auto mt-8">
+          <div className="bg-white rounded-[32px] p-10 shadow-xl shadow-slate-200/50 border border-slate-100 text-center">
+            <div className="w-24 h-24 bg-[#25D366]/10 rounded-full flex items-center justify-center mx-auto mb-6">
+              <FileArchive className="w-12 h-12 text-[#25D366]" />
+            </div>
+            <h3 className="text-3xl font-black text-slate-800 mb-4">Upload Batch ZIP</h3>
+            <p className="text-slate-500 font-medium mb-8 max-w-md mx-auto">
+              Super Admin uploads one ZIP file containing all payslips.
+            </p>
+            
+            <div className="bg-slate-50 rounded-2xl p-6 text-left mb-8 border border-slate-100">
+              <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                Rules & Requirements
+              </h4>
+              <ul className="space-y-2 text-sm text-slate-600 list-disc list-inside">
+                <li>Each PDF filename must match the employee's EMP ID</li>
+                <li>Example: <code className="bg-white px-2 py-1 rounded border border-slate-200 text-indigo-600 font-bold">EMP001.pdf</code></li>
+                <li>The system will automatically unzip, read filenames, and match to employees.</li>
+              </ul>
+            </div>
+
+            <div className="border-2 border-dashed border-slate-200 rounded-3xl p-12 hover:bg-slate-50 hover:border-[#25D366]/50 transition-colors cursor-pointer group" onClick={() => setWaStep('review')}>
+              <UploadCloud className="w-10 h-10 text-slate-400 group-hover:text-[#25D366] mx-auto mb-4 transition-colors" />
+              <p className="font-bold text-slate-700 text-lg">Click to browse or drag ZIP file here</p>
+              <p className="text-sm text-slate-500 mt-2">Supports .zip up to 50MB</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setWaStep('upload')} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
+              <ArrowLeft className="w-5 h-5 text-slate-500" />
+            </button>
+            <div>
+              <h3 className="text-2xl font-black text-slate-800 tracking-tight">Review WhatsApp Payslip Batch</h3>
+              <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">Verify matches before sending</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {[
+            { label: 'Total Files', value: '120', color: 'text-slate-800' },
+            { label: 'Matched', value: '114', color: 'text-emerald-600' },
+            { label: 'Unmatched', value: '5', color: 'text-rose-600' },
+            { label: 'Missing Numbers', value: '3', color: 'text-amber-600' },
+            { label: 'Duplicates', value: '1', color: 'text-purple-600' },
+            { label: 'Ready to Send', value: '109', color: 'text-[#25D366]' },
+          ].map((stat, i) => (
+            <div key={i} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{stat.label}</p>
+              <p className={`text-2xl font-black ${stat.color}`}>{stat.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-col lg:flex-row gap-6">
+          {/* Main Table Area */}
+          <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <button onClick={() => setWaSelected([1, 2])} className="text-xs font-bold text-slate-600 hover:text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors">Select all ready</button>
+                <button onClick={() => setWaSelected([])} className="text-xs font-bold text-slate-600 hover:text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors">Deselect all</button>
+                <div className="w-px h-4 bg-slate-200 mx-2" />
+                <button className="text-xs font-bold text-slate-600 hover:text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors flex items-center gap-1">
+                  <Download className="w-3 h-3" /> Export problems
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-slate-400" />
+                <select 
+                  value={waFilter}
+                  onChange={(e) => setWaFilter(e.target.value)}
+                  className="text-sm font-bold text-slate-700 bg-slate-50 border-none rounded-xl py-1.5 pl-3 pr-8 focus:ring-2 focus:ring-indigo-600/20 outline-none"
+                >
+                  <option value="all">All Files</option>
+                  <option value="ready">Ready to Send</option>
+                  <option value="problems">Problems Only</option>
+                  <option value="missing">Missing Numbers</option>
+                  <option value="unmatched">Unmatched Files</option>
+                </select>
+              </div>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
+                    <th className="px-4 py-4 w-12 text-center">
+                      <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-600/20" />
+                    </th>
+                    <th className="px-4 py-4">Payslip File</th>
+                    <th className="px-4 py-4">EMP ID</th>
+                    <th className="px-4 py-4">Employee</th>
+                    <th className="px-4 py-4">Mobile</th>
+                    <th className="px-4 py-4">WhatsApp</th>
+                    <th className="px-4 py-4">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {mockWaRows.map(row => (
+                    <tr key={row.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-4 text-center">
+                        <input 
+                          type="checkbox" 
+                          checked={waSelected.includes(row.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) setWaSelected([...waSelected, row.id]);
+                            else setWaSelected(waSelected.filter(id => id !== row.id));
+                          }}
+                          disabled={!row.ready}
+                          className="rounded text-indigo-600 focus:ring-indigo-600/20 disabled:opacity-50" 
+                        />
+                      </td>
+                      <td className="px-4 py-4 text-sm font-bold text-slate-700">{row.file}</td>
+                      <td className="px-4 py-4 text-sm font-medium text-slate-500">{row.empId}</td>
+                      <td className="px-4 py-4 text-sm font-bold text-slate-800">{row.name}</td>
+                      <td className="px-4 py-4 text-sm font-medium text-slate-500">{row.mobile}</td>
+                      <td className="px-4 py-4">
+                        <span className={cn(
+                          "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest",
+                          row.waStatus === 'Ready' ? 'bg-emerald-100 text-emerald-700' : 
+                          row.waStatus === 'Missing' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'
+                        )}>
+                          {row.waStatus}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <span className={cn(
+                          "inline-flex items-center gap-1 text-xs font-bold",
+                          row.matchStatus === 'Matched' ? 'text-emerald-600' : 'text-rose-600'
+                        )}>
+                          {row.matchStatus === 'Matched' ? <CheckCircle className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                          {row.matchStatus}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Confirmation Panel */}
+          <div className="w-full lg:w-80 shrink-0 space-y-6">
+            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+              <h4 className="font-black text-slate-800 mb-4">Send Summary</h4>
+              <div className="space-y-3 mb-6">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Files uploaded</span>
+                  <span className="font-bold text-slate-800">120</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Matched</span>
+                  <span className="font-bold text-slate-800">114</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Ready to send</span>
+                  <span className="font-bold text-[#25D366]">109</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Missing numbers</span>
+                  <span className="font-bold text-amber-600">3</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Unmatched files</span>
+                  <span className="font-bold text-rose-600">5</span>
+                </div>
+                <div className="flex justify-between text-sm pt-3 border-t border-slate-100">
+                  <span className="text-slate-500 font-medium">Skipped</span>
+                  <span className="font-bold text-slate-800">11</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-4 mb-6 border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Message Preview</p>
+                <p className="text-sm text-slate-700 font-medium italic">
+                  "Hello {'{employee_name}'}, please find your payslip attached. I still recommend a secure link rather than direct document send."
+                </p>
+              </div>
+
+              <button 
+                onClick={() => setIsWaConfirmOpen(true)}
+                className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-2xl font-black text-sm bg-[#25D366] text-white hover:bg-[#20bd5a] shadow-xl shadow-[#25D366]/20 transition-all active:scale-95"
+              >
+                <WhatsAppIcon className="w-5 h-5" />
+                Confirm & Send Payslips
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Confirm Modal */}
+        <AnimatePresence>
+          {isWaConfirmOpen && (
+            <>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsWaConfirmOpen(false)}
+                className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-[40px] shadow-2xl z-[101] overflow-hidden"
+              >
+                <div className="p-10 text-center">
+                  <div className="w-20 h-20 bg-[#25D366]/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <WhatsAppIcon className="w-10 h-10 text-[#25D366]" />
+                  </div>
+                  <h3 className="text-2xl font-black text-slate-800 tracking-tight mb-4">Confirm Send</h3>
+                  <p className="text-slate-600 font-medium mb-2">
+                    You are about to send <strong className="text-slate-800">109</strong> payslips via WhatsApp.
+                  </p>
+                  <p className="text-rose-600 font-bold mb-8">
+                    11 files will be skipped due to matching issues.
+                  </p>
+                  <p className="text-sm text-slate-500 font-bold uppercase tracking-widest mb-8">Do you want to continue?</p>
+
+                  <div className="flex gap-3">
+                    <button 
+                      onClick={() => setIsWaConfirmOpen(false)}
+                      className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsWaConfirmOpen(false);
+                        toast.success('Batch sending started successfully!');
+                        setWaStep('upload');
+                      }}
+                      className="flex-1 px-6 py-4 rounded-2xl font-black text-white bg-[#25D366] hover:bg-[#20bd5a] shadow-xl shadow-[#25D366]/20 transition-all"
+                    >
+                      Confirm Send
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
   const renderClientDetail = () => (
     <div className="space-y-8">
-      <div className="flex items-center gap-4">
-        <Tooltip content="Back to Client List">
-          <button 
-            onClick={() => setSelectedClient(null)}
-            className="p-3 bg-white rounded-2xl hover:bg-slate-50 transition-colors shadow-sm border border-slate-100 text-slate-400 hover:text-slate-600"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-        </Tooltip>
-        <div className="space-y-1">
-          <h2 className="text-4xl font-black text-slate-800 tracking-tight">{selectedClient.name}</h2>
-          <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">Dashboard Management</p>{loadingClientData && <p className="text-xs text-indigo-600 font-bold">Loading live client data…</p>}
-        </div>
-        <div className="ml-auto flex items-center gap-3">
-          <Tooltip content="Access this client's dashboard with full admin privileges">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Tooltip content="Back to Client List">
             <button 
-              onClick={() => onLoginAsSuperAdmin?.({ ...selectedClient, lockedFeatures, dashboardType })}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-sm bg-indigo-600 text-white hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all active:scale-95"
+              onClick={() => setSelectedClient(null)}
+              className="p-3 bg-white rounded-2xl hover:bg-slate-50 transition-colors shadow-sm border border-slate-100 text-slate-400 hover:text-slate-600 group shrink-0"
             >
-              <ShieldCheck className="w-4 h-4" />
-              Login as Super Admin
+              <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
             </button>
           </Tooltip>
+          <div className="space-y-0.5 min-w-0">
+            <h2 className="text-3xl font-black text-slate-800 tracking-tight truncate">{selectedClient.name}</h2>
+            <div className="flex items-center gap-3">
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Dashboard Management</p>
+              {loadingClientData && <p className="text-[10px] text-indigo-600 font-bold animate-pulse">Loading live data…</p>}
+            </div>
+          </div>
+        </div>
+        
+        <Tooltip content="Access this client's dashboard with full admin privileges">
+          <button 
+            onClick={() => onLoginAsSuperAdmin?.({ ...selectedClient, lockedFeatures, dashboardType })}
+            className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-black text-sm bg-slate-800 text-white hover:bg-slate-900 shadow-xl shadow-slate-200 transition-all active:scale-95 group shrink-0"
+          >
+            <ShieldCheck className="w-5 h-5 group-hover:scale-110 transition-transform" />
+            Login as Super Admin
+          </button>
+        </Tooltip>
+      </div>
+
+      {/* Top Navigation */}
+      <div className="border-b border-slate-200 mb-8">
+        <div className="flex overflow-x-auto no-scrollbar gap-6">
+          {[
+            { id: 'overview', icon: BarChart3, label: 'Overview' },
+            { id: 'users', icon: Users, label: 'Users' },
+            { id: 'files', icon: Files, label: 'Files' },
+            { id: 'activity', icon: Activity, label: 'Activity Logs' },
+            { id: 'support_tickets', icon: MessageSquare, label: 'Support Tickets' },
+            { id: 'payroll_notifications', icon: Bell, label: 'Payroll Notifications' },
+            { id: 'payroll_logs', icon: History, label: 'Payroll Logs' },
+            { id: 'whatsapp', icon: WhatsAppIcon, label: 'WhatsApp' },
+            { id: 'settings', icon: Settings, label: 'Settings' }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={cn(
+                "flex items-center gap-2 py-4 font-bold text-sm transition-all whitespace-nowrap border-b-2 relative group",
+                activeTab === tab.id 
+                  ? "border-indigo-600 text-indigo-600" 
+                  : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+              )}
+            >
+              <tab.icon className={cn("w-4 h-4 transition-transform", activeTab === tab.id ? "scale-110" : "group-hover:scale-110")} />
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="flex overflow-x-auto no-scrollbar gap-2 p-1.5 bg-white/80 backdrop-blur-md rounded-2xl shadow-sm border border-slate-100 w-full mb-6">
-        {[
-          { id: 'overview', icon: BarChart3, label: 'Overview' },
-          { id: 'users', icon: Users, label: 'Users' },
-          { id: 'files', icon: Files, label: 'Files' },
-          { id: 'activity', icon: Activity, label: 'Activity Logs' },
-          { id: 'support_tickets', icon: MessageSquare, label: 'Support Tickets' },
-          { id: 'payroll_notifications', icon: Bell, label: 'Payroll Notifications' },
-          { id: 'payroll_logs', icon: History, label: 'Payroll Logs' },
-          { id: 'settings', icon: Settings, label: 'Settings' }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
-            className={cn(
-              "flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm transition-all whitespace-nowrap",
-              activeTab === tab.id 
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-200" 
-                : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
-            )}
-          >
-            <tab.icon className="w-4 h-4" />
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      <motion.div
-        key={activeTab}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
-      >
+      {/* Main Content Area */}
+      <div className="min-w-0">
+        <motion.div
+          key={activeTab}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2 }}
+        >
         {activeTab === 'overview' && (
           <div className="space-y-8">
             {/* Top Stats */}
@@ -1425,6 +1724,8 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
           </div>
         )}
 
+        {activeTab === 'whatsapp' && renderWhatsAppTab()}
+
         {activeTab === 'settings' && (
           <div className="flex gap-8 min-h-[600px]">
             {/* Settings Navigation Rail */}
@@ -1877,6 +2178,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
           </div>
         )}
       </motion.div>
+      </div>
     </div>
   );
 
@@ -2038,23 +2340,14 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                       </div>
                     </div>
                   </div>
-                  {editingUser ? (
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
-                      <select name="role" defaultValue={String(editingUser?.role || 'admin').toLowerCase()} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm appearance-none bg-white">
-                        <option value="admin">Admin</option>
-                        <option value="manager">Manager</option>
-                        <option value="user">User</option>
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
-                      <div className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-bold text-slate-600">
-                        Admin
-                      </div>
-                    </div>
-                  )}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
+                    <select name="role" defaultValue={editingUser?.role || 'User'} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm appearance-none bg-white">
+                      <option value="Admin">Admin</option>
+                      <option value="Manager">Manager</option>
+                      <option value="User">User</option>
+                    </select>
+                  </div>
 
                   <div className="flex gap-3 pt-4">
                     <button 

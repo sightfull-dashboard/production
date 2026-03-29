@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2, Search, Calendar, User, Activity, Clock } from 'lucide-react';
-import { format, isValid, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 
 interface Log {
   id: string;
@@ -69,29 +69,6 @@ export function ActivityLogsPanel() {
     return 'text-slate-600 bg-slate-50 border-slate-200';
   };
 
-  const formatTimestamp = (value: string) => {
-    if (!value) return '-';
-
-    const candidates = [
-      value,
-      /[zZ]|[+-]\d\d:?\d\d$/.test(value) ? null : `${value}Z`,
-    ].filter(Boolean) as string[];
-
-    for (const candidate of candidates) {
-      const parsed = parseISO(candidate);
-      if (isValid(parsed)) {
-        return format(parsed, 'MMM d, yyyy HH:mm:ss');
-      }
-
-      const fallback = new Date(candidate);
-      if (isValid(fallback)) {
-        return format(fallback, 'MMM d, yyyy HH:mm:ss');
-      }
-    }
-
-    return value;
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -140,7 +117,7 @@ export function ActivityLogsPanel() {
                 filteredLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="py-4 px-6 text-sm text-slate-600 font-medium whitespace-nowrap">
-                      {formatTimestamp(log.created_at)}
+                      {format(new Date(log.created_at + 'Z'), 'MMM d, yyyy HH:mm:ss')}
                     </td>
                     <td className="py-4 px-6">
                       <div className="flex flex-col">

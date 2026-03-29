@@ -3,7 +3,6 @@ import type { Express } from 'express';
 import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../../lib/shifts';
-import { isDataUrl, randomId, uploadDataUrlToBucket } from '../utils/supabaseStorage';
 
 const parseJsonArray = (value: any) => Array.isArray(value) ? value : (() => {
   try { return value ? JSON.parse(value) : []; } catch { return []; }
@@ -80,21 +79,6 @@ async function listEmployeesForClient(clientId: string | null) {
     if (!current || String(row.day_date) > current) maxMap.set(row.employee_id, String(row.day_date));
   }
   return employees.map((employee) => ({ ...employee, last_worked_date: maxMap.get(employee.id) || null }));
-}
-
-
-async function resolveEmployeeImage(clientId: string | null, employeeId: string, imageValue: any) {
-  const raw = String(imageValue || '').trim();
-  if (!raw) return null;
-  if (!isDataUrl(raw)) return raw;
-  const upload = await uploadDataUrlToBucket({
-    bucket: env.supabaseBucketClientAssets,
-    path: `employees/${clientId || 'shared'}/${employeeId}/avatar-${randomId()}.png`,
-    dataUrl: raw,
-    contentType: 'image/png',
-    upsert: true,
-  });
-  return upload.public_url || null;
 }
 
 async function nextEmployeeId(clientId: string | null) {
@@ -178,61 +162,6 @@ function ensureUser(req: any, res: any) {
 function ensureUserOrEmployee(req: any, res: any) {
   if (!getSessionUserId(req) && !getSessionEmployeeId(req)) {
     res.status(401).json({ error: 'Unauthorized' });
-    return false;
-  }
-  return true;
-}
-
-
-async function getClientTrialStateSupabase(clientId: string | null | undefined) {
-  const client = await fetchClientById(clientId);
-  if (!client || !client.is_trial) return { isTrial: false, trialEndDate: null, trialExpired: false, trialDaysRemaining: null, client };
-  const trialEndDate = client.trial_end_date || null;
-  const msRemaining = trialEndDate ? (new Date(trialEndDate).getTime() - Date.now()) : 0;
-  return {
-    isTrial: true,
-    trialEndDate,
-    trialExpired: Boolean(trialEndDate && msRemaining < 0),
-    trialDaysRemaining: trialEndDate ? Math.max(0, Math.ceil(msRemaining / (1000 * 60 * 60 * 24))) : null,
-    client,
-  };
-}
-
-async function enforceSupabaseFeatureGate(req: any, res: any, featureKey: string) {
-  const sessionRole = getSessionRole(req);
-  if (sessionRole === 'superadmin') return true;
-
-  const employeeSessionId = getSessionEmployeeId(req);
-  if (employeeSessionId) {
-    const employee = await fetchEmployeeById(employeeSessionId);
-    const trialState = await getClientTrialStateSupabase(employee?.client_id || getSessionClientId(req));
-    if (trialState.isTrial && trialState.trialExpired) {
-      res.status(402).json({ error: 'Trial expired', trialExpired: true, trialEndDate: trialState.trialEndDate, trialDaysRemaining: 0, client_id: employee?.client_id || null, client_name: trialState.client?.name || null });
-      return false;
-    }
-    const lockedFeatures = parseJsonArray(trialState.client?.locked_features);
-    if (lockedFeatures.includes(featureKey)) {
-      res.status(423).json({ error: 'Feature locked', feature: featureKey, client_id: employee?.client_id || null, client_name: trialState.client?.name || null });
-      return false;
-    }
-    return true;
-  }
-
-  const userId = getSessionUserId(req);
-  if (!userId) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return false;
-  }
-
-  const user = await fetchUserById(userId);
-  const trialState = await getClientTrialStateSupabase(user?.client_id || null);
-  if (trialState.isTrial && trialState.trialExpired) {
-    res.status(402).json({ error: 'Trial expired', trialExpired: true, trialEndDate: trialState.trialEndDate, trialDaysRemaining: 0, client_id: user?.client_id || null, client_name: trialState.client?.name || null });
-    return false;
-  }
-  const lockedFeatures = parseJsonArray(trialState.client?.locked_features);
-  if (lockedFeatures.includes(featureKey)) {
-    res.status(423).json({ error: 'Feature locked', feature: featureKey, client_id: user?.client_id || null, client_name: trialState.client?.name || null });
     return false;
   }
   return true;
@@ -355,7 +284,6 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/employees', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const role = getSessionRole(req);
     const activeClientId = role === 'superadmin' ? getRequestedClientId(req) : (await fetchUserById(getSessionUserId(req)))?.client_id || null;
     const employees = await listEmployeesForClient(activeClientId);
@@ -364,7 +292,6 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/employees', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const actor = await fetchUserById(getSessionUserId(req));
     const actorRole = getSessionRole(req);
     const actorClientId = actorRole === 'superadmin' ? (getRequestedClientId(req) || actor?.client_id || null) : actor?.client_id || null;
@@ -393,7 +320,6 @@ export function registerSupabaseCoreRoutes({
     const employeePayload = sanitizeEmployeeForSupabase({
       id,
       ...persistableData,
-      image: await resolveEmployeeImage(actorClientId, id, persistableData.image),
       pin: data.pin || null,
       client_id: actorClientId,
       annual_leave_last_accrual_date: data.start_date,
@@ -407,7 +333,6 @@ export function registerSupabaseCoreRoutes({
 
   app.put('/api/employees/:id', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const actor = await fetchUserById(getSessionUserId(req));
     const actorRole = getSessionRole(req);
     const actorClientId = actorRole === 'superadmin' ? (getRequestedClientId(req) || actor?.client_id || null) : actor?.client_id || null;
@@ -418,15 +343,13 @@ export function registerSupabaseCoreRoutes({
     const errors = validateEmployeePayload(data);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
     const { allow_blank_pin: _allowBlankPin, ...persistableData } = data as any;
-    const updatePayload = sanitizeEmployeeForSupabase({ ...persistableData, image: await resolveEmployeeImage(actorClientId, req.params.id, persistableData.image) });
-    const { data: updated, error } = await supabaseAdmin.from('employees').update(updatePayload).eq('id', req.params.id).select('*').single();
+    const { data: updated, error } = await supabaseAdmin.from('employees').update(sanitizeEmployeeForSupabase(persistableData)).eq('id', req.params.id).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(updated);
   });
 
   app.post('/api/employees/:id/offboard', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const payload = {
       status: 'offboarded',
       last_worked: req.body?.last_worked || null,
@@ -440,15 +363,12 @@ export function registerSupabaseCoreRoutes({
 
   app.delete('/api/employees/:id', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'employee_records')) return;
     const { error } = await supabaseAdmin.from('employees').delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
   });
 
-  app.get('/api/shifts', async (req, res) => {
-    if (!ensureUserOrEmployee(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
+  app.get('/api/shifts', async (_req, res) => {
     const { data, error } = await supabaseAdmin.from('shifts').select('*');
     if (error) return res.status(500).json({ error: error.message });
     res.json(sortShiftsBaseFirst((data || []) as any));
@@ -456,7 +376,6 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/shifts', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const payload = normalizeShiftPayload(req.body);
     const errors = validateShiftPayload(payload);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
@@ -468,7 +387,6 @@ export function registerSupabaseCoreRoutes({
 
   app.put('/api/shifts/:id', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const payload = normalizeShiftPayload({ ...req.body, id: req.params.id });
     const errors = validateShiftPayload(payload);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
@@ -479,7 +397,6 @@ export function registerSupabaseCoreRoutes({
 
   app.delete('/api/shifts/:id', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const { error } = await supabaseAdmin.from('shifts').delete().eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
@@ -487,7 +404,6 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/roster', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const actor = await fetchUserById(getSessionUserId(req));
     const actorRole = getSessionRole(req);
     const clientId = actorRole === 'superadmin' ? (getRequestedClientId(req) || actor?.client_id || null) : actor?.client_id || null;
@@ -512,7 +428,6 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/roster', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'rostering')) return;
     const payload = {
       employee_id: String(req.body?.employee_id || '').trim(),
       day_date: String(req.body?.day_date || '').trim(),
@@ -559,7 +474,6 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/roster-meta', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'timesheets')) return;
     const actor = await fetchUserById(getSessionUserId(req));
     const actorRole = getSessionRole(req);
     const clientId = actorRole === 'superadmin' ? (getRequestedClientId(req) || actor?.client_id || null) : actor?.client_id || null;
@@ -578,7 +492,6 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/roster-meta', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'timesheets')) return;
     const employeeId = String(req.body?.employee_id || '').trim();
     const weekStart = String(req.body?.week_start || '').trim();
     const field = String(req.body?.field || '').trim();
@@ -596,18 +509,40 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/analytics', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'analytics')) return;
     try {
       const month = String(req.query.month || new Date().toISOString().slice(0, 7));
-      const [yearStr, monthStr] = month.split('-');
-      let prevYear = Number(yearStr);
-      let prevMonth = Number(monthStr) - 1;
-      if (prevMonth === 0) {
-        prevMonth = 12;
-        prevYear -= 1;
+      const selectedMonthDate = new Date(`${month}-01T00:00:00`);
+      if (Number.isNaN(selectedMonthDate.getTime())) {
+        return res.status(400).json({ error: 'Invalid month supplied' });
       }
-      const currentPrefix = month;
-      const prevPrefix = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+
+      const buildMonthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const buildMonthLabel = (monthKey: string) => {
+        const [y, m] = monthKey.split('-').map(Number);
+        return new Date(y, (m || 1) - 1, 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' });
+      };
+      const getMonthStart = (monthKey: string) => `${monthKey}-01`;
+      const getMonthEnd = (monthKey: string) => {
+        const [year, monthNumber] = monthKey.split('-').map(Number);
+        return new Date(year, monthNumber, 0).toISOString().slice(0, 10);
+      };
+
+      const currentPrefix = buildMonthKey(selectedMonthDate);
+      const prevMonthDate = new Date(selectedMonthDate);
+      prevMonthDate.setMonth(prevMonthDate.getMonth() - 1);
+      const prevPrefix = buildMonthKey(prevMonthDate);
+
+      const trendMonths: string[] = [];
+      for (let offset = 5; offset >= 0; offset -= 1) {
+        const d = new Date(selectedMonthDate);
+        d.setMonth(d.getMonth() - offset);
+        trendMonths.push(buildMonthKey(d));
+      }
+      const trendStart = getMonthStart(trendMonths[0]);
+      const trendEnd = getMonthEnd(trendMonths[trendMonths.length - 1]);
+      const selectedMonthStart = getMonthStart(currentPrefix);
+      const selectedMonthEnd = getMonthEnd(currentPrefix);
+
       const clientId = await resolveRequestedClientIdForUser(req);
 
       let employeesQuery = supabaseAdmin.from('employees').select('*');
@@ -627,9 +562,35 @@ export function registerSupabaseCoreRoutes({
           .from('roster')
           .select('*')
           .in('employee_id', employeeIds)
-          .or(`day_date.like.${currentPrefix}-%25,day_date.like.${prevPrefix}-%25`);
+          .gte('day_date', trendStart)
+          .lte('day_date', trendEnd);
         if (rosterError) return res.status(500).json({ error: rosterError.message });
         roster = (rosterData || []) as any[];
+      }
+
+      let leaveRequests: any[] = [];
+      if (employeeIds.length) {
+        const { data: leaveData, error: leaveError } = await supabaseAdmin
+          .from('leave_requests')
+          .select('*')
+          .in('employee_id', employeeIds)
+          .lte('start_date', selectedMonthEnd)
+          .gte('end_date', selectedMonthStart);
+        if (leaveError) return res.status(500).json({ error: leaveError.message });
+        leaveRequests = (leaveData || []) as any[];
+      }
+
+      let payrollSubmissions: any[] = [];
+      let payrollSubmissionsQuery = supabaseAdmin
+        .from('payroll_submissions')
+        .select('id, client_id, client_name, submitted_at, period_start, period_end, period, employee_count, status, total_hours, total_pay');
+      if (clientId) {
+        payrollSubmissionsQuery = payrollSubmissionsQuery.eq('client_id', clientId);
+      }
+      payrollSubmissionsQuery = payrollSubmissionsQuery.order('submitted_at', { ascending: false }).limit(12);
+      const { data: submissionsData, error: submissionsError } = await payrollSubmissionsQuery;
+      if (!submissionsError) {
+        payrollSubmissions = (submissionsData || []) as any[];
       }
 
       const shiftMap = new Map<string, any>();
@@ -641,7 +602,7 @@ export function registerSupabaseCoreRoutes({
           let startMins = startH * 60 + startM;
           let endMins = endH * 60 + endM;
           if (endMins < startMins) endMins += 24 * 60;
-          durationHours = (endMins - startMins - (Number(s.lunch) || 0)) / 60;
+          durationHours = Math.max(0, (endMins - startMins - (Number(s.lunch) || 0)) / 60);
         }
         shiftMap.set(s.id, { ...s, durationHours });
       });
@@ -649,7 +610,7 @@ export function registerSupabaseCoreRoutes({
       const calculateEntry = (r: any, emp: any) => {
         const shift = shiftMap.get(r.shift_id);
         if (!shift) return null;
-        const date = new Date(r.day_date);
+        const date = new Date(`${r.day_date}T00:00:00`);
         const isSunday = date.getDay() === 0;
         let category = 'Normal Time';
         let hours = Number(shift.durationHours) || 0;
@@ -685,7 +646,7 @@ export function registerSupabaseCoreRoutes({
 
       let currentTotal = 0;
       let prevTotal = 0;
-      const weeklyData: Record<string, { shifts: number; amount: number }> = {};
+      const weeklyData: Record<string, { shifts: number; amount: number; hours: number }> = {};
       const breakdown: Record<string, number> = {
         'Normal Time': 0,
         'Overtime (1.5)': 0,
@@ -696,59 +657,155 @@ export function registerSupabaseCoreRoutes({
         'Bonus': 0,
         'Allowances': 0,
       };
-      const employeeStats: Record<string, { name: string; amount: number; annual: number; sick: number; family: number }> = {};
+      const employeeStats: Record<string, { id: string; name: string; amount: number; annual: number; sick: number; family: number; shifts: number; hours: number }> = {};
+      const monthlyBuckets = new Map<string, { amount: number; shifts: number; hours: number }>();
+      trendMonths.forEach((monthKey) => monthlyBuckets.set(monthKey, { amount: 0, shifts: 0, hours: 0 }));
+
       employees.forEach((emp: any) => {
         employeeStats[emp.id] = {
+          id: emp.id,
           name: `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
           amount: 0,
           annual: Number(emp.annual_leave) || 0,
           sick: Number(emp.sick_leave) || 0,
           family: Number(emp.family_leave) || 0,
+          shifts: 0,
+          hours: 0,
         };
       });
+
       roster.forEach((r: any) => {
         const emp = employees.find((e: any) => e.id === r.employee_id);
         if (!emp) return;
-        const isCurrentMonth = String(r.day_date).startsWith(currentPrefix);
-        const isPrevMonth = String(r.day_date).startsWith(prevPrefix);
+        const monthKey = String(r.day_date || '').slice(0, 7);
         const entries = calculateEntry(r, emp);
         if (!entries) return;
+
         let dayTotal = 0;
+        let dayHours = 0;
         entries.forEach((entry: any) => {
           dayTotal += entry.amount;
-          if (isCurrentMonth) breakdown[entry.category] = (breakdown[entry.category] || 0) + entry.amount;
+          dayHours += Number(entry.hours) || 0;
+          if (monthKey === currentPrefix) {
+            breakdown[entry.category] = (breakdown[entry.category] || 0) + entry.amount;
+          }
         });
-        if (isCurrentMonth) {
+
+        if (monthlyBuckets.has(monthKey)) {
+          const bucket = monthlyBuckets.get(monthKey)!;
+          bucket.amount += dayTotal;
+          bucket.hours += dayHours;
+          bucket.shifts += 1;
+        }
+
+        if (monthKey === currentPrefix) {
           currentTotal += dayTotal;
           employeeStats[emp.id].amount += dayTotal;
-          const date = new Date(r.day_date);
+          employeeStats[emp.id].shifts += 1;
+          employeeStats[emp.id].hours += dayHours;
+          const date = new Date(`${r.day_date}T00:00:00`);
           const weekNum = Math.ceil(date.getDate() / 7);
           const weekKey = `Week ${weekNum}`;
-          if (!weeklyData[weekKey]) weeklyData[weekKey] = { shifts: 0, amount: 0 };
+          if (!weeklyData[weekKey]) weeklyData[weekKey] = { shifts: 0, amount: 0, hours: 0 };
           weeklyData[weekKey].shifts += 1;
           weeklyData[weekKey].amount += dayTotal;
-        } else if (isPrevMonth) {
+          weeklyData[weekKey].hours += dayHours;
+        } else if (monthKey === prevPrefix) {
           prevTotal += dayTotal;
         }
       });
+
       const activeEmployees = employees.filter((e: any) => e.status !== 'offboarded');
       const totalEmployees = employees.length;
       const activeCount = activeEmployees.length;
       const offboardedCount = totalEmployees - activeCount;
-      const avgSalary = activeCount > 0 ? activeEmployees.reduce((sum: number, e: any) => sum + (Number(e.pay_rate) || 0), 0) / activeCount : 0;
+      const avgSalary = activeCount > 0
+        ? activeEmployees.reduce((sum: number, e: any) => sum + (Number(e.pay_rate) || 0), 0) / activeCount
+        : 0;
       const nonZeroWeeks = Object.values(weeklyData).filter((w) => w.amount > 0);
-      const avgWeeklyBill = nonZeroWeeks.length > 0 ? nonZeroWeeks.reduce((sum, w) => sum + w.amount, 0) / nonZeroWeeks.length : 0;
-      const weeklyChart = Object.keys(weeklyData).sort().map((week) => ({ week, shifts: weeklyData[week].shifts, amount: weeklyData[week].amount }));
-      const breakdownArray = Object.keys(breakdown).filter((k) => breakdown[k] > 0).map((category) => ({ category, amount: breakdown[category] }));
-      const employeeShare = Object.values(employeeStats).filter((e) => e.amount > 0).map((e) => ({ name: e.name, amount: e.amount, percentage: currentTotal > 0 ? (e.amount / currentTotal) * 100 : 0, })).sort((a, b) => b.amount - a.amount);
+      const avgWeeklyBill = nonZeroWeeks.length > 0
+        ? nonZeroWeeks.reduce((sum, w) => sum + w.amount, 0) / nonZeroWeeks.length
+        : 0;
+      const totalHoursThisMonth = Object.values(weeklyData).reduce((sum, w) => sum + w.hours, 0);
+      const avgHoursPerShift = currentTotal > 0 && Object.values(weeklyData).reduce((sum, w) => sum + w.shifts, 0) > 0
+        ? totalHoursThisMonth / Object.values(weeklyData).reduce((sum, w) => sum + w.shifts, 0)
+        : 0;
+
+      const weeklyChart = Object.keys(weeklyData)
+        .sort((a, b) => Number(a.replace(/\D/g, '')) - Number(b.replace(/\D/g, '')))
+        .map((week) => ({ week, shifts: weeklyData[week].shifts, amount: weeklyData[week].amount, hours: weeklyData[week].hours }));
+      const breakdownArray = Object.keys(breakdown)
+        .filter((k) => breakdown[k] > 0)
+        .map((category) => ({ category, amount: breakdown[category] }));
+      const employeeShare = Object.values(employeeStats)
+        .filter((e) => e.amount > 0)
+        .map((e) => ({
+          id: e.id,
+          name: e.name,
+          amount: e.amount,
+          shifts: e.shifts,
+          hours: e.hours,
+          percentage: currentTotal > 0 ? (e.amount / currentTotal) * 100 : 0,
+        }))
+        .sort((a, b) => b.amount - a.amount);
+
       const activeEmployeeIds = new Set(activeEmployees.map((e: any) => e.id));
-      const leaveAnalytics = Object.entries(employeeStats).filter(([employeeId]) => activeEmployeeIds.has(employeeId)).map(([, e]: any) => ({ name: e.name, annual: e.annual, sick: e.sick, family: e.family }));
+      const leaveAnalytics = Object.entries(employeeStats)
+        .filter(([employeeId]) => activeEmployeeIds.has(employeeId))
+        .map(([, e]: any) => ({ id: e.id, name: e.name, annual: e.annual, sick: e.sick, family: e.family }))
+        .sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+      const monthlyTrend = trendMonths.map((monthKey) => ({
+        month: monthKey,
+        label: buildMonthLabel(monthKey),
+        amount: monthlyBuckets.get(monthKey)?.amount || 0,
+        shifts: monthlyBuckets.get(monthKey)?.shifts || 0,
+        hours: monthlyBuckets.get(monthKey)?.hours || 0,
+      }));
+
+      const leaveRequestStats = leaveRequests.reduce((acc: any, request: any) => {
+        const status = String(request.status || 'pending');
+        acc[status] = (acc[status] || 0) + 1;
+        if (status === 'approved') {
+          acc.approvedDays += Number(request.days) || 0;
+        }
+        return acc;
+      }, { pending: 0, approved: 0, declined: 0, cancelled: 0, approvedDays: 0 });
+
+      const recentPayrollSubmissions = payrollSubmissions.slice(0, 6).map((submission: any) => ({
+        id: submission.id,
+        period: submission.period || `${submission.period_start || ''} to ${submission.period_end || ''}`.trim(),
+        submittedAt: submission.submitted_at,
+        status: submission.status || 'pending',
+        employeeCount: Number(submission.employee_count) || 0,
+        totalHours: Number(submission.total_hours) || 0,
+        totalPay: Number(submission.total_pay) || 0,
+      }));
+      const latestSubmission = recentPayrollSubmissions[0] || null;
+
       return res.json({
-        kpis: { currentTotal, prevTotal, avgSalary, avgWeeklyBill, totalEmployees, activeCount, offboardedCount },
+        kpis: {
+          currentTotal,
+          prevTotal,
+          avgSalary,
+          avgWeeklyBill,
+          totalEmployees,
+          activeCount,
+          offboardedCount,
+          totalHoursThisMonth,
+          avgHoursPerShift,
+          approvedLeaveDays: leaveRequestStats.approvedDays,
+          pendingLeaveRequests: leaveRequestStats.pending,
+          latestSubmissionTotal: latestSubmission?.totalPay || 0,
+          latestSubmissionEmployeeCount: latestSubmission?.employeeCount || 0,
+        },
         weeklyChart,
+        monthlyTrend,
         breakdown: breakdownArray,
         employeeShare,
         leaveAnalytics,
+        leaveRequestStats,
+        recentPayrollSubmissions,
       });
     } catch (error: any) {
       return res.status(500).json({ error: error?.message || 'Failed to load analytics' });
@@ -757,7 +814,6 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/leave-requests', async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
     const employeeSessionId = getSessionEmployeeId(req);
     let employeeId = typeof req.query.employee_id === 'string' ? req.query.employee_id : null;
     if (employeeSessionId) employeeId = employeeSessionId;
@@ -776,7 +832,6 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/leave-requests', async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
     const employeeSessionId = getSessionEmployeeId(req);
     const employee_id = String(req.body?.employee_id || employeeSessionId || '').trim();
     if (!employee_id) return res.status(400).json({ error: 'Employee is required' });
@@ -801,32 +856,8 @@ export function registerSupabaseCoreRoutes({
     res.status(201).json(data);
   });
 
-  app.patch('/api/leave-requests/:id', async (req, res) => {
-    if (!ensureUserOrEmployee(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
-    const { data: existing, error: fetchError } = await supabaseAdmin.from('leave_requests').select('*').eq('id', req.params.id).single();
-    if (fetchError || !existing) return res.status(404).json({ error: 'Leave request not found' });
-    const employeeSessionId = getSessionEmployeeId(req);
-    if (employeeSessionId && existing.employee_id !== employeeSessionId) return res.status(403).json({ error: 'Forbidden' });
-    if (existing.status && !['pending','approved'].includes(String(existing.status))) return res.status(400).json({ error: 'Only pending or approved leave requests can be updated.' });
-    const payload = {
-      type: String(req.body?.type || existing.type || '').trim(),
-      start_date: String(req.body?.start_date || existing.start_date || '').slice(0, 10),
-      end_date: String(req.body?.end_date || existing.end_date || '').slice(0, 10),
-      is_half_day: typeof req.body?.is_half_day === 'boolean' ? !!req.body.is_half_day : !!existing.is_half_day,
-      notes: req.body?.notes ?? existing.notes ?? '',
-      admin_notes: req.body?.admin_notes ?? existing.admin_notes ?? '',
-      days: Number(req.body?.days ?? existing.days ?? 0),
-      updated_at: new Date().toISOString(),
-    };
-    const { data, error } = await supabaseAdmin.from('leave_requests').update(payload).eq('id', req.params.id).select('*').single();
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
-  });
-
   app.put('/api/leave-requests/:id/status', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
     const status = String(req.body?.status || '').trim();
     if (!['approved','declined'].includes(status)) return res.status(400).json({ error: 'Valid status is required' });
     const { data, error } = await supabaseAdmin.from('leave_requests').update({ status, admin_notes: String(req.body?.admin_notes || ''), updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
@@ -836,7 +867,6 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/leave-requests/:id/cancel', async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
-    if (!await enforceSupabaseFeatureGate(req, res, 'leave_management')) return;
     const { data, error } = await supabaseAdmin.from('leave_requests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);

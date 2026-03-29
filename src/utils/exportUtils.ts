@@ -28,11 +28,22 @@ export const downloadCSV = (data: any[], filename: string) => {
   document.body.removeChild(link);
 };
 
-export const exportToPDF = (title: string, headers: string[], rows: any[][], filename: string) => {
+export interface ExportToPDFOptions {
+  headRows?: any[][];
+  columnStyles?: Record<number, any>;
+  didParseCell?: (data: any) => void;
+  format?: 'a4' | 'a3' | 'legal';
+  styles?: Record<string, any>;
+  headStyles?: Record<string, any>;
+  bodyStyles?: Record<string, any>;
+  margin?: { top?: number; right?: number; bottom?: number; left?: number };
+}
+
+export const exportToPDF = (title: string, headers: string[], rows: any[][], filename: string, options: ExportToPDFOptions = {}) => {
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',
-    format: 'a4'
+    format: options.format || 'a4'
   });
 
   doc.setFontSize(18);
@@ -41,8 +52,10 @@ export const exportToPDF = (title: string, headers: string[], rows: any[][], fil
   doc.setTextColor(100);
   doc.text(`Generated on ${new Date().toLocaleDateString()}`, 14, 30);
 
+  const margin = options.margin || { top: 35, right: 10, bottom: 10, left: 10 };
+
   autoTable(doc, {
-    head: [headers],
+    head: options.headRows && options.headRows.length ? options.headRows : [headers],
     body: rows,
     startY: 35,
     theme: 'grid',
@@ -51,6 +64,8 @@ export const exportToPDF = (title: string, headers: string[], rows: any[][], fil
       cellPadding: 3,
       lineColor: [203, 213, 225], // Slate 300
       lineWidth: 0.1,
+      overflow: 'hidden',
+      ...options.styles,
     },
     headStyles: {
       fillColor: [255, 255, 255], // White
@@ -58,11 +73,16 @@ export const exportToPDF = (title: string, headers: string[], rows: any[][], fil
       fontStyle: 'bold',
       lineWidth: 0.1,
       lineColor: [203, 213, 225], // Slate 300
+      ...options.headStyles,
     },
+    bodyStyles: options.bodyStyles,
     alternateRowStyles: {
       fillColor: [249, 250, 251], // Slate 50
     },
-    margin: { top: 35 },
+    columnStyles: options.columnStyles,
+    didParseCell: options.didParseCell,
+    margin,
+    tableWidth: 'auto',
   });
 
   doc.save(filename);

@@ -4,6 +4,7 @@ import {
   CheckCircle, 
   XCircle, 
   Clock, 
+  Lock,
   Search, 
   Plus, 
   AlertCircle,
@@ -43,6 +44,7 @@ interface LeaveSectionProps {
 }
 
 export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests, setRequests, onRefresh, onRefreshEmployees, initialSelectedEmployeeId }) => {
+  const pendingLeaveLocked = true;
   const [activeTab, setActiveTab] = useState<'employees' | 'pending' | 'calendar'>('employees');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -85,6 +87,12 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
       setEndDate(startDate);
     }
   }, [leaveType, startDate]);
+
+  useEffect(() => {
+    if (pendingLeaveLocked && activeTab === 'pending') {
+      setActiveTab('employees');
+    }
+  }, [pendingLeaveLocked, activeTab]);
 
   const withAdminOverrideRetry = async (action: (overrides?: Record<string, unknown>) => Promise<void>) => {
     try {
@@ -458,24 +466,14 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
           Employees
         </button>
         <button
-          onClick={() => setActiveTab('pending')}
-          className={cn(
-            "px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2",
-            activeTab === 'pending' 
-              ? "bg-amber-500 text-white shadow-md shadow-amber-200" 
-              : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
-          )}
+          type="button"
+          onClick={() => toast.info('Pending Leave is coming soon.')}
+          aria-disabled="true"
+          className="px-6 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center gap-2 bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200"
         >
-          <Clock className="w-4 h-4" />
+          <Lock className="w-4 h-4" />
           Pending Leave
-          {requests.filter(r => r.status === 'pending').length > 0 && (
-            <span className={cn(
-              "ml-1.5 px-2 py-0.5 rounded-md text-[10px] font-black",
-              activeTab === 'pending' ? "bg-white/20 text-white" : "bg-amber-100 text-amber-700"
-            )}>
-              {requests.filter(r => r.status === 'pending').length}
-            </span>
-          )}
+          <span className="ml-1.5 px-2 py-0.5 rounded-md text-[10px] font-black bg-white text-slate-500 border border-slate-200">Soon</span>
         </button>
         <button
           onClick={() => setActiveTab('calendar')}

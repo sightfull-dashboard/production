@@ -166,11 +166,12 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
       'Sun 1.5',
       'Sun 2.0',
       'Public Holiday',
-      'Annual Leave',
-      'Sick Leave',
-      'Family Leave',
-      ...(includeDefinitions ? visibleDefinitions.map(def => def.label) : []),
+      ...(includeDefinitions ? ['Leave', 'Annual Leave', 'Sick Leave', 'Family Leave'] : []),
+      ...(includeDefinitions ? ['Definitions', ...visibleDefinitions.map(def => def.label)] : []),
     ];
+
+    const leaveSeparatorIndex = includeDefinitions ? 7 : -1;
+    const definitionSeparatorIndex = includeDefinitions ? 11 : -1;
 
     const rows: any[] = [];
     groupedEmployees.forEach(([dept, deptEmployees]) => {
@@ -199,19 +200,75 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
           formatValue(payroll.sun15),
           formatValue(payroll.sun20),
           formatValue(payroll.pph),
-          formatValue(payroll.leave),
-          formatValue(payroll.sick),
-          formatValue(payroll.family),
-          ...(includeDefinitions ? visibleDefinitions.map(def => formatValue(payroll[def.id])) : []),
+          ...(includeDefinitions ? [
+            '',
+            formatValue(payroll.leave),
+            formatValue(payroll.sick),
+            formatValue(payroll.family),
+          ] : []),
+          ...(includeDefinitions ? ['', ...visibleDefinitions.map(def => formatValue(payroll[def.id]))] : []),
         ]);
       });
     });
+
+    const baseColumnStyles: Record<number, any> = {
+      0: { cellWidth: 38 },
+      1: { cellWidth: 28 },
+      2: { cellWidth: 17 },
+      3: { cellWidth: 16 },
+      4: { cellWidth: 16 },
+      5: { cellWidth: 16 },
+      6: { cellWidth: 21 },
+    };
+
+    if (includeDefinitions) {
+      baseColumnStyles[leaveSeparatorIndex] = { cellWidth: 10 };
+      baseColumnStyles[8] = { cellWidth: 17 };
+      baseColumnStyles[9] = { cellWidth: 17 };
+      baseColumnStyles[10] = { cellWidth: 18 };
+      baseColumnStyles[definitionSeparatorIndex] = { cellWidth: 14 };
+      visibleDefinitions.forEach((_, idx) => {
+        baseColumnStyles[definitionSeparatorIndex + 1 + idx] = { cellWidth: 20 };
+      });
+    }
 
     exportToPDF(
       `Timesheet Period: ${format(currentWeekStart, 'dd MMM')} - ${format(addDays(currentWeekStart, periodDays - 1), 'dd MMM yyyy')}`,
       headers,
       rows,
-      `Timesheet_${includeDefinitions ? 'Full_' : ''}${format(addDays(currentWeekStart, periodDays - 1), 'yyyy-MM-dd')}.pdf`
+      `Timesheet_${includeDefinitions ? 'Full_' : ''}${format(addDays(currentWeekStart, periodDays - 1), 'yyyy-MM-dd')}.pdf`,
+      {
+        format: includeDefinitions ? 'a3' : 'a4',
+        styles: {
+          fontSize: includeDefinitions ? 5.5 : 7,
+          cellPadding: includeDefinitions ? 1.8 : 2.8,
+          overflow: 'hidden',
+          whiteSpace: 'nowrap',
+        },
+        headStyles: {
+          fontSize: includeDefinitions ? 5.5 : 7,
+          cellPadding: includeDefinitions ? 1.8 : 2.8,
+        },
+        margin: includeDefinitions ? { top: 35, right: 6, bottom: 10, left: 6 } : { top: 35, right: 10, bottom: 10, left: 10 },
+        columnStyles: baseColumnStyles,
+        didParseCell: (data: any) => {
+          const columnIndex = data.column.index;
+
+          if (includeDefinitions && columnIndex === leaveSeparatorIndex) {
+            data.cell.styles.fillColor = [224, 231, 255];
+            data.cell.styles.textColor = [67, 56, 202];
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.halign = 'center';
+          }
+
+          if (includeDefinitions && columnIndex === definitionSeparatorIndex) {
+            data.cell.styles.fillColor = [237, 233, 254];
+            data.cell.styles.textColor = [109, 40, 217];
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.halign = 'center';
+          }
+        },
+      }
     );
     setShowExportOptions(false);
   };
@@ -256,7 +313,7 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
                     className="w-full px-4 py-2.5 text-left text-sm font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 transition-colors flex items-center gap-3"
                   >
                     <FileText className="w-4 h-4" />
-                    PDF (Timesheet Only)
+                    Export as PDF
                   </button>
                   <button
                     onClick={() => handleExportPDF(true)}
@@ -318,32 +375,24 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
 
       <div className="bg-white rounded-[32px] shadow-2xl shadow-slate-200/50 border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-separate border-spacing-0 min-w-[2150px]">
+          <table className="w-full text-left border-separate border-spacing-0 min-w-[1200px]">
             <thead>
               <tr className="bg-slate-50/80 backdrop-blur-sm text-slate-500 text-[10px] uppercase tracking-[0.15em] font-black">
                 <th className="pl-10 pr-6 py-5 sticky left-0 bg-slate-50/95 backdrop-blur-md z-[120] border-r border-b border-slate-200 min-w-[255px] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)] whitespace-nowrap">
                   Employee Details
                 </th>
-                <th className="px-6 py-5 text-center min-w-[145px] border-b border-slate-200 whitespace-nowrap">Normal (45h)</th>
-                <th className="px-6 py-5 text-center min-w-[120px] border-b border-slate-200 whitespace-nowrap">OT 1.5</th>
-                <th className="px-6 py-5 text-center min-w-[120px] border-b border-slate-200 whitespace-nowrap">Sun 1.5</th>
-                <th className="px-6 py-5 text-center min-w-[120px] border-b border-slate-200 whitespace-nowrap">Sun 2.0</th>
-                <th className="px-6 py-5 text-center min-w-[150px] border-b border-slate-200 whitespace-nowrap">Public Holiday</th>
-                <th className="px-6 py-5 text-center min-w-[130px] bg-amber-200 text-amber-950 border-b border-amber-300 whitespace-nowrap">
-                  <div className="mx-auto flex h-[88px] items-center justify-center">
-                    <span className="text-[11px] font-black uppercase tracking-[0.2em]" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}>Leave</span>
-                  </div>
-                </th>
-                <th className="px-6 py-5 text-center min-w-[130px] border-b border-slate-200 bg-slate-50/60 whitespace-nowrap">Annual Leave</th>
-                <th className="px-6 py-5 text-center min-w-[130px] border-b border-slate-200 bg-slate-50/60 whitespace-nowrap">Sick Leave</th>
-                <th className="px-6 py-5 text-center min-w-[130px] border-b border-slate-200 bg-slate-50/60 whitespace-nowrap">Family Leave</th>
-                <th className="px-6 py-5 text-center min-w-[130px] bg-amber-200 text-amber-950 border-b border-amber-300 whitespace-nowrap">
-                  <div className="mx-auto flex h-[88px] items-center justify-center">
-                    <span className="text-[11px] font-black uppercase tracking-[0.2em]" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}>Definitions</span>
-                  </div>
-                </th>
+                <th className="px-3 py-5 text-center min-w-[110px] border-b border-slate-200 whitespace-nowrap">Normal (45h)</th>
+                <th className="px-3 py-5 text-center min-w-[90px] border-b border-slate-200 whitespace-nowrap">OT 1.5</th>
+                <th className="px-3 py-5 text-center min-w-[90px] border-b border-slate-200 whitespace-nowrap">Sun 1.5</th>
+                <th className="px-3 py-5 text-center min-w-[90px] border-b border-slate-200 whitespace-nowrap">Sun 2.0</th>
+                <th className="px-3 py-5 text-center min-w-[120px] border-b border-slate-200 whitespace-nowrap">Public Holiday</th>
+                <th className="w-8 px-0 py-0 bg-amber-300/60 border-x border-amber-400/60 align-middle"></th>
+                <th className="px-3 py-5 text-center min-w-[110px] border-b border-slate-200 bg-slate-50/60 whitespace-nowrap">Annual Leave</th>
+                <th className="px-3 py-5 text-center min-w-[110px] border-b border-slate-200 bg-slate-50/60 whitespace-nowrap">Sick Leave</th>
+                <th className="px-3 py-5 text-center min-w-[110px] border-b border-slate-200 bg-slate-50/60 whitespace-nowrap">Family Leave</th>
+                <th className="w-8 px-0 py-0 bg-indigo-300/60 border-x border-indigo-400/60 align-middle"></th>
                 {visibleDefinitions.map(def => (
-                  <th key={def.id} className="px-6 py-5 text-center min-w-[145px] bg-slate-100/30 border-b border-slate-200 font-black text-slate-500 whitespace-nowrap">
+                  <th key={def.id} className="px-3 py-5 text-center min-w-[110px] bg-slate-100/30 border-b border-slate-200 font-black text-slate-500 whitespace-nowrap">
                     {def.label}
                   </th>
                 ))}
@@ -388,26 +437,34 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-5 text-center text-sm font-black text-slate-700 border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.normalTime)}</td>
-                        <td className="px-6 py-5 text-center text-sm text-indigo-600 font-black border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.ot15)}</td>
-                        <td className="px-6 py-5 text-center text-sm text-emerald-600 font-black border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.sun15)}</td>
-                        <td className="px-6 py-5 text-center text-sm text-emerald-700 font-black border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.sun20)}</td>
-                        <td className="px-6 py-5 text-center text-sm text-blue-600 font-black border-r border-slate-200 whitespace-nowrap">{formatValue(payroll.pph)}</td>
-                        <td className="px-6 py-5 min-w-[130px] bg-amber-200 border-r border-amber-300">
-                          <div className="mx-auto flex h-[88px] items-center justify-center text-amber-950">
-                            <span className="text-[11px] font-black uppercase tracking-[0.2em]" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}>Leave</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-5 text-center text-sm text-slate-600 font-black bg-slate-50/40 border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.leave)}</td>
-                        <td className="px-6 py-5 text-center text-sm text-slate-600 font-black bg-slate-50/40 border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.sick)}</td>
-                        <td className="px-6 py-5 text-center text-sm text-slate-600 font-black bg-slate-50/40 border-r border-slate-200 whitespace-nowrap">{formatValue(payroll.family)}</td>
-                        <td className="px-6 py-5 min-w-[130px] bg-amber-200 border-r border-amber-300">
-                          <div className="mx-auto flex h-[88px] items-center justify-center text-amber-950">
-                            <span className="text-[11px] font-black uppercase tracking-[0.2em]" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}>Definitions</span>
-                          </div>
-                        </td>
+                        <td className="px-3 py-5 text-center text-sm font-black text-slate-700 border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.normalTime)}</td>
+                        <td className="px-3 py-5 text-center text-sm text-indigo-600 font-black border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.ot15)}</td>
+                        <td className="px-3 py-5 text-center text-sm text-emerald-600 font-black border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.sun15)}</td>
+                        <td className="px-3 py-5 text-center text-sm text-emerald-700 font-black border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.sun20)}</td>
+                        <td className="px-3 py-5 text-center text-sm text-blue-600 font-black border-r border-slate-200 whitespace-nowrap">{formatValue(payroll.pph)}</td>
+                        
+                        {idx === 0 && (
+                          <td rowSpan={deptEmployees.length} className="w-8 bg-amber-200/50 border-x border-amber-300/50 align-middle p-0">
+                            <div className="flex items-center justify-center h-full min-h-[100px]">
+                              <span className="text-[11px] font-black text-amber-950 uppercase tracking-[0.2em]" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}>Leave</span>
+                            </div>
+                          </td>
+                        )}
+
+                        <td className="px-3 py-5 text-center text-sm text-slate-600 font-black bg-slate-50/40 border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.leave)}</td>
+                        <td className="px-3 py-5 text-center text-sm text-slate-600 font-black bg-slate-50/40 border-r border-slate-100/50 whitespace-nowrap">{formatValue(payroll.sick)}</td>
+                        <td className="px-3 py-5 text-center text-sm text-slate-600 font-black bg-slate-50/40 border-r border-slate-200 whitespace-nowrap">{formatValue(payroll.family)}</td>
+                        
+                        {idx === 0 && (
+                          <td rowSpan={deptEmployees.length} className="w-8 bg-indigo-200/50 border-x border-indigo-300/50 align-middle p-0">
+                            <div className="flex items-center justify-center h-full min-h-[100px]">
+                              <span className="text-[11px] font-black text-indigo-950 uppercase tracking-[0.2em]" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}>Definitions</span>
+                            </div>
+                          </td>
+                        )}
+
                         {visibleDefinitions.map(def => (
-                          <td key={def.id} className="px-6 py-5 text-center text-sm text-rose-500 font-bold border-r border-slate-100/50 last:border-r-0 bg-slate-100/10 whitespace-nowrap">
+                          <td key={def.id} className="px-3 py-5 text-center text-sm text-rose-500 font-bold border-r border-slate-100/50 last:border-r-0 bg-slate-100/10 whitespace-nowrap">
                             {formatValue(payroll[def.id])}
                           </td>
                         ))}
