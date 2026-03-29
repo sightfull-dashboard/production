@@ -1,8 +1,11 @@
-import { Shift, Employee, RosterAssignment, RosterMeta } from '../types';
-import { format, isSunday, parseISO } from 'date-fns';
+import { Shift, RosterAssignment, RosterMeta } from '../types';
+import { format } from 'date-fns';
 import { isSAPublicHoliday } from '../constants';
 
 export interface PayrollResult {
+  totalHours: number;
+  controlHours: number;
+  sunControlHours: number;
   normalTime: number;
   ot15: number;
   sun15: number;
@@ -14,6 +17,44 @@ export interface PayrollResult {
   [key: string]: any;
 }
 
+type ShiftWindow = {
+  start: Date;
+  end: Date;
+  grossMinutes: number;
+  paidMinutes: number;
+};
+
+const roundHours = (minutes: number) => Math.round((minutes / 60) * 100) / 100;
+
+const parseShiftWindow = (dayIso: string, shift: Shift): ShiftWindow | null => {
+  if (!shift.start || !shift.end) return null;
+
+  const [sH, sM] = shift.start.split(':').map(Number);
+  const [eH, eM] = shift.end.split(':').map(Number);
+  if ([sH, sM, eH, eM].some((value) => Number.isNaN(value))) return null;
+
+  const base = new Date(`${dayIso}T00:00:00`);
+  if (Number.isNaN(base.getTime())) return null;
+
+  const start = new Date(base);
+  start.setHours(sH, sM, 0, 0);
+
+  const end = new Date(base);
+  end.setHours(eH, eM, 0, 0);
+  if (end <= start) {
+    end.setDate(end.getDate() + 1);
+  }
+
+  const grossMinutes = Math.max(0, (end.getTime() - start.getTime()) / 60000);
+  const paidMinutes = Math.max(0, grossMinutes - Math.max(0, Number(shift.lunch || 0)));
+
+  return { start, end, grossMinutes, paidMinutes };
+};
+
+const getDayStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+const getNextDayStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
+const isSundayDate = (date: Date) => date.getDay() === 0;
+
 export function calculateEmployeePayroll(
   employeeId: string,
   weekDays: Date[],
@@ -21,92 +62,100 @@ export function calculateEmployeePayroll(
   shifts: Shift[],
   rosterMeta: RosterMeta[] = []
 ): PayrollResult {
-  let normalMinutes = 0;
+  const weekStartDate = getDayStart(weekDays[0]);
+  const weekEndExclusive = getNextDayStart(weekDays[weekDays.length - 1]);
+  const weekStartIso = format(weekStartDate, 'yyyy-MM-dd');
+  const daySet = new Set(weekDays.map((day) => format(day, 'yyyy-MM-dd')));
+  const meta = rosterMeta.find(m => m.employee_id === employeeId && m.week_start === weekStartIso);
+
+  let controlMinutes = 0;
   let sundayMinutes = 0;
   let holidayMinutes = 0;
   let leaveHours = 0;
   let sickHours = 0;
   let familyHours = 0;
 
-  const weekStartIso = format(weekDays[0], 'yyyy-MM-dd');
-  const meta = rosterMeta.find(m => m.employee_id === employeeId && m.week_start === weekStartIso);
+  const employeeAssignments = roster
+    .filter((row) => row.employee_id === employeeId && row.shift_id)
+    .sort((a, b) => String(a.day_date).localeCompare(String(b.day_date)));
 
-  weekDays.forEach((day) => {
-    const dayIso = format(day, 'yyyy-MM-dd');
-    const assignment = roster.find(r => r.employee_id === employeeId && r.day_date === dayIso);
-    if (!assignment || !assignment.shift_id) return;
-
-    const shift = shifts.find(s => s.id === assignment.shift_id);
+  employeeAssignments.forEach((assignment) => {
+    const shift = shifts.find((item) => item.id === assignment.shift_id);
     if (!shift) return;
 
-    const label = shift.label.toLowerCase();
+    const label = String(shift.label || '').toLowerCase();
+    const assignmentIso = String(assignment.day_date || '').trim();
+    const isAssignmentInsidePeriod = daySet.has(assignmentIso);
 
-    // Handle Leave/Special Shifts
     if (label.includes('annual leave')) {
-      leaveHours += 9;
+      if (isAssignmentInsidePeriod) leaveHours += 9;
       return;
     }
     if (label.includes('sick leave')) {
-      sickHours += 9;
+      if (isAssignmentInsidePeriod) sickHours += 9;
       return;
     }
     if (label.includes('family leave')) {
-      familyHours += 9;
+      if (isAssignmentInsidePeriod) familyHours += 9;
       return;
     }
     if (label.includes('unpaid leave') || label.includes('absent') || label.includes('unshifted')) {
       return;
     }
 
-    // Handle Working Shifts
-    if (!shift.start || !shift.end) return;
+    const window = parseShiftWindow(assignmentIso, shift);
+    if (!window || window.paidMinutes <= 0 || window.grossMinutes <= 0) return;
 
-    const [sH, sM] = shift.start.split(':').map(Number);
-    const [eH, eM] = shift.end.split(':').map(Number);
-    
-    let startTotal = sH * 60 + sM;
-    let endTotal = eH * 60 + eM;
-    
-    // Handle cross-midnight
-    if (endTotal <= startTotal) endTotal += 24 * 60;
-    
-    let workedMinutes = endTotal - startTotal - (shift.lunch || 0);
-    if (workedMinutes < 0) workedMinutes = 0;
+    const effectiveStart = new Date(Math.max(window.start.getTime(), weekStartDate.getTime()));
+    const effectiveEnd = new Date(Math.min(window.end.getTime(), weekEndExclusive.getTime()));
+    if (effectiveEnd <= effectiveStart) return;
 
-    if (isSAPublicHoliday(day)) {
-      holidayMinutes += workedMinutes;
-    } else if (isSunday(day)) {
-      sundayMinutes += workedMinutes;
-    } else {
-      normalMinutes += workedMinutes;
+    let cursor = effectiveStart;
+    while (cursor < effectiveEnd) {
+      const nextBoundary = getNextDayStart(cursor);
+      const segmentEnd = new Date(Math.min(nextBoundary.getTime(), effectiveEnd.getTime()));
+      const rawMinutes = Math.max(0, (segmentEnd.getTime() - cursor.getTime()) / 60000);
+      if (rawMinutes > 0) {
+        const paidSegmentMinutes = (rawMinutes / window.grossMinutes) * window.paidMinutes;
+        const segmentDay = getDayStart(cursor);
+
+        if (isSAPublicHoliday(segmentDay)) {
+          holidayMinutes += paidSegmentMinutes;
+        } else if (isSundayDate(segmentDay)) {
+          sundayMinutes += paidSegmentMinutes;
+        } else {
+          controlMinutes += paidSegmentMinutes;
+        }
+      }
+      cursor = segmentEnd;
     }
   });
 
-  const normalHours = Math.round((normalMinutes / 60) * 100) / 100;
-  const sunHours = Math.round((sundayMinutes / 60) * 100) / 100;
-  const holHours = Math.round((holidayMinutes / 60) * 100) / 100;
+  const totalMinutes = controlMinutes + sundayMinutes;
+  const totalHours = roundHours(totalMinutes);
+  const controlHours = roundHours(controlMinutes);
+  const sunControlHours = roundHours(sundayMinutes);
+  const holidayHours = roundHours(holidayMinutes);
 
-  // SA Rules:
-  // Normal capped at 45, excess is OT 1.5
-  const cappedNormal = Math.min(45, normalHours);
-  const ot15 = Math.max(0, normalHours - 45);
-
-  // Sunday: first 9h at 1.5, rest at 2.0
-  const sun15 = Math.min(9, sunHours);
-  const sun20 = Math.max(0, sunHours - 9);
+  const normalHours = Math.min(45, controlHours);
+  const ot15 = controlHours >= 45 ? Math.max(0, controlHours - 45) : 0;
+  const sun15 = Math.min(9, sunControlHours);
+  const sun20 = sunControlHours >= 9 ? Math.max(0, sunControlHours - 9) : 0;
 
   const result: PayrollResult = {
-    normalTime: cappedNormal,
-    ot15: ot15,
-    sun15: sun15,
-    sun20: sun20,
-    pph: holHours,
-    leave: leaveHours,
-    sick: sickHours,
-    family: familyHours,
+    totalHours,
+    controlHours,
+    sunControlHours,
+    normalTime: Math.round(normalHours * 100) / 100,
+    ot15: Math.round(ot15 * 100) / 100,
+    sun15: Math.round(sun15 * 100) / 100,
+    sun20: Math.round(sun20 * 100) / 100,
+    pph: holidayHours,
+    leave: Math.round(leaveHours * 100) / 100,
+    sick: Math.round(sickHours * 100) / 100,
+    family: Math.round(familyHours * 100) / 100,
   };
 
-  // Add all dynamic meta fields
   if (meta) {
     Object.entries(meta).forEach(([key, value]) => {
       if (key !== 'employee_id' && key !== 'week_start') {

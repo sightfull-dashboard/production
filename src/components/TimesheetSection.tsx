@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { format, addDays, subDays } from 'date-fns';
-import { CheckCircle2, ChevronLeft, ChevronRight, Download, FileText, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, FileText, Search } from 'lucide-react';
 import { Employee, Shift, RosterAssignment, RosterMeta, RosterDefinition, PayrollSubmission } from '../types';
 import { calculateEmployeePayroll } from '../services/PayrollService';
 import { cn } from '../lib/utils';
@@ -325,17 +325,6 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
                 </div>
               )}
             </div>
-            {onPayrollSubmit && (
-              <Tooltip content="Finalize and Submit Payroll">
-                <button
-                  onClick={() => void onPayrollSubmit()}
-                  className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-sm bg-slate-800 text-white hover:bg-slate-900 shadow-xl shadow-slate-200 transition-all active:scale-95"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  Submit Payroll
-                </button>
-              </Tooltip>
-            )}
           </div>
         </div>
 

@@ -216,8 +216,10 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
     return previousShiftId ? shifts.find(s => s.id === previousShiftId) || null : null;
   };
 
+  const isSundayDate = (dayDate: string) => isSunday(new Date(`${dayDate}T00:00:00`));
+
   const isShiftBlockedForCell = (employee: Employee, dayDate: string, shiftId: string | null | undefined) => {
-    if (isSuperAdmin || !shiftId) return false;
+    if (isSuperAdmin || !shiftId || isSundayDate(dayDate)) return false;
     const candidateShift = shifts.find(s => s.id === shiftId);
     if (!candidateShift) return false;
     const previousShift = getPreviousDayShift(employee, dayDate);
@@ -225,7 +227,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
   };
 
   const getShiftBlockedReason = (employee: Employee, dayDate: string, shiftId: string | null | undefined) => {
-    if (!shiftId) return null;
+    if (!shiftId || isSundayDate(dayDate)) return null;
     const candidateShift = shifts.find(s => s.id === shiftId);
     const previousShift = getPreviousDayShift(employee, dayDate);
     if (!candidateShift || !previousShift) return null;

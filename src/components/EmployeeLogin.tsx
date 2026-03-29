@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, Lock, AlertCircle, Loader2 } from 'lucide-react';
+import { User, Lock, Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface EmployeeLoginProps {
@@ -11,6 +11,7 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({ onLogin }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showPin, setShowPin] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,13 +77,21 @@ export const EmployeeLogin: React.FC<EmployeeLoginProps> = ({ onLogin }) => {
                 <div className="relative">
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                   <input 
-                    type="password" 
+                    type={showPin ? "text" : "password"}
                     required 
                     value={pin}
                     onChange={(e) => setPin(e.target.value)}
                     placeholder="••••"
-                    className="w-full pl-12 pr-4 py-4 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-emerald-600/10 focus:border-emerald-600 outline-none transition-all font-bold text-slate-800 placeholder:text-slate-300"
+                    className="w-full pl-12 pr-14 py-4 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-emerald-600/10 focus:border-emerald-600 outline-none transition-all font-bold text-slate-800 placeholder:text-slate-300"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin((prev) => !prev)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                    aria-label={showPin ? "Hide PIN" : "Show PIN"}
+                  >
+                    {showPin ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
                 </div>
               </div>
             </div>

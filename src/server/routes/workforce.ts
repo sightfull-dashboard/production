@@ -589,11 +589,13 @@ export function registerWorkforceRoutes({
     if (role !== 'superadmin' && isPayrollLockedForDate(db, clientId, String(day_date || ''))) {
       return res.status(403).json({ error: 'This payroll-submitted roster period is locked. Contact admin through Support for changes.' });
     }
-    if (role !== 'superadmin' && shift_id) {
+    const requestedDay = new Date(`${String(day_date || '')}T00:00:00`);
+    const isSundayRequest = !Number.isNaN(requestedDay.getTime()) && requestedDay.getDay() === 0;
+    if (role !== 'superadmin' && shift_id && !isSundayRequest) {
       const previousDate = new Date(`${String(day_date || '')}T00:00:00`);
       if (!Number.isNaN(previousDate.getTime())) {
         previousDate.setDate(previousDate.getDate() - 1);
-        const previousDayIso = previousDate.toISOString().slice(0, 10);
+        const previousDayIso = formatDateOnly(previousDate);
         const previousRoster = db.prepare('SELECT shift_id FROM roster WHERE employee_id = ? AND day_date = ?').get(employee_id, previousDayIso) as any;
         if (previousRoster?.shift_id) {
           const previousShift = db.prepare('SELECT id, label, start, end FROM shifts WHERE id = ?').get(previousRoster.shift_id) as any;

@@ -21,12 +21,18 @@ const getRequestedClientId = (req: any) => {
   return header || null;
 };
 
+const formatDateOnly = (value: Date) => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const getPreviousDayIso = (dayDate: string) => {
   const date = new Date(`${dayDate}T00:00:00`);
   if (Number.isNaN(date.getTime())) return null;
   date.setDate(date.getDate() - 1);
-  return date.toISOString().slice(0, 10);
+  return formatDateOnly(date);
 };
 
 async function fetchUserById(id: string) {
@@ -419,7 +425,7 @@ export function registerSupabaseCoreRoutes({
       const start = new Date(`${weekStart}T00:00:00`);
       const end = new Date(start);
       end.setDate(start.getDate() + periodDays - 1);
-      rosterQuery = rosterQuery.gte('day_date', weekStart).lte('day_date', end.toISOString().slice(0,10));
+      rosterQuery = rosterQuery.gte('day_date', weekStart).lte('day_date', formatDateOnly(end));
     }
     const { data, error } = await rosterQuery;
     if (error) return res.status(500).json({ error: error.message });
@@ -437,7 +443,9 @@ export function registerSupabaseCoreRoutes({
     if (!payload.employee_id || !payload.day_date) return res.status(400).json({ error: 'employee_id and day_date are required' });
 
     const actorRole = getSessionRole(req);
-    if (actorRole !== 'superadmin' && payload.shift_id) {
+    const requestedDay = new Date(`${payload.day_date}T00:00:00`);
+    const isSundayRequest = !Number.isNaN(requestedDay.getTime()) && requestedDay.getDay() === 0;
+    if (actorRole !== 'superadmin' && payload.shift_id && !isSundayRequest) {
       const previousDayIso = getPreviousDayIso(payload.day_date);
       if (previousDayIso) {
         const { data: previousRosterRow } = await supabaseAdmin

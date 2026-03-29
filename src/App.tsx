@@ -28,7 +28,7 @@ import {
   Send,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { format, startOfWeek, addDays, differenceInDays } from 'date-fns';
+import { format, startOfWeek, addDays, differenceInDays, subDays } from 'date-fns';
 import type { RosterDefinition, Shift, Employee, RosterAssignment, RosterMeta, OffboardReason, User, AuthStatus, LeaveRequest, SupportTicket, PayrollSubmission } from './types';
 import { cn } from './lib/utils';
 import { ApiError } from './lib/api';
@@ -211,7 +211,8 @@ export default function App() {
   const fetchRoster = async () => {
     try {
       const periodDays = rosterDuration === '2_weeks' ? 14 : rosterDuration === '1_month' ? 28 : 7;
-      const data = await appService.getRoster(format(currentWeekStart, 'yyyy-MM-dd'), periodDays);
+      const rosterFetchStart = subDays(currentWeekStart, 1);
+      const data = await appService.getRoster(format(rosterFetchStart, 'yyyy-MM-dd'), periodDays + 1);
       const employeeIds = new Set(employees.map((employee) => employee.id));
       setRoster(data.filter((row) => employeeIds.size === 0 || employeeIds.has(row.employee_id)));
     } catch (error) {
@@ -1146,6 +1147,12 @@ export default function App() {
   const getLeaveWarningMessage = (employeeName: string, shiftLabel: string, balance: number) => `Are you sure you want to assign ${shiftLabel} to ${employeeName}? ${employeeName.split(' ')[0]} currently has ${balance.toFixed(4)} leave days available. You can still continue with an admin override if needed.`;
 
   const updateRoster = async (employeeId: string, dayDate: string, shiftId: string | null) => {
+    const previousRoster = roster;
+    setRoster((current) => {
+      const withoutCurrent = current.filter((row) => !(row.employee_id === employeeId && row.day_date === dayDate));
+      if (!shiftId) return withoutCurrent;
+      return [...withoutCurrent, { employee_id: employeeId, day_date: dayDate, shift_id: shiftId } as any];
+    });
     try {
       const employee = employees.find(emp => emp.id === employeeId);
       const selectedShift = shifts.find(shift => shift.id === shiftId);
@@ -1178,6 +1185,12 @@ export default function App() {
         body: JSON.stringify({ employee_id: employeeId, day_date: dayDate, shift_id: shiftId, admin_override: true, allow_negative_balance: true }),
       });
       if (res.ok) {
+        const savedRow = await res.json();
+        setRoster((current) => {
+          const withoutCurrent = current.filter((row) => !(row.employee_id === employeeId && row.day_date === dayDate));
+          if (!savedRow?.shift_id) return withoutCurrent;
+          return [...withoutCurrent, savedRow as any];
+        });
         if (!rosterSeedWeekStart) {
           const nextSeed = format(currentWeekStart, 'yyyy-MM-dd');
           setRosterSeedWeekStart(nextSeed);
@@ -1187,10 +1200,12 @@ export default function App() {
         await fetchLeaveRequests();
         await fetchEmployees();
       } else {
+        setRoster(previousRoster);
         const err = await res.json();
         toast.error(`Failed to update roster: ${err.error || 'Unknown error'}`);
       }
     } catch (error) {
+      setRoster(previousRoster);
       console.error('Error updating roster:', error);
       toast.error(`An error occurred while updating roster: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
