@@ -235,7 +235,8 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20">
             <div className="flex items-center gap-4 mb-4">
               <div className="w-12 h-12 rounded-2xl bg-emerald-100 flex items-center justify-center text-emerald-600">
@@ -269,7 +270,9 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               </div>
             </div>
           </div>
+          </div>
         </div>
+
 
         <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">

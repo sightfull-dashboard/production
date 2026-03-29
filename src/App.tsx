@@ -111,6 +111,7 @@ export default function App() {
 
   const [employeeSection, setEmployeeSection] = useState('dashboard');
   const [dobDisplay, setDobDisplay] = useState('');
+  const [idNumberDisplay, setIdNumberDisplay] = useState('');
   const [passportDisplay, setPassportDisplay] = useState('');
   const [showCountryOfIssue, setShowCountryOfIssue] = useState(false);
   const [countryOfIssueInput, setCountryOfIssueInput] = useState('');
@@ -340,6 +341,7 @@ export default function App() {
 
   useEffect(() => {
     setDobDisplay(editingEmployee?.dob ? toDateInputValue(String(editingEmployee.dob)) : '');
+    setIdNumberDisplay(editingEmployee?.id_number || '');
     setPassportDisplay(editingEmployee?.passport || '');
     setShowCountryOfIssue(Boolean(editingEmployee?.passport));
     setCountryOfIssueInput(editingEmployee?.country_of_issue || '');
@@ -502,6 +504,25 @@ export default function App() {
     const nextValue = normalizeNumericInput(target.value);
     if (target.value !== nextValue) target.value = nextValue;
   };
+  const createDigitLimiter = (maxDigits: number) => (event: React.FormEvent<HTMLInputElement>) => {
+    const target = event.currentTarget;
+    const nextValue = normalizeNumericInput(target.value).slice(0, maxDigits);
+    if (target.value !== nextValue) target.value = nextValue;
+  };
+  const handleDateFieldInput = (event: React.FormEvent<HTMLInputElement>) => {
+    const target = event.currentTarget;
+    let value = String(target.value || '');
+    if (!value) {
+      target.setCustomValidity('');
+      return;
+    }
+    const match = value.match(/^(\d{4,})-(\d{2})-(\d{2})$/);
+    if (match && match[1].length > 4) {
+      value = `${match[1].slice(0, 4)}-${match[2]}-${match[3]}`;
+      target.value = value;
+    }
+    target.setCustomValidity(/^\d{4}-\d{2}-\d{2}$/.test(value) && !isValidDateInput(value) ? 'Please enter a valid calendar date.' : '');
+  };
   const normalizeFlexibleDateInput = (value: string) => {
     const raw = String(value || '').trim();
     if (!raw) return '';
@@ -515,7 +536,28 @@ export default function App() {
   };
   const isValidDateInput = (value: string) => {
     const normalized = normalizeFlexibleDateInput(value);
-    return /^\d{4}-\d{2}-\d{2}$/.test(normalized) && !Number.isNaN(new Date(`${normalized}T00:00:00`).getTime());
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return false;
+    const [year, month, day] = normalized.split('-').map(Number);
+    const candidate = new Date(Date.UTC(year, month - 1, day));
+    return candidate.getUTCFullYear() === year && candidate.getUTCMonth() === month - 1 && candidate.getUTCDate() === day;
+  };
+  const isValidSouthAfricanTaxNumber = (value: string) => {
+    const digits = normalizeDigits(value);
+    if (!/^[01239]\d{9}$/.test(digits)) return false;
+    const baseDigits = digits.slice(0, 9);
+    const checkDigit = Number(digits[9]);
+    let total = 0;
+    for (let index = 0; index < baseDigits.length; index += 1) {
+      let digit = Number(baseDigits[index]);
+      if (index % 2 === 0) {
+        digit *= 2;
+        if (digit > 9) digit = Math.floor(digit / 10) + (digit % 10);
+      }
+      total += digit;
+    }
+    const lastDigit = total % 10;
+    const expectedCheckDigit = lastDigit === 0 ? 0 : 10 - lastDigit;
+    return checkDigit === expectedCheckDigit;
   };
   const calculateAge = (dateOfBirth: string) => {
     const today = new Date();
@@ -651,7 +693,14 @@ export default function App() {
     employeeData.paye_credit = employeeData.paye_credit.replace(/[^\d.\-]/g, '');
     employeeData.cell = employeeData.cell.replace(/[^\d+]/g, '');
 
-    if (!employeeData.first_name || !employeeData.last_name || !employeeData.start_date || !employeeData.pay_rate || !(employeeData.id_number || employeeData.passport)) return 'Please complete all required employee fields.';
+    const missingFields: string[] = [];
+    if (!employeeData.first_name) missingFields.push('first name');
+    if (!employeeData.last_name) missingFields.push('last name');
+    if (!employeeData.start_date) missingFields.push('start date');
+    if (!employeeData.pay_rate) missingFields.push('hourly rate');
+    if (!(employeeData.id_number || employeeData.passport)) missingFields.push('ID number or passport');
+    if (missingFields.length > 0) return `Please complete the following required fields: ${missingFields.join(', ')}.`;
+    if (employeeData.id_number && employeeData.passport) return 'Please capture either an ID number or a passport number, not both.';
 
     if (employeeData.first_name && /\d/.test(employeeData.first_name)) {
       return 'First name cannot contain numbers.';
@@ -735,6 +784,12 @@ export default function App() {
     if (employeeData.passport && !/^[A-Z0-9]{6,20}$/.test(employeeData.passport)) return 'Passport number must be 6 to 20 letters or numbers.';
     if (!employeeData.id_number && employeeData.passport && !employeeData.country_of_issue) return 'Country of issue is required when passport is used.';
     if (!employeeData.id_number && employeeData.passport && !employeeData.dob) return 'Date of birth is required when passport is used.';
+    if (employeeData.country_of_issue && !COUNTRY_OF_ISSUE_OPTIONS.includes(employeeData.country_of_issue as typeof COUNTRY_OF_ISSUE_OPTIONS[number])) {
+      return 'Please select a valid country of issue from the list.';
+    }
+    if (employeeData.bank_name && !BANK_NAME_OPTIONS.includes(employeeData.bank_name as typeof BANK_NAME_OPTIONS[number])) {
+      return 'Please select a valid bank name from the list.';
+    }
 
     if (employeeData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employeeData.email)) {
       return 'Please enter a valid employee email address.';
@@ -752,6 +807,9 @@ export default function App() {
 
     if (employeeData.tax_number && !/^\d{10}$/.test(employeeData.tax_number)) {
       return 'Tax number must be 10 digits.';
+    }
+    if (employeeData.tax_number && !isValidSouthAfricanTaxNumber(employeeData.tax_number)) {
+      return 'Please enter a valid South African tax number.';
     }
 
     if (employeeData.postal_code && !/^\d{4}$/.test(employeeData.postal_code)) {
@@ -1092,6 +1150,14 @@ export default function App() {
     generateUIF: boolean
   }) => {
     if (!offboardingEmployee) return;
+    if (!isValidDateInput(data.lastWorked)) {
+      toast.error('Please enter a valid termination date.');
+      return;
+    }
+    if (offboardingEmployee.start_date && data.lastWorked < offboardingEmployee.start_date) {
+      toast.error('Termination date cannot be before the employee start date.');
+      return;
+    }
     
     try {
       const res = await fetch(`/api/employees/${offboardingEmployee.id}/offboard`, {
@@ -1507,6 +1573,14 @@ export default function App() {
             isLocked={lockedFeatures.includes('employee_records')}
           />
           <SidebarItem 
+            icon={CalendarDays} 
+            label="Leave Management" 
+            active={activeSection === 'leave'} 
+            onClick={() => setActiveSection('leave')} 
+            badge={requests.filter(r => r.status === 'pending').length}
+            isLocked={lockedFeatures.includes('leave_management')}
+          />
+          <SidebarItem 
             icon={Clock} 
             label="Shifts" 
             active={activeSection === 'shifts'} 
@@ -1532,14 +1606,6 @@ export default function App() {
             active={activeSection === 'payroll-submissions'} 
             onClick={() => setActiveSection('payroll-submissions')} 
             badge={currentClientPendingPayrollCount}
-          />
-          <SidebarItem 
-            icon={CalendarDays} 
-            label="Leave Management" 
-            active={activeSection === 'leave'} 
-            onClick={() => setActiveSection('leave')} 
-            badge={requests.filter(r => r.status === 'pending').length}
-            isLocked={lockedFeatures.includes('leave_management')}
           />
           <SidebarItem 
             icon={Files} 
@@ -1666,8 +1732,8 @@ export default function App() {
             <FeatureWrapper isLocked={lockedFeatures.includes('employee_records')} featureName="Employee Records">
               <EmployeeSection 
                 employees={employees} 
-                onAdd={() => { setEditingEmployee(null); setAutoGeneratedEmployeeId(isSuperAdminRole(auth.user?.role) ? '' : generateAutoEmployeeId(employees)); setGeneratedPin(''); setShowPin(false); setFormIsUnion(''); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setShowCountryOfIssue(false); setIsEmployeeModalOpen(true); }}
-                onEdit={(emp) => { setEditingEmployee(emp); setAutoGeneratedEmployeeId(emp.emp_id || ''); setGeneratedPin(emp.pin || ''); setShowPin(false); setFormIsUnion(emp.isunion || ''); setPayRateDisplay(formatStoredHourlyRate(emp.pay_rate)); setCellLocalDigits(phoneDigitsToLocalSa(emp.cell || '')); setCountryOfIssueInput(emp.country_of_issue || ''); setIsCountryOfIssueFocused(false); setBankNameInput(emp.bank_name || ''); setIsBankNameFocused(false); setShowCountryOfIssue(Boolean(emp.passport)); setIsEmployeeModalOpen(true); }}
+                onAdd={() => { setEditingEmployee(null); setAutoGeneratedEmployeeId(isSuperAdminRole(auth.user?.role) ? '' : generateAutoEmployeeId(employees)); setGeneratedPin(''); setShowPin(false); setFormIsUnion(''); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setIdNumberDisplay(''); setPassportDisplay(''); setShowCountryOfIssue(false); setIsEmployeeModalOpen(true); }}
+                onEdit={(emp) => { setEditingEmployee(emp); setAutoGeneratedEmployeeId(emp.emp_id || ''); setGeneratedPin(emp.pin || ''); setShowPin(false); setFormIsUnion(emp.isunion || ''); setPayRateDisplay(formatStoredHourlyRate(emp.pay_rate)); setCellLocalDigits(phoneDigitsToLocalSa(emp.cell || '')); setCountryOfIssueInput(emp.country_of_issue || ''); setIsCountryOfIssueFocused(false); setBankNameInput(emp.bank_name || ''); setIsBankNameFocused(false); setIdNumberDisplay(emp.id_number || ''); setPassportDisplay(emp.passport || ''); setShowCountryOfIssue(Boolean(emp.passport)); setIsEmployeeModalOpen(true); }}
                 onDelete={handleDeleteEmployee}
                 onOffboard={(emp) => { setOffboardingEmployee(emp); setIsOffboardModalOpen(true); }}
                 onImport={handleImportEmployees}
@@ -1855,11 +1921,11 @@ export default function App() {
       {/* Modals */}
       <Modal 
         isOpen={isEmployeeModalOpen} 
-        onClose={() => { setIsEmployeeModalOpen(false); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setShowCountryOfIssue(false); }} 
+        onClose={() => { setIsEmployeeModalOpen(false); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setIdNumberDisplay(''); setPassportDisplay(''); setShowCountryOfIssue(false); }} 
         title={editingEmployee ? "Edit Employee" : "Add Employee"}
         footer={
           <>
-            <button onClick={() => { setIsEmployeeModalOpen(false); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setShowCountryOfIssue(false); }} className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all">Cancel</button>
+            <button onClick={() => { setIsEmployeeModalOpen(false); setPayRateDisplay('R000.0000'); setCellLocalDigits(''); setCountryOfIssueInput(''); setIsCountryOfIssueFocused(false); setBankNameInput(''); setIsBankNameFocused(false); setIdNumberDisplay(''); setPassportDisplay(''); setShowCountryOfIssue(false); }} className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all">Cancel</button>
             <button type="submit" form="employee-form" className="px-8 py-3 rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all">Save Employee</button>
           </>
         }
@@ -1893,43 +1959,59 @@ export default function App() {
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Last Name</label>
                 <input autoComplete="off" name="last_name" defaultValue={editingEmployee?.last_name} required placeholder="Doe" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  onInput={handleTextOnlyInput} />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ID Number / Passport</label>
-                <div className="grid grid-cols-2 gap-2">
+              {!passportDisplay && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ID Number</label>
                   <input
                     autoComplete="off"
                     name="id_number"
                     placeholder="ID Number"
-                    defaultValue={editingEmployee?.id_number}
+                    value={idNumberDisplay}
                     className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
                     inputMode="numeric"
-                    onInput={handleNumberOnlyInput}
+                    onInput={createDigitLimiter(13)}
                     onChange={(e) => {
-                      const next = normalizeDigits(e.currentTarget.value);
+                      const next = normalizeDigits(e.currentTarget.value).slice(0, 13);
+                      e.currentTarget.value = next;
+                      setIdNumberDisplay(next);
+                      if (next) {
+                        setPassportDisplay('');
+                        setShowCountryOfIssue(false);
+                        setCountryOfIssueInput('');
+                        setIsCountryOfIssueFocused(false);
+                      }
                       const autoDob = getDobDisplayFromSouthAfricanId(next);
                       if (autoDob) setDobDisplay(autoDob);
                     }}
                   />
+                </div>
+              )}
+              {!idNumberDisplay && (
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Passport</label>
                   <input
                     autoComplete="off"
                     name="passport"
                     placeholder="Passport"
-                    defaultValue={editingEmployee?.passport}
+                    value={passportDisplay}
                     className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
                     onChange={(e) => {
                       const next = e.currentTarget.value.trim().toUpperCase();
+                      e.currentTarget.value = next;
                       setPassportDisplay(next);
                       const hasPassport = Boolean(next);
+                      if (hasPassport) {
+                        setIdNumberDisplay('');
+                      }
                       setShowCountryOfIssue(hasPassport);
                       if (!hasPassport) {
                         setCountryOfIssueInput('');
-                        setIsCountryOfIssueFocused(false);
                         setIsCountryOfIssueFocused(false);
                       }
                     }}
                   />
                 </div>
-              </div>
+              )}
               {showCountryOfIssue && (
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Country of Issue</label>
@@ -1972,7 +2054,10 @@ export default function App() {
                   name="dob"
                   type="date"
                   value={dobDisplay}
-                  required={!editingEmployee?.id_number}
+                  required={!idNumberDisplay}
+                  min="1900-01-01"
+                  max="9999-12-31"
+                  onInput={handleDateFieldInput}
                   onChange={(e) => setDobDisplay(e.currentTarget.value)}
                   className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
                 />
@@ -2010,17 +2095,7 @@ export default function App() {
                   required
                   min="1900-01-01"
                   max="9999-12-31"
-                  onInput={(e) => {
-                    const input = e.currentTarget;
-                    const value = input.value;
-                    if (!value) return;
-                    const parts = value.split('-');
-                    if (parts.length !== 3) return;
-                    const [year, month, day] = parts;
-                    if (year.length > 4) {
-                      input.value = `${year.slice(0, 4)}-${month}-${day}`;
-                    }
-                  }}
+                  onInput={handleDateFieldInput}
                   className="w-full min-w-0 px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"
                 />
               </div>
@@ -2063,7 +2138,7 @@ export default function App() {
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Postal Code</label>
-                <input autoComplete="off" name="postal_code" defaultValue={editingEmployee?.postal_code} placeholder="8001" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" inputMode="numeric" onInput={handleNumberOnlyInput} />
+                <input autoComplete="off" name="postal_code" defaultValue={editingEmployee?.postal_code} placeholder="8001" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold" inputMode="numeric" maxLength={4} onInput={createDigitLimiter(4)} />
               </div>
             </div>
           </div>
@@ -2073,7 +2148,7 @@ export default function App() {
             <div className="grid grid-cols-2 gap-6">
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tax Number</label>
-                <input autoComplete="off" name="tax_number" defaultValue={editingEmployee?.tax_number} placeholder="1234567890" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  inputMode="numeric" onInput={handleNumberOnlyInput} />
+                <input autoComplete="off" name="tax_number" defaultValue={editingEmployee?.tax_number} placeholder="1234567890" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none text-sm font-bold"  inputMode="numeric" maxLength={10} onInput={createDigitLimiter(10)} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bank Name</label>

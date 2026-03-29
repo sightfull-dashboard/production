@@ -265,16 +265,21 @@ export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onA
                   </td>
                   <td className="px-6 py-5 text-sm text-slate-600 font-bold">{emp.job_title}</td>
                   <td className="px-6 py-5">
-                    <span className={cn(
-                      "px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                      emp.status === 'offboarded' 
-                        ? "bg-rose-50 text-rose-600" 
-                        : "bg-emerald-50 text-emerald-600"
-                    )}>
-                      {emp.status || 'active'}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className={cn(
+                        "w-fit px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                        emp.status === 'offboarded' 
+                          ? "bg-rose-50 text-rose-600" 
+                          : "bg-emerald-50 text-emerald-600"
+                      )}>
+                        {emp.status || 'active'}
+                      </span>
+                      {emp.status === 'offboarded' && emp.delete_reason && (
+                        <span className="text-[11px] font-semibold text-slate-500">Reason: {emp.delete_reason}</span>
+                      )}
+                    </div>
                   </td>
-                  <td className="px-6 py-5 text-sm font-black text-slate-700">{emp.last_worked_date ? String(emp.last_worked_date) : '-'}</td>
+                  <td className="px-6 py-5 text-sm font-black text-slate-700">{emp.last_worked_date || emp.last_worked ? String(emp.last_worked_date || emp.last_worked) : '-'}</td>
                   <td className="px-6 py-5 text-right">
                     <div className="flex items-center justify-end gap-1 transition-all">
                       <Tooltip content="Edit Employee">

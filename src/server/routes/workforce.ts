@@ -350,11 +350,17 @@ export function registerWorkforceRoutes({
 
   app.post('/api/employees/:id/offboard', requireActiveTrial, requireUnlockedFeature('employee_records'), (req, res) => {
     const { id } = req.params;
-    const { reason, lastWorked, preparePayslip, generateUIF } = req.body;
+    const { reason, otherReason, lastWorked, preparePayslip, generateUIF } = req.body;
 
     try {
       const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(id) as any;
       if (!employee) return res.status(404).json({ error: 'Employee not found' });
+      if (!lastWorked || !/^\d{4}-\d{2}-\d{2}$/.test(String(lastWorked))) {
+        return res.status(400).json({ error: 'A valid termination date is required.' });
+      }
+      if (employee.start_date && String(lastWorked) < String(employee.start_date)) {
+        return res.status(400).json({ error: 'Termination date cannot be before the employee start date.' });
+      }
 
       const lastZ = db.prepare("SELECT emp_id FROM employees WHERE emp_id LIKE 'Z%' ORDER BY emp_id DESC LIMIT 1").get() as any;
       let nextZ = 'Z001';
@@ -364,20 +370,23 @@ export function registerWorkforceRoutes({
           nextZ = `Z${(lastNum + 1).toString().padStart(3, '0')}`;
         }
       }
+      const resolvedReason = String(reason === 'other' && otherReason ? otherReason : String(reason || '').replace(/_/g, ' ')).trim();
 
       db.prepare(`
         UPDATE employees SET
           status = 'offboarded',
           emp_id = ?,
-          last_worked = ?
+          last_worked = ?,
+          last_worked_date = ?,
+          delete_reason = ?
         WHERE id = ?
-      `).run(nextZ, lastWorked, id);
+      `).run(nextZ, lastWorked, lastWorked, resolvedReason || null, id);
 
       logActivity(req, 'OFFBOARD_EMPLOYEE', {
         id,
         emp_id: employee.emp_id,
         new_emp_id: nextZ,
-        reason,
+        reason: resolvedReason,
         preparePayslip,
         generateUIF,
       });

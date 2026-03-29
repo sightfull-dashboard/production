@@ -24,12 +24,22 @@ export const OffboardModal: React.FC<OffboardModalProps> = ({ isOpen, onClose, o
   const [lastWorked, setLastWorked] = React.useState('');
   const [preparePayslip, setPreparePayslip] = React.useState(false);
   const [generateUIF, setGenerateUIF] = React.useState(false);
+  const [dateError, setDateError] = React.useState('');
 
   if (!employee) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!reason) return;
+    if (!lastWorked) {
+      setDateError('Termination date is required.');
+      return;
+    }
+    if (employee.start_date && lastWorked < employee.start_date) {
+      setDateError('Termination date cannot be before the employee start date.');
+      return;
+    }
+    setDateError('');
     onConfirm({ 
       reason: reason as OffboardReason, 
       otherReason: reason === 'other' ? otherReason : undefined,
@@ -78,10 +88,20 @@ export const OffboardModal: React.FC<OffboardModalProps> = ({ isOpen, onClose, o
                   <input 
                     type="date" 
                     required
+                    min={employee.start_date || undefined}
                     value={lastWorked}
-                    onChange={(e) => setLastWorked(e.target.value)}
+                    onChange={(e) => {
+                      setLastWorked(e.target.value);
+                      if (!e.target.value || !employee.start_date || e.target.value >= employee.start_date) {
+                        setDateError('');
+                      }
+                    }}
                     className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-rose-500/20 outline-none text-sm font-bold" 
                   />
+                  {employee.start_date && (
+                    <p className="text-xs font-medium text-slate-500">Employee start date: {employee.start_date}</p>
+                  )}
+                  {dateError && <p className="text-xs font-bold text-rose-500">{dateError}</p>}
                 </div>
 
                 <div className="space-y-1.5">

@@ -35,6 +35,143 @@ const getPreviousDayIso = (dayDate: string) => {
   return formatDateOnly(date);
 };
 
+
+const LEAVE_COLUMNS = {
+  annual: 'annual_leave',
+  sick: 'sick_leave',
+  family: 'family_leave',
+} as const;
+
+type BalanceLeaveTypeKey = keyof typeof LEAVE_COLUMNS;
+type LeaveTypeKey = BalanceLeaveTypeKey | 'unpaid' | 'half_day';
+type LeaveStatusValue = 'pending' | 'approved' | 'declined' | 'cancelled';
+
+const normalizeLeaveType = (value: unknown): LeaveTypeKey | null => value === 'annual' || value === 'sick' || value === 'family' || value === 'unpaid' || value === 'half_day' ? value : null;
+const normalizeLeaveStatus = (value: unknown): LeaveStatusValue | null => value === 'pending' || value === 'approved' || value === 'declined' || value === 'cancelled' ? value : null;
+const parseBoolean = (value: unknown) => value === true || value === 1 || value === '1';
+const getBalanceTrackedLeaveType = (type: LeaveTypeKey): BalanceLeaveTypeKey | null => {
+  if (type === 'half_day') return 'annual';
+  if (type === 'annual' || type === 'sick' || type === 'family') return type;
+  return null;
+};
+const getWeekdayLeaveDays = (startDate: string, endDate: string, isHalfDay: boolean) => {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return 0;
+  if (isHalfDay) return startDate === endDate ? 0.5 : 0;
+
+  let count = 0;
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) count += 1;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return count;
+};
+const parseDateOnlyValue = (value: string | null | undefined) => {
+  if (!value) return null;
+  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+const startOfToday = () => {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return now;
+};
+const addMonthsDate = (date: Date, months: number) => {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+};
+const getCompletedMonthsBetween = (start: Date, end: Date) => {
+  let months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+  if (end.getDate() < start.getDate()) months -= 1;
+  return Math.max(0, months);
+};
+const getEmploymentYears = (startDate: Date, asOf: Date) => {
+  let years = asOf.getFullYear() - startDate.getFullYear();
+  if (asOf.getMonth() < startDate.getMonth() || (asOf.getMonth() === startDate.getMonth() && asOf.getDate() < startDate.getDate())) years -= 1;
+  return Math.max(0, years);
+};
+const getAnnualLeaveRate = (duration: string | null | undefined, years: number) => {
+  const enhanced = years >= 8;
+  if (duration === '1_month') return enhanced ? 1.6667 : 1.25;
+  if (duration === '2_weeks') return enhanced ? 0.7692 : 0.5768;
+  return enhanced ? 0.3846 : 0.2884;
+};
+const roundLeaveAmount = (value: number) => Math.round(value * 10000) / 10000;
+
+async function resolveLeaveClientId(req: any, employeeId?: string | null) {
+  const explicit = await resolveRequestedClientIdForUser(req);
+  if (explicit) return explicit;
+  if (employeeId) {
+    const employee = await fetchEmployeeById(employeeId);
+    if (employee?.client_id) return employee.client_id;
+  }
+  return getSessionClientId(req) || null;
+}
+
+async function adjustEmployeeLeaveBalanceSupabase(employeeId: string, type: LeaveTypeKey, amountDelta: number) {
+  const trackedType = getBalanceTrackedLeaveType(type);
+  if (!trackedType || amountDelta === 0) return null;
+  const employee = await fetchEmployeeById(employeeId);
+  if (!employee) return null;
+  const column = LEAVE_COLUMNS[trackedType];
+  const nextValue = roundLeaveAmount((Number(employee[column]) || 0) + amountDelta);
+  const { data, error } = await supabaseAdmin.from('employees').update({ [column]: nextValue, updated_at: new Date().toISOString() }).eq('id', employeeId).select('*').single();
+  if (error) throw error;
+  return data as any;
+}
+
+async function reconcileEmployeeLeaveAccrualSupabase(employeeId: string) {
+  const employee = await fetchEmployeeById(employeeId);
+  if (!employee || employee.status === 'offboarded') return employee;
+  const startDate = parseDateOnlyValue(employee.start_date);
+  const today = startOfToday();
+  if (!startDate || startDate > today) return employee;
+  const client = await fetchClientById(employee.client_id);
+  const rosterDuration = String(client?.roster_duration || '1_week');
+  const employmentYears = getEmploymentYears(startDate, today);
+  const annualRate = getAnnualLeaveRate(rosterDuration, employmentYears);
+  const monthsEmployed = getCompletedMonthsBetween(startDate, today);
+  const weeksWorked = Math.floor(Math.max(0, today.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
+  const fortnightsWorked = Math.floor(Math.max(0, today.getTime() - startDate.getTime()) / (14 * 24 * 60 * 60 * 1000));
+  const accruedAnnual = rosterDuration === '1_month'
+    ? roundLeaveAmount(monthsEmployed * annualRate)
+    : rosterDuration === '2_weeks'
+      ? roundLeaveAmount(fortnightsWorked * annualRate)
+      : roundLeaveAmount(weeksWorked * annualRate);
+  const nextAnnual = Math.max(roundLeaveAmount(accruedAnnual), Number(employee.annual_leave) || 0);
+
+  const monthsInSick = getCompletedMonthsBetween(startDate, today);
+  const accruedSick = monthsInSick < 4 ? monthsInSick : 30;
+  const nextSick = Math.max(roundLeaveAmount(accruedSick), Number(employee.sick_leave) || 0);
+
+  const familyEligible = addMonthsDate(startDate, 4) <= today;
+  const yearsSinceEligibility = familyEligible ? Math.max(1, today.getFullYear() - addMonthsDate(startDate, 4).getFullYear() + 1) : 0;
+  const accruedFamily = familyEligible ? yearsSinceEligibility * 3 : 0;
+  const nextFamily = Math.max(roundLeaveAmount(accruedFamily), Number(employee.family_leave) || 0);
+
+  if (nextAnnual === Number(employee.annual_leave || 0) && nextSick === Number(employee.sick_leave || 0) && nextFamily === Number(employee.family_leave || 0)) return employee;
+  const { data, error } = await supabaseAdmin.from('employees').update({
+    annual_leave: nextAnnual,
+    sick_leave: nextSick,
+    family_leave: nextFamily,
+    updated_at: new Date().toISOString(),
+  }).eq('id', employeeId).select('*').single();
+  if (error) return employee;
+  return data as any;
+}
+
+async function getExistingLeaveOverlap(employeeId: string, startDate: string, endDate: string, excludeId?: string | null) {
+  let query = supabaseAdmin.from('leave_requests').select('*').eq('employee_id', employeeId).in('status', ['pending','approved']).lte('start_date', endDate).gte('end_date', startDate).order('start_date', { ascending: true });
+  if (excludeId) query = query.neq('id', excludeId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []) as any[];
+}
+
 async function fetchUserById(id: string) {
   const { data } = await supabaseAdmin.from('users').select('*').eq('id', id).single();
   return data as any;
@@ -825,17 +962,35 @@ export function registerSupabaseCoreRoutes({
     const employeeSessionId = getSessionEmployeeId(req);
     let employeeId = typeof req.query.employee_id === 'string' ? req.query.employee_id : null;
     if (employeeSessionId) employeeId = employeeSessionId;
-    let query = supabaseAdmin.from('leave_requests').select('*').order('created_at', { ascending: false });
-    if (employeeId) query = query.eq('employee_id', employeeId);
-    const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
-    const ids = Array.from(new Set((data || []).map((row: any) => row.employee_id).filter(Boolean)));
-    let nameMap = new Map<string, string>();
-    if (ids.length) {
-      const { data: emps } = await supabaseAdmin.from('employees').select('id,first_name,last_name').in('id', ids);
-      nameMap = new Map((emps || []).map((e: any) => [e.id, `${e.first_name || ''} ${e.last_name || ''}`.trim()]));
+
+    try {
+      if (employeeId) {
+        await reconcileEmployeeLeaveAccrualSupabase(employeeId);
+      }
+      let query = supabaseAdmin.from('leave_requests').select('*').order('created_at', { ascending: false });
+      if (employeeId) {
+        query = query.eq('employee_id', employeeId);
+      } else {
+        const clientId = await resolveRequestedClientIdForUser(req);
+        if (clientId) {
+          const { data: employeeRows } = await supabaseAdmin.from('employees').select('id').eq('client_id', clientId);
+          const ids = (employeeRows || []).map((row: any) => row.id);
+          if (!ids.length) return res.json([]);
+          query = query.in('employee_id', ids);
+        }
+      }
+      const { data, error } = await query;
+      if (error) return res.status(500).json({ error: error.message });
+      const ids = Array.from(new Set((data || []).map((row: any) => row.employee_id).filter(Boolean)));
+      let nameMap = new Map<string, string>();
+      if (ids.length) {
+        const { data: emps } = await supabaseAdmin.from('employees').select('id,first_name,last_name').in('id', ids);
+        nameMap = new Map((emps || []).map((e: any) => [e.id, `${e.first_name || ''} ${e.last_name || ''}`.trim()]));
+      }
+      res.json((data || []).map((row: any) => ({ ...row, employee_name: nameMap.get(row.employee_id) || '' })));
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || 'Failed to fetch leave requests' });
     }
-    res.json((data || []).map((row: any) => ({ ...row, employee_name: nameMap.get(row.employee_id) || '' })));
   });
 
   app.post('/api/leave-requests', async (req, res) => {
@@ -843,40 +998,117 @@ export function registerSupabaseCoreRoutes({
     const employeeSessionId = getSessionEmployeeId(req);
     const employee_id = String(req.body?.employee_id || employeeSessionId || '').trim();
     if (!employee_id) return res.status(400).json({ error: 'Employee is required' });
-    const id = `leave_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const payload = {
-      id,
-      employee_id,
-      type: String(req.body?.type || '').trim(),
-      start_date: String(req.body?.start_date || '').slice(0,10),
-      end_date: String(req.body?.end_date || '').slice(0,10),
-      is_half_day: Boolean(req.body?.is_half_day),
-      status: getSessionUserId(req) && req.body?.status === 'approved' ? 'approved' : 'pending',
-      notes: String(req.body?.notes || ''),
-      admin_notes: String(req.body?.admin_notes || ''),
-      days: Number(req.body?.days || 0),
-      source: 'manual',
-      attachment_url: '',
-      updated_at: new Date().toISOString(),
-    };
-    const { data, error } = await supabaseAdmin.from('leave_requests').insert(payload).select('*').single();
-    if (error) return res.status(500).json({ error: error.message });
-    res.status(201).json(data);
+
+    try {
+      const employee = await fetchEmployeeById(employee_id);
+      if (!employee) return res.status(404).json({ error: 'Employee not found' });
+      const clientId = await resolveLeaveClientId(req, employee_id);
+      if (clientId && employee.client_id && String(employee.client_id) !== String(clientId)) return res.status(403).json({ error: 'Forbidden' });
+
+      const type = normalizeLeaveType(req.body?.type);
+      const start_date = String(req.body?.start_date || '').slice(0,10);
+      const end_date = String(req.body?.end_date || '').slice(0,10);
+      const is_half_day = parseBoolean(req.body?.is_half_day);
+      const requestedStatus = normalizeLeaveStatus(req.body?.status);
+      const status: LeaveStatusValue = getSessionUserId(req) && requestedStatus === 'approved' ? 'approved' : 'pending';
+      if (!type || !start_date || !end_date) return res.status(400).json({ error: 'Type, start date and end date are required' });
+      if (start_date > end_date) return res.status(400).json({ error: 'End date cannot be before start date' });
+
+      const overlaps = await getExistingLeaveOverlap(employee_id, start_date, end_date, null);
+      if (overlaps.length && !parseBoolean(req.body?.override_double_booking)) {
+        return res.status(409).json({ error: 'Overlapping leave already exists', details: { code: 'DOUBLE_BOOKED' } });
+      }
+
+      const days = Number(req.body?.days || getWeekdayLeaveDays(start_date, end_date, is_half_day));
+      const trackedType = getBalanceTrackedLeaveType(type);
+      if (status === 'approved' && trackedType && !parseBoolean(req.body?.allow_negative_balance)) {
+        const available = Number(employee[LEAVE_COLUMNS[trackedType]]) || 0;
+        if (days > available) {
+          return res.status(409).json({ error: 'Insufficient leave balance', details: { code: 'INSUFFICIENT_LEAVE', available, requested: days } });
+        }
+      }
+
+      const id = `leave_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const payload = {
+        id,
+        employee_id,
+        type,
+        start_date,
+        end_date,
+        is_half_day,
+        status,
+        notes: String(req.body?.notes || ''),
+        admin_notes: String(req.body?.admin_notes || ''),
+        days,
+        source: 'manual',
+        attachment_url: '',
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await supabaseAdmin.from('leave_requests').insert(payload).select('*').single();
+      if (error) return res.status(500).json({ error: error.message });
+      if (status === 'approved') await adjustEmployeeLeaveBalanceSupabase(employee_id, type, -days);
+      await reconcileEmployeeLeaveAccrualSupabase(employee_id);
+      res.status(201).json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || 'Failed to create leave request' });
+    }
   });
 
   app.put('/api/leave-requests/:id/status', async (req, res) => {
     if (!ensureUser(req, res)) return;
-    const status = String(req.body?.status || '').trim();
-    if (!['approved','declined'].includes(status)) return res.status(400).json({ error: 'Valid status is required' });
-    const { data, error } = await supabaseAdmin.from('leave_requests').update({ status, admin_notes: String(req.body?.admin_notes || ''), updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    const status = normalizeLeaveStatus(req.body?.status);
+    if (!status || !['approved','declined'].includes(status)) return res.status(400).json({ error: 'Valid status is required' });
+
+    try {
+      const { data: existing, error: existingError } = await supabaseAdmin.from('leave_requests').select('*').eq('id', req.params.id).single();
+      if (existingError || !existing) return res.status(404).json({ error: 'Leave request not found' });
+      const employee = await fetchEmployeeById(existing.employee_id);
+      if (!employee) return res.status(404).json({ error: 'Employee not found' });
+      const clientId = await resolveLeaveClientId(req, existing.employee_id);
+      if (clientId && employee.client_id && String(employee.client_id) !== String(clientId)) return res.status(403).json({ error: 'Forbidden' });
+
+      const type = normalizeLeaveType(existing.type);
+      const days = Number(existing.days || 0);
+      if (status === 'approved' && existing.status !== 'approved') {
+        const overlaps = await getExistingLeaveOverlap(existing.employee_id, existing.start_date, existing.end_date, existing.id);
+        if (overlaps.length && !parseBoolean(req.body?.override_double_booking)) {
+          return res.status(409).json({ error: 'Overlapping leave already exists', details: { code: 'DOUBLE_BOOKED' } });
+        }
+        const trackedType = type ? getBalanceTrackedLeaveType(type) : null;
+        if (trackedType && !parseBoolean(req.body?.allow_negative_balance)) {
+          const available = Number(employee[LEAVE_COLUMNS[trackedType]]) || 0;
+          if (days > available) {
+            return res.status(409).json({ error: 'Insufficient leave balance', details: { code: 'INSUFFICIENT_LEAVE', available, requested: days } });
+          }
+        }
+      }
+
+      const { data, error } = await supabaseAdmin.from('leave_requests').update({ status, admin_notes: String(req.body?.admin_notes || ''), updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+      if (error) return res.status(500).json({ error: error.message });
+      if (type) {
+        if (existing.status === 'approved' && status !== 'approved') await adjustEmployeeLeaveBalanceSupabase(existing.employee_id, type, days);
+        if (existing.status !== 'approved' && status === 'approved') await adjustEmployeeLeaveBalanceSupabase(existing.employee_id, type, -days);
+      }
+      await reconcileEmployeeLeaveAccrualSupabase(existing.employee_id);
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || 'Failed to update leave request' });
+    }
   });
 
   app.post('/api/leave-requests/:id/cancel', async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
-    const { data, error } = await supabaseAdmin.from('leave_requests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
-    if (error) return res.status(500).json({ error: error.message });
-    res.json(data);
+    try {
+      const { data: existing, error: existingError } = await supabaseAdmin.from('leave_requests').select('*').eq('id', req.params.id).single();
+      if (existingError || !existing) return res.status(404).json({ error: 'Leave request not found' });
+      const { data, error } = await supabaseAdmin.from('leave_requests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+      if (error) return res.status(500).json({ error: error.message });
+      const type = normalizeLeaveType(existing.type);
+      if (type && existing.status === 'approved') await adjustEmployeeLeaveBalanceSupabase(existing.employee_id, type, Number(existing.days || 0));
+      await reconcileEmployeeLeaveAccrualSupabase(existing.employee_id);
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || 'Failed to cancel leave request' });
+    }
   });
 }
