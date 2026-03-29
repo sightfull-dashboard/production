@@ -276,17 +276,36 @@ const getEmploymentYears = (startDate: Date, asOf: Date) => {
   }
   return Math.max(0, years);
 };
-const getAnnualLeaveRate = (duration: string | null | undefined, years: number) => {
+const getLeavePayrollFrequency = (clientRow: any) => {
+  const raw = String(clientRow?.payroll_frequency || clientRow?.roster_duration || '1_week').toLowerCase().trim();
+  if (['monthly', '1_month', 'month'].includes(raw)) return 'monthly';
+  if (['fortnightly', 'fortnight', '2_weeks', '2_week', 'biweekly'].includes(raw)) return 'fortnightly';
+  return 'weekly';
+};
+const getAnnualLeaveRate = (frequency: string | null | undefined, years: number) => {
   const enhanced = years >= 8;
-  if (duration === '1_month') return enhanced ? 1.6667 : 1.25;
-  if (duration === '2_weeks') return enhanced ? 0.7692 : 0.5768;
+  if (frequency === 'monthly') return enhanced ? 1.6667 : 1.25;
+  if (frequency === 'fortnightly') return enhanced ? 0.7692 : 0.5768;
   return enhanced ? 0.3846 : 0.2884;
 };
 const roundLeaveAmount = (value: number) => Math.round(value * 10000) / 10000;
+const getCompletedWeeksBetween = (start: Date, end: Date) => {
+  const ms = end.getTime() - start.getTime();
+  return Math.max(0, Math.floor(ms / (7 * 24 * 60 * 60 * 1000)));
+};
+const getCompletedFortnightsBetween = (start: Date, end: Date) => {
+  const ms = end.getTime() - start.getTime();
+  return Math.max(0, Math.floor(ms / (14 * 24 * 60 * 60 * 1000)));
+};
+const getFamilyLeaveResetYear = (employee: any) => {
+  const raw = employee?.family_leave_last_reset_year ?? employee?.family_leave_last_grant_year;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+};
 
 const reconcileEmployeeLeaveAccrual = (employeeId: string) => {
   const employee = db.prepare(`
-    SELECT e.*, c.roster_duration
+    SELECT e.*, c.roster_duration, c.payroll_frequency
     FROM employees e
     LEFT JOIN clients c ON c.id = e.client_id
     WHERE e.id = ?
@@ -302,13 +321,12 @@ const reconcileEmployeeLeaveAccrual = (employeeId: string) => {
   let familyLeave = Number(employee.family_leave) || 0;
   let changed = false;
 
-  const rosterDuration = String(employee.roster_duration || '1_week') as ClientRosterDuration;
+  const payrollFrequency = getLeavePayrollFrequency(employee);
   const employmentYears = getEmploymentYears(startDate, today);
 
   let annualAnchor = parseDateOnlyValue(employee.annual_leave_last_accrual_date) || startDate;
-  const annualRate = getAnnualLeaveRate(rosterDuration, employmentYears);
-  const annualStepDays = rosterDuration === '2_weeks' ? 14 : rosterDuration === '1_month' ? 0 : 7;
-  if (rosterDuration === '1_month') {
+  const annualRate = getAnnualLeaveRate(payrollFrequency, employmentYears);
+  if (payrollFrequency === 'monthly') {
     let nextAccrualDate = addMonthsDate(annualAnchor, 1);
     while (nextAccrualDate <= today) {
       annualLeave = roundLeaveAmount(annualLeave + annualRate);
@@ -316,12 +334,20 @@ const reconcileEmployeeLeaveAccrual = (employeeId: string) => {
       nextAccrualDate = addMonthsDate(annualAnchor, 1);
       changed = true;
     }
-  } else {
-    let nextAccrualDate = addDaysDate(annualAnchor, annualStepDays);
+  } else if (payrollFrequency === 'fortnightly') {
+    let nextAccrualDate = addDaysDate(annualAnchor, 14);
     while (nextAccrualDate <= today) {
       annualLeave = roundLeaveAmount(annualLeave + annualRate);
       annualAnchor = nextAccrualDate;
-      nextAccrualDate = addDaysDate(annualAnchor, annualStepDays);
+      nextAccrualDate = addDaysDate(annualAnchor, 14);
+      changed = true;
+    }
+  } else {
+    let nextAccrualDate = addDaysDate(annualAnchor, 7);
+    while (nextAccrualDate <= today) {
+      annualLeave = roundLeaveAmount(annualLeave + annualRate);
+      annualAnchor = nextAccrualDate;
+      nextAccrualDate = addDaysDate(annualAnchor, 7);
       changed = true;
     }
   }
@@ -331,6 +357,7 @@ const reconcileEmployeeLeaveAccrual = (employeeId: string) => {
   let sickCycleFullGrantApplied = Number(employee.sick_cycle_full_grant_applied) || 0;
   while (addYearsDate(sickCycleStart, 3) <= today) {
     sickCycleStart = addYearsDate(sickCycleStart, 3);
+    sickLeave = 0;
     sickMonthsCredited = 0;
     sickCycleFullGrantApplied = 0;
     changed = true;
@@ -349,24 +376,19 @@ const reconcileEmployeeLeaveAccrual = (employeeId: string) => {
       changed = true;
     }
     if (!sickCycleFullGrantApplied) {
-      sickLeave = roundLeaveAmount(sickLeave + 26);
+      sickLeave = 30;
       sickCycleFullGrantApplied = 1;
       changed = true;
     }
   }
 
-  let familyGrantYear = Number(employee.family_leave_last_grant_year);
-  if (!Number.isFinite(familyGrantYear)) familyGrantYear = NaN;
+  let familyResetYear = getFamilyLeaveResetYear(employee);
   const familyEligibilityDate = addMonthsDate(startDate, 4);
   if (familyEligibilityDate <= today) {
-    if (!Number.isFinite(familyGrantYear)) {
-      familyLeave = roundLeaveAmount(familyLeave + 3);
-      familyGrantYear = today.getFullYear();
-      changed = true;
-    }
-    while (familyGrantYear < today.getFullYear()) {
-      familyGrantYear += 1;
-      familyLeave = roundLeaveAmount(familyLeave + 3);
+    const currentYear = today.getFullYear();
+    if (familyResetYear !== currentYear) {
+      familyLeave = 3;
+      familyResetYear = currentYear;
       changed = true;
     }
   }
@@ -381,7 +403,8 @@ const reconcileEmployeeLeaveAccrual = (employeeId: string) => {
         sick_cycle_start_date = ?,
         sick_months_credited = ?,
         sick_cycle_full_grant_applied = ?,
-        family_leave_last_grant_year = ?
+        family_leave_last_grant_year = ?,
+        family_leave_last_reset_year = ?
     WHERE id = ?
   `).run(
     annualLeave,
@@ -391,7 +414,8 @@ const reconcileEmployeeLeaveAccrual = (employeeId: string) => {
     formatDateOnlyValue(sickCycleStart),
     sickMonthsCredited,
     sickCycleFullGrantApplied,
-    Number.isFinite(familyGrantYear) ? familyGrantYear : null,
+    familyResetYear,
+    familyResetYear,
     employeeId,
   );
 };
@@ -864,6 +888,7 @@ ensureColumnExists('employees', 'sick_cycle_start_date', 'TEXT');
 ensureColumnExists('employees', 'sick_months_credited', 'INTEGER DEFAULT 0');
 ensureColumnExists('employees', 'sick_cycle_full_grant_applied', 'INTEGER DEFAULT 0');
 ensureColumnExists('employees', 'family_leave_last_grant_year', 'INTEGER');
+ensureColumnExists('employees', 'family_leave_last_reset_year', 'INTEGER');
 db.exec(`UPDATE employees
   SET annual_leave_last_accrual_date = COALESCE(annual_leave_last_accrual_date, start_date),
       sick_cycle_start_date = COALESCE(sick_cycle_start_date, start_date),
@@ -942,6 +967,7 @@ const ensureEmployeeIdUniquenessPerClient = () => {
       sick_months_credited INTEGER DEFAULT 0,
       sick_cycle_full_grant_applied INTEGER DEFAULT 0,
       family_leave_last_grant_year INTEGER,
+      family_leave_last_reset_year INTEGER,
       status TEXT DEFAULT 'active',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       client_id TEXT
@@ -954,7 +980,7 @@ const ensureEmployeeIdUniquenessPerClient = () => {
     'postal_code', 'tax_number', 'bank_name', 'account_holder', 'account_no', 'account_type', 'classification', 'paye_credit',
     'portal_enabled', 'country_of_issue', 'province', 'last_worked', 'delete_reason', 'ismibco', 'isunion', 'union_name',
     'annual_leave', 'sick_leave', 'family_leave',
-    'annual_leave_last_accrual_date', 'sick_cycle_start_date', 'sick_months_credited', 'sick_cycle_full_grant_applied', 'family_leave_last_grant_year',
+    'annual_leave_last_accrual_date', 'sick_cycle_start_date', 'sick_months_credited', 'sick_cycle_full_grant_applied', 'family_leave_last_grant_year', 'family_leave_last_reset_year',
     'status', 'created_at', 'client_id'
   ];
 
@@ -984,6 +1010,7 @@ ensureColumnExists('employees', 'sick_cycle_start_date', 'TEXT');
 ensureColumnExists('employees', 'sick_months_credited', 'INTEGER DEFAULT 0');
 ensureColumnExists('employees', 'sick_cycle_full_grant_applied', 'INTEGER DEFAULT 0');
 ensureColumnExists('employees', 'family_leave_last_grant_year', 'INTEGER');
+ensureColumnExists('employees', 'family_leave_last_reset_year', 'INTEGER');
 
 db.prepare("UPDATE clients SET enabled_definitions = ? WHERE enabled_definitions IS NULL OR enabled_definitions = '' OR enabled_definitions = '[]'").run(JSON.stringify(BASE_ROSTER_DEFINITIONS));
 

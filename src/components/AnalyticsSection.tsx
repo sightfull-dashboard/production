@@ -65,6 +65,12 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
     return 'text-slate-600';
   };
 
+  const formatLeaveMetric = (value: unknown) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return '0.0000';
+    return numericValue.toFixed(4);
+  };
+
   if (loading && !data) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -325,9 +331,9 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
                   filteredLeave.map((emp: any, idx: number) => (
                     <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
                       <td className="py-4 px-6 text-sm font-bold text-slate-700 group-hover:text-slate-900">{emp.name}</td>
-                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.annual)}`}>{emp.annual}</td>
-                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.sick)}`}>{emp.sick}</td>
-                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.family)}`}>{emp.family}</td>
+                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.annual)}`}>{formatLeaveMetric(emp.annual)}</td>
+                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.sick)}`}>{formatLeaveMetric(emp.sick)}</td>
+                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.family)}`}>{formatLeaveMetric(emp.family)}</td>
                       <td className="py-4 px-6 text-right">
                         <button
                           type="button"

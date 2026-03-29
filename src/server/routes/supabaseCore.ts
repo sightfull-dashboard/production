@@ -94,13 +94,24 @@ const getEmploymentYears = (startDate: Date, asOf: Date) => {
   if (asOf.getMonth() < startDate.getMonth() || (asOf.getMonth() === startDate.getMonth() && asOf.getDate() < startDate.getDate())) years -= 1;
   return Math.max(0, years);
 };
-const getAnnualLeaveRate = (duration: string | null | undefined, years: number) => {
+const getLeavePayrollFrequency = (clientRow: any) => {
+  const raw = String(clientRow?.payroll_frequency || clientRow?.roster_duration || '1_week').toLowerCase().trim();
+  if (['monthly', '1_month', 'month'].includes(raw)) return 'monthly';
+  if (['fortnightly', 'fortnight', '2_weeks', '2_week', 'biweekly'].includes(raw)) return 'fortnightly';
+  return 'weekly';
+};
+const getAnnualLeaveRate = (frequency: string | null | undefined, years: number) => {
   const enhanced = years >= 8;
-  if (duration === '1_month') return enhanced ? 1.6667 : 1.25;
-  if (duration === '2_weeks') return enhanced ? 0.7692 : 0.5768;
+  if (frequency === 'monthly') return enhanced ? 1.6667 : 1.25;
+  if (frequency === 'fortnightly') return enhanced ? 0.7692 : 0.5768;
   return enhanced ? 0.3846 : 0.2884;
 };
 const roundLeaveAmount = (value: number) => Math.round(value * 10000) / 10000;
+const getFamilyLeaveResetYear = (employee: any) => {
+  const raw = employee?.family_leave_last_reset_year ?? employee?.family_leave_last_grant_year;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+};
 
 async function resolveLeaveClientId(req: any, employeeId?: string | null) {
   const explicit = await resolveRequestedClientIdForUser(req);
@@ -130,36 +141,103 @@ async function reconcileEmployeeLeaveAccrualSupabase(employeeId: string) {
   const startDate = parseDateOnlyValue(employee.start_date);
   const today = startOfToday();
   if (!startDate || startDate > today) return employee;
+
   const client = await fetchClientById(employee.client_id);
-  const rosterDuration = String(client?.roster_duration || '1_week');
+  const payrollFrequency = getLeavePayrollFrequency(client);
   const employmentYears = getEmploymentYears(startDate, today);
-  const annualRate = getAnnualLeaveRate(rosterDuration, employmentYears);
-  const monthsEmployed = getCompletedMonthsBetween(startDate, today);
-  const weeksWorked = Math.floor(Math.max(0, today.getTime() - startDate.getTime()) / (7 * 24 * 60 * 60 * 1000));
-  const fortnightsWorked = Math.floor(Math.max(0, today.getTime() - startDate.getTime()) / (14 * 24 * 60 * 60 * 1000));
-  const accruedAnnual = rosterDuration === '1_month'
-    ? roundLeaveAmount(monthsEmployed * annualRate)
-    : rosterDuration === '2_weeks'
-      ? roundLeaveAmount(fortnightsWorked * annualRate)
-      : roundLeaveAmount(weeksWorked * annualRate);
-  const nextAnnual = Math.max(roundLeaveAmount(accruedAnnual), Number(employee.annual_leave) || 0);
 
-  const monthsInSick = getCompletedMonthsBetween(startDate, today);
-  const accruedSick = monthsInSick < 4 ? monthsInSick : 30;
-  const nextSick = Math.max(roundLeaveAmount(accruedSick), Number(employee.sick_leave) || 0);
+  let annualLeave = Number(employee.annual_leave) || 0;
+  let sickLeave = Number(employee.sick_leave) || 0;
+  let familyLeave = Number(employee.family_leave) || 0;
+  let annualAnchor = parseDateOnlyValue(employee.annual_leave_last_accrual_date) || startDate;
+  let sickCycleStart = parseDateOnlyValue(employee.sick_cycle_start_date) || startDate;
+  let sickMonthsCredited = Number(employee.sick_months_credited) || 0;
+  let sickCycleFullGrantApplied = Number(employee.sick_cycle_full_grant_applied) || 0;
+  let familyResetYear = getFamilyLeaveResetYear(employee);
+  let changed = false;
 
-  const familyEligible = addMonthsDate(startDate, 4) <= today;
-  const yearsSinceEligibility = familyEligible ? Math.max(1, today.getFullYear() - addMonthsDate(startDate, 4).getFullYear() + 1) : 0;
-  const accruedFamily = familyEligible ? yearsSinceEligibility * 3 : 0;
-  const nextFamily = Math.max(roundLeaveAmount(accruedFamily), Number(employee.family_leave) || 0);
+  const annualRate = getAnnualLeaveRate(payrollFrequency, employmentYears);
+  if (payrollFrequency === 'monthly') {
+    let nextAccrualDate = addMonthsDate(annualAnchor, 1);
+    while (nextAccrualDate <= today) {
+      annualLeave = roundLeaveAmount(annualLeave + annualRate);
+      annualAnchor = nextAccrualDate;
+      nextAccrualDate = addMonthsDate(annualAnchor, 1);
+      changed = true;
+    }
+  } else if (payrollFrequency === 'fortnightly') {
+    let nextAccrualDate = new Date(annualAnchor);
+    nextAccrualDate.setDate(nextAccrualDate.getDate() + 14);
+    while (nextAccrualDate <= today) {
+      annualLeave = roundLeaveAmount(annualLeave + annualRate);
+      annualAnchor = nextAccrualDate;
+      nextAccrualDate = new Date(annualAnchor);
+      nextAccrualDate.setDate(nextAccrualDate.getDate() + 14);
+      changed = true;
+    }
+  } else {
+    let nextAccrualDate = new Date(annualAnchor);
+    nextAccrualDate.setDate(nextAccrualDate.getDate() + 7);
+    while (nextAccrualDate <= today) {
+      annualLeave = roundLeaveAmount(annualLeave + annualRate);
+      annualAnchor = nextAccrualDate;
+      nextAccrualDate = new Date(annualAnchor);
+      nextAccrualDate.setDate(nextAccrualDate.getDate() + 7);
+      changed = true;
+    }
+  }
 
-  if (nextAnnual === Number(employee.annual_leave || 0) && nextSick === Number(employee.sick_leave || 0) && nextFamily === Number(employee.family_leave || 0)) return employee;
-  const { data, error } = await supabaseAdmin.from('employees').update({
-    annual_leave: nextAnnual,
-    sick_leave: nextSick,
-    family_leave: nextFamily,
+  while (new Date(sickCycleStart.getFullYear() + 3, sickCycleStart.getMonth(), sickCycleStart.getDate()) <= today) {
+    sickCycleStart = new Date(sickCycleStart.getFullYear() + 3, sickCycleStart.getMonth(), sickCycleStart.getDate());
+    sickLeave = 0;
+    sickMonthsCredited = 0;
+    sickCycleFullGrantApplied = 0;
+    changed = true;
+  }
+  const monthsInSickCycle = getCompletedMonthsBetween(sickCycleStart, today);
+  if (monthsInSickCycle < 4) {
+    while (sickMonthsCredited < monthsInSickCycle) {
+      sickLeave = roundLeaveAmount(sickLeave + 1);
+      sickMonthsCredited += 1;
+      changed = true;
+    }
+  } else {
+    while (sickMonthsCredited < 4) {
+      sickLeave = roundLeaveAmount(sickLeave + 1);
+      sickMonthsCredited += 1;
+      changed = true;
+    }
+    if (!sickCycleFullGrantApplied) {
+      sickLeave = 30;
+      sickCycleFullGrantApplied = 1;
+      changed = true;
+    }
+  }
+
+  const familyEligibilityDate = addMonthsDate(startDate, 4);
+  if (familyEligibilityDate <= today) {
+    const currentYear = today.getFullYear();
+    if (familyResetYear !== currentYear) {
+      familyLeave = 3;
+      familyResetYear = currentYear;
+      changed = true;
+    }
+  }
+
+  if (!changed) return employee;
+  const updatePayload: any = {
+    annual_leave: annualLeave,
+    sick_leave: sickLeave,
+    family_leave: familyLeave,
+    annual_leave_last_accrual_date: formatDateOnly(annualAnchor),
+    sick_cycle_start_date: formatDateOnly(sickCycleStart),
+    sick_months_credited: sickMonthsCredited,
+    sick_cycle_full_grant_applied: sickCycleFullGrantApplied,
+    family_leave_last_grant_year: familyResetYear,
+    family_leave_last_reset_year: familyResetYear,
     updated_at: new Date().toISOString(),
-  }).eq('id', employeeId).select('*').single();
+  };
+  const { data, error } = await supabaseAdmin.from('employees').update(updatePayload).eq('id', employeeId).select('*').single();
   if (error) return employee;
   return data as any;
 }
@@ -467,6 +545,8 @@ export function registerSupabaseCoreRoutes({
       client_id: actorClientId,
       annual_leave_last_accrual_date: data.start_date,
       sick_cycle_start_date: data.start_date,
+      family_leave_last_grant_year: null,
+      family_leave_last_reset_year: null,
     });
     const { error } = await supabaseAdmin.from('employees').insert(employeePayload);
     if (error) return res.status(500).json({ error: error.message });
@@ -1000,6 +1080,7 @@ export function registerSupabaseCoreRoutes({
     if (!employee_id) return res.status(400).json({ error: 'Employee is required' });
 
     try {
+      await reconcileEmployeeLeaveAccrualSupabase(employee_id);
       const employee = await fetchEmployeeById(employee_id);
       if (!employee) return res.status(404).json({ error: 'Employee not found' });
       const clientId = await resolveLeaveClientId(req, employee_id);
@@ -1062,6 +1143,7 @@ export function registerSupabaseCoreRoutes({
     try {
       const { data: existing, error: existingError } = await supabaseAdmin.from('leave_requests').select('*').eq('id', req.params.id).single();
       if (existingError || !existing) return res.status(404).json({ error: 'Leave request not found' });
+      await reconcileEmployeeLeaveAccrualSupabase(existing.employee_id);
       const employee = await fetchEmployeeById(existing.employee_id);
       if (!employee) return res.status(404).json({ error: 'Employee not found' });
       const clientId = await resolveLeaveClientId(req, existing.employee_id);
