@@ -984,184 +984,171 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
           <div className="space-y-8">
             {/* Top Stats */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white/80 backdrop-blur-md rounded-[32px] p-8 shadow-xl shadow-indigo-100/20 border border-white/20 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <Users className="w-24 h-24 text-indigo-600" />
+              <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
+                  <Users className="w-32 h-32 text-indigo-600 -mt-6 -mr-6" />
                 </div>
                 <div className="relative z-10">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-6">
                     <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center">
                       <Users className="w-6 h-6 text-indigo-600" />
                     </div>
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase tracking-widest">
-                      <ArrowUpRight className="w-3 h-3" />
+                    <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-600 text-[11px] font-black uppercase tracking-widest">
+                      <ArrowUpRight className="w-3.5 h-3.5" />
                       +12%
                     </div>
                   </div>
-                  <h3 className="text-4xl font-black text-slate-800 mb-1">{selectedClient.data.employees}</h3>
+                  <h3 className="text-5xl font-black text-slate-800 mb-2 tracking-tight">{selectedClient.data.employees}</h3>
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Employees</p>
                 </div>
               </div>
-              <div className="bg-white/80 backdrop-blur-md rounded-[32px] p-8 shadow-xl shadow-indigo-100/20 border border-white/20 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <BarChart3 className="w-24 h-24 text-emerald-600" />
+              <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
+                  <BarChart3 className="w-32 h-32 text-emerald-600 -mt-6 -mr-6" />
                 </div>
                 <div className="relative z-10">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-6">
                     <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center">
                       <BarChart3 className="w-6 h-6 text-emerald-600" />
                     </div>
-                    <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase tracking-widest">
-                      <TrendingUp className="w-3 h-3" />
+                    <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-600 text-[11px] font-black uppercase tracking-widest">
+                      <TrendingUp className="w-3.5 h-3.5" />
                       Active
                     </div>
                   </div>
-                  <h3 className="text-4xl font-black text-slate-800 mb-1">{selectedClient.data.shiftsThisWeek}</h3>
+                  <h3 className="text-5xl font-black text-slate-800 mb-2 tracking-tight">{selectedClient.data.shiftsThisWeek}</h3>
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Shifts This Week</p>
                 </div>
               </div>
-              <div className="bg-white/80 backdrop-blur-md rounded-[32px] p-8 shadow-xl shadow-indigo-100/20 border border-white/20 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <FileText className="w-24 h-24 text-amber-600" />
+              <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
+                  <FileText className="w-32 h-32 text-amber-600 -mt-6 -mr-6" />
                 </div>
                 <div className="relative z-10">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-6">
                     <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center">
                       <FileText className="w-6 h-6 text-amber-600" />
                     </div>
                   </div>
-                  <h3 className="text-4xl font-black text-slate-800 mb-1">{selectedClient.data.totalHours}</h3>
+                  <h3 className="text-5xl font-black text-slate-800 mb-2 tracking-tight">{selectedClient.data.totalHours}</h3>
                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Hours Logged</p>
                 </div>
               </div>
             </div>
 
             {/* Dashboard Pulse Section */}
-            <div className="space-y-4">
+            <div className="space-y-6">
               <div className="flex items-center justify-between px-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest">Dashboard Pulse</h4>
+                <div className="flex items-center gap-3">
+                  <div className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  </div>
+                  <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest">Dashboard Pulse</h4>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Live Status</span>
                   <div className="h-4 w-px bg-slate-200" />
-                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1">
-                    <ShieldCheck className="w-3 h-3" />
+                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5" />
                     System Secure
                   </span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-white/60 backdrop-blur-md rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
-                  <div className="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
-                    <Users className="w-24 h-24 text-indigo-600" />
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                  <div className="absolute -right-4 -bottom-4 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity">
+                    <Users className="w-32 h-32 text-indigo-600" />
                   </div>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <Users className="w-5 h-5 text-indigo-600" />
+                  <div className="flex items-center gap-4 mb-6 relative z-10">
+                    <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Users className="w-6 h-6 text-indigo-600" />
                     </div>
                     <div>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Users</p>
-                      <p className="text-lg font-black text-slate-800">{clientUsers.length}</p>
+                      <p className="text-2xl font-black text-slate-800">{clientUsers.length}</p>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[10px] font-bold">
-                      <span className="text-slate-400">Last 24h</span>
+                  <div className="space-y-2 relative z-10">
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-slate-400 uppercase tracking-wider">Last 24h</span>
                       <span className="text-indigo-600">85% Activity</span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: '85%' }}
-                        className="h-full bg-indigo-500 rounded-full" 
-                      />
+                      <motion.div initial={{ width: 0 }} animate={{ width: '85%' }} className="h-full bg-indigo-500 rounded-full" />
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-white/60 backdrop-blur-md rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
-                  <div className="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
-                    <ShieldCheck className="w-24 h-24 text-emerald-600" />
+                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                  <div className="absolute -right-4 -bottom-4 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity">
+                    <ShieldCheck className="w-32 h-32 text-emerald-600" />
                   </div>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                  <div className="flex items-center gap-4 mb-6 relative z-10">
+                    <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <ShieldCheck className="w-6 h-6 text-emerald-600" />
                     </div>
                     <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Payroll Status</p>
-                      <p className="text-lg font-black text-slate-800">Healthy</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Compliance</p>
+                      <p className="text-2xl font-black text-slate-800">100%</p>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[10px] font-bold">
-                      <span className="text-slate-400">Compliance</span>
-                      <span className="text-emerald-600">100% Verified</span>
+                  <div className="space-y-2 relative z-10">
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-slate-400 uppercase tracking-wider">Status</span>
+                      <span className="text-emerald-600">Verified</span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: '100%' }}
-                        className="h-full bg-emerald-500 rounded-full" 
-                      />
+                      <motion.div initial={{ width: 0 }} animate={{ width: '100%' }} className="h-full bg-emerald-500 rounded-full" />
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-white/60 backdrop-blur-md rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
-                  <div className="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
-                    <HardDrive className="w-24 h-24 text-amber-600" />
+                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                  <div className="absolute -right-4 -bottom-4 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity">
+                    <HardDrive className="w-32 h-32 text-amber-600" />
                   </div>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <HardDrive className="w-5 h-5 text-amber-600" />
+                  <div className="flex items-center gap-4 mb-6 relative z-10">
+                    <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <HardDrive className="w-6 h-6 text-amber-600" />
                     </div>
                     <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Storage Used</p>
-                      <p className="text-lg font-black text-slate-800">{clientFiles.length} Files</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Storage</p>
+                      <p className="text-2xl font-black text-slate-800">{clientFiles.length} Files</p>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[10px] font-bold">
-                      <span className="text-slate-400">Quota Used</span>
-                      <span className="text-amber-600">12% of 100MB</span>
+                  <div className="space-y-2 relative z-10">
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-slate-400 uppercase tracking-wider">Quota</span>
+                      <span className="text-amber-600">12% Used</span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: '12%' }}
-                        className="h-full bg-amber-500 rounded-full" 
-                      />
+                      <motion.div initial={{ width: 0 }} animate={{ width: '12%' }} className="h-full bg-amber-500 rounded-full" />
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-white/60 backdrop-blur-md rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
-                  <div className="absolute -right-4 -bottom-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
-                    <Bell className="w-24 h-24 text-rose-600" />
+                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                  <div className="absolute -right-4 -bottom-4 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity">
+                    <Bell className="w-32 h-32 text-rose-600" />
                   </div>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-10 h-10 bg-rose-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                      <Bell className="w-5 h-5 text-rose-600" />
+                  <div className="flex items-center gap-4 mb-6 relative z-10">
+                    <div className="w-12 h-12 bg-rose-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Bell className="w-6 h-6 text-rose-600" />
                     </div>
                     <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Notifications</p>
-                      <p className="text-lg font-black text-slate-800">2 Pending</p>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Alerts</p>
+                      <p className="text-2xl font-black text-slate-800">2</p>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[10px] font-bold">
-                      <span className="text-slate-400">Action Required</span>
-                      <span className="text-rose-600">Urgent</span>
+                  <div className="space-y-2 relative z-10">
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-slate-400 uppercase tracking-wider">Priority</span>
+                      <span className="text-rose-600">Action Req</span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: '40%' }}
-                        className="h-full bg-rose-500 rounded-full" 
-                      />
+                      <motion.div initial={{ width: 0 }} animate={{ width: '40%' }} className="h-full bg-rose-500 rounded-full" />
                     </div>
                   </div>
                 </div>
@@ -1170,112 +1157,116 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
 
             {/* Detailed Dashboard Information */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="lg:col-span-2 bg-white/80 backdrop-blur-md rounded-[32px] p-8 shadow-xl shadow-indigo-100/20 border border-white/20">
-                <div className="flex items-center justify-between mb-8">
-                  <div className="space-y-1">
-                    <h4 className="font-black text-slate-800 uppercase tracking-widest text-xs">Live Dashboard Feed</h4>
-                    <p className="text-xs text-slate-400 font-bold">A real-time stream of events from this client's portal</p>
+              <div className="lg:col-span-2 bg-white rounded-[32px] border border-slate-100 shadow-sm flex flex-col overflow-hidden">
+                <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                  <div>
+                    <h4 className="text-xl font-black text-slate-800 tracking-tight">Live Activity Feed</h4>
+                    <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-1">Real-time stream of events</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex -space-x-2">
+                  <div className="flex items-center gap-3">
+                    <div className="flex -space-x-3">
                       {clientUsers.slice(0, 3).map((user, i) => (
-                        <div key={i} className="w-6 h-6 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[8px] font-bold text-slate-600">
+                        <div key={i} className="w-10 h-10 rounded-full border-2 border-white bg-indigo-100 flex items-center justify-center text-sm font-black text-indigo-600 shadow-sm">
                           {user.email[0].toUpperCase()}
                         </div>
                       ))}
                     </div>
-                    <span className="text-[10px] font-bold text-slate-400">+{clientUsers.length - 3} more active</span>
+                    <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest bg-white px-3 py-1.5 rounded-xl border border-slate-100 shadow-sm">
+                      +{clientUsers.length > 3 ? clientUsers.length - 3 : 0} active
+                    </span>
                   </div>
                 </div>
-                <div className="space-y-4">
-                  {clientLogs.slice(0, 6).map((log, i) => (
-                    <motion.div 
-                      key={log.id} 
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.05 }}
-                      className="flex items-center justify-between p-4 rounded-2xl bg-slate-50/50 border border-slate-100 hover:border-indigo-100 hover:bg-white hover:shadow-sm transition-all group"
-                    >
-                      <div className="flex items-center gap-4">
+                <div className="p-8 flex-1">
+                  <div className="space-y-6">
+                    {clientLogs.slice(0, 5).map((log, i) => (
+                      <motion.div 
+                        key={log.id} 
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.05 }}
+                        className="flex items-start gap-4 group"
+                      >
                         <div className={cn(
-                          "w-10 h-10 rounded-xl flex items-center justify-center shadow-sm transition-colors",
+                          "w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 mt-0.5 transition-transform group-hover:scale-110",
                           log.action.includes('LOGIN') ? "bg-indigo-50 text-indigo-600" : 
                           log.action.includes('PAYROLL') ? "bg-emerald-50 text-emerald-600" :
-                          log.action.includes('FILE') ? "bg-amber-50 text-amber-600" : "bg-white text-slate-400"
+                          log.action.includes('FILE') ? "bg-amber-50 text-amber-600" : "bg-slate-50 text-slate-400"
                         )}>
-                          {log.action.includes('LOGIN') ? <Lock className="w-4 h-4" /> : 
-                           log.action.includes('PAYROLL') ? <ShieldCheck className="w-4 h-4" /> :
-                           log.action.includes('FILE') ? <Files className="w-4 h-4" /> : <Activity className="w-4 h-4" />}
+                          {log.action.includes('LOGIN') ? <Lock className="w-5 h-5" /> : 
+                           log.action.includes('PAYROLL') ? <ShieldCheck className="w-5 h-5" /> :
+                           log.action.includes('FILE') ? <Files className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-bold text-slate-800">{log.action.replace(/_/g, ' ')}</p>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="text-sm font-black text-slate-800">{log.action.replace(/_/g, ' ')}</p>
                             {i === 0 && (
-                              <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600 text-[8px] font-black uppercase tracking-tighter">New</span>
+                              <span className="px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest">New</span>
                             )}
                           </div>
-                          <p className="text-[10px] font-bold text-slate-400">{log.user_email}</p>
+                          <p className="text-xs font-bold text-slate-500 truncate">{log.user_email}</p>
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                        <p className="text-[9px] font-bold text-slate-400">{new Date(log.created_at).toLocaleDateString()}</p>
-                      </div>
-                    </motion.div>
-                  ))}
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-black text-slate-800">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{new Date(log.created_at).toLocaleDateString()}</p>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
                 </div>
-                <button 
-                  onClick={() => setActiveTab('activity')}
-                  className="w-full mt-6 py-3 rounded-2xl border border-dashed border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest hover:border-indigo-200 hover:text-indigo-600 transition-all"
-                >
-                  View Full Activity History
-                </button>
+                <div className="p-4 border-t border-slate-100 bg-slate-50/50">
+                  <button 
+                    onClick={() => setActiveTab('activity')}
+                    className="w-full text-xs font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-700 transition-colors py-2"
+                  >
+                    View all activity &rarr;
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-6">
-                <div className="bg-white/80 backdrop-blur-md rounded-[32px] p-8 shadow-xl shadow-indigo-100/20 border border-white/20">
-                  <h4 className="font-black text-slate-800 uppercase tracking-widest text-xs mb-6">System Health</h4>
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center">
-                        <Shield className="w-5 h-5 text-emerald-600" />
+                <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm p-8">
+                  <h4 className="text-xl font-black text-slate-800 tracking-tight mb-8">System Health</h4>
+                  <div className="space-y-8">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center shrink-0">
+                        <Shield className="w-6 h-6 text-emerald-600" />
                       </div>
                       <div>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Security Status</p>
-                        <p className="text-xs font-bold text-slate-800">All Systems Operational</p>
+                        <p className="text-sm font-black text-slate-800">Security Status</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">All Systems Operational</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center">
-                        <RefreshCw className="w-5 h-5 text-indigo-600" />
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center shrink-0">
+                        <RefreshCw className="w-6 h-6 text-indigo-600" />
                       </div>
                       <div>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Last Backup</p>
-                        <p className="text-xs font-bold text-slate-800">Today, 04:00 AM</p>
+                        <p className="text-sm font-black text-slate-800">Last Backup</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Today, 04:00 AM</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
-                        <MessageSquare className="w-5 h-5 text-amber-600" />
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center shrink-0">
+                        <MessageSquare className="w-6 h-6 text-amber-600" />
                       </div>
                       <div>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Support Tickets</p>
-                        <p className="text-xs font-bold text-slate-800">0 Open Tickets</p>
+                        <p className="text-sm font-black text-slate-800">Support Tickets</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">0 Open Tickets</p>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-indigo-600 rounded-[32px] p-8 shadow-xl shadow-indigo-200 border border-indigo-500 relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
-                    <Zap className="w-20 h-20 text-white" />
+                <div className="bg-slate-900 rounded-[32px] p-8 text-white relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <Zap className="w-32 h-32 -mt-6 -mr-6" />
                   </div>
                   <div className="relative z-10">
-                    <h4 className="font-black text-white uppercase tracking-widest text-[10px] mb-2 opacity-80">Quick Action</h4>
-                    <p className="text-white font-bold text-sm mb-6 leading-tight">Need to assist this client directly?</p>
+                    <h4 className="text-xl font-black tracking-tight mb-2">Quick Actions</h4>
+                    <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-8">Need to assist this client directly?</p>
                     <button 
                       onClick={() => onLoginAsSuperAdmin?.(selectedClient)}
-                      className="w-full py-3 bg-white text-indigo-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-50 transition-colors shadow-lg"
+                      className="w-full py-4 bg-white text-slate-900 text-sm font-black uppercase tracking-widest rounded-2xl hover:bg-slate-50 transition-colors shadow-lg shadow-white/10"
                     >
                       Login as Admin
                     </button>
@@ -1286,22 +1277,22 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
 
             {/* Quick Status Bar */}
             <div className="flex flex-wrap gap-4">
-              <div className="flex items-center gap-3 px-6 py-4 bg-white/60 backdrop-blur-md rounded-2xl border border-slate-100">
-                <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
-                  <LayoutDashboard className="w-4 h-4 text-emerald-600" />
+              <div className="flex items-center gap-4 px-6 py-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center">
+                  <LayoutDashboard className="w-5 h-5 text-emerald-600" />
                 </div>
                 <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dashboard Type</p>
-                  <p className="text-xs font-bold text-slate-800">{selectedClient.dashboardType === 'rostering' ? 'Rostering Enabled' : 'Basic Mode'}</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dashboard Type</p>
+                  <p className="text-sm font-black text-slate-800">{selectedClient.dashboardType === 'rostering' ? 'Rostering Enabled' : 'Basic Mode'}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3 px-6 py-4 bg-white/60 backdrop-blur-md rounded-2xl border border-slate-100">
-                <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center">
-                  <Calendar className="w-4 h-4 text-amber-600" />
+              <div className="flex items-center gap-4 px-6 py-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
+                  <Calendar className="w-5 h-5 text-amber-600" />
                 </div>
                 <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Client Since</p>
-                  <p className="text-xs font-bold text-slate-800">{new Date(selectedClient.created_at).toLocaleDateString()}</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client Since</p>
+                  <p className="text-sm font-black text-slate-800">{new Date(selectedClient.created_at).toLocaleDateString()}</p>
                 </div>
               </div>
             </div>
