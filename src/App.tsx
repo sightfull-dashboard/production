@@ -298,6 +298,18 @@ export default function App() {
   };
 
   const checkAuth = async () => {
+    if (isEmployeeRoute) {
+      setAuth({ user: null, loading: false });
+      try {
+        const employee = await appService.getEmployeeSession();
+        setEmployeeAuth({ employee, loading: false });
+      } catch (err) {
+        clearEmployeeAuth();
+      }
+      return;
+    }
+
+    clearEmployeeAuth();
     try {
       const user = await appService.getAuthUser();
       const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
@@ -326,18 +338,11 @@ export default function App() {
     } catch (err) {
       setAuth({ user: null, loading: false });
     }
-
-    try {
-      const employee = await appService.getEmployeeSession();
-      setEmployeeAuth({ employee, loading: false });
-    } catch (err) {
-      clearEmployeeAuth();
-    }
   };
 
   useEffect(() => {
     checkAuth();
-  }, []);
+  }, [isEmployeeRoute]);
 
   useEffect(() => {
     setDobDisplay(editingEmployee?.dob ? toDateInputValue(String(editingEmployee.dob)) : '');
@@ -639,7 +644,7 @@ export default function App() {
 
   const buildEmployeePayload = (formData: FormData) => ({
     emp_id: sanitizeString(formData.get('emp_id')),
-    pin: editingEmployee?.pin || sanitizeString(formData.get('pin')),
+    pin: sanitizeString(formData.get('pin')),
         first_name: sanitizeString(formData.get('first_name')),
     last_name: sanitizeString(formData.get('last_name')),
     start_date: normalizeFlexibleDateInput(sanitizeString(formData.get('start_date'))),

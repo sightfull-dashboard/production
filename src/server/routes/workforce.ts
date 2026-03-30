@@ -1,6 +1,7 @@
 import type { Express, Request, Response, NextFunction } from 'express';
 import { getEffectiveClientId, getSessionRole } from '../utils/tenant';
 import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../../lib/shifts';
+import { hashSecret, sanitizeEmployeeForResponse, sanitizeEmployeesForResponse } from '../utils/security';
 
 type Middleware = (req: Request, res: Response, next: NextFunction) => unknown;
 
@@ -154,7 +155,7 @@ export function registerWorkforceRoutes({
       employees = db.prepare('SELECT * FROM employees WHERE client_id = ? ORDER BY CAST(SUBSTR(emp_id, 4) AS INTEGER) ASC, emp_id ASC').all(clientId);
     }
 
-    res.json(mapDerivedLastWorkedDate(employees));
+    res.json(sanitizeEmployeesForResponse(mapDerivedLastWorkedDate(employees)));
   });
 
   app.post('/api/employees', requireActiveTrial, requireUnlockedFeature('employee_records'), (req, res) => {
@@ -227,7 +228,7 @@ export function registerWorkforceRoutes({
       `);
 
       stmt.run(
-        id, data.emp_id, data.pin || null, data.first_name, data.last_name, data.start_date, data.dob, data.last_worked, data.job_title, data.department, data.pay_rate,
+        id, data.emp_id, data.pin ? hashSecret(data.pin) : null, data.first_name, data.last_name, data.start_date, data.dob, data.last_worked, data.job_title, data.department, data.pay_rate,
         data.email, data.cell, data.residency, data.street_number, data.id_number, data.passport, data.bank_name, data.portal_enabled || 'no', data.country_of_issue, data.province, data.account_holder, data.account_no, data.account_type,
         data.tax_number, data.ismibco || null, data.isunion || null, data.union_name, data.address1, data.address2, data.address3,
         data.address4, data.postal_code, data.paye_credit, data.classification, data.annual_leave, data.sick_leave, data.family_leave, actorClientId,
@@ -247,7 +248,7 @@ export function registerWorkforceRoutes({
       });
 
       logActivity(req, 'CREATE_EMPLOYEE', { emp_id: data.emp_id, name: `${data.first_name} ${data.last_name}` });
-      res.json({ id, ...data });
+      res.json(sanitizeEmployeeForResponse({ id, ...data }));
     } catch (e: any) {
       console.error(e);
       res.status(500).json({ error: e?.message || 'Failed to save employee' });
@@ -273,7 +274,7 @@ export function registerWorkforceRoutes({
     const isSuperAdmin = actorRole === 'superadmin';
     const actorClientId = getEffectiveClientId(db, req);
 
-    const existingEmployee = db.prepare('SELECT emp_id, annual_leave, sick_leave, family_leave FROM employees WHERE id = ?').get(id) as any;
+    const existingEmployee = db.prepare('SELECT emp_id, annual_leave, sick_leave, family_leave, pin FROM employees WHERE id = ?').get(id) as any;
     if (!existingEmployee) {
       return res.status(404).json({ error: 'Employee not found.' });
     }
@@ -329,7 +330,7 @@ export function registerWorkforceRoutes({
       `);
 
       const result = stmt.run(
-        data.emp_id, data.pin || null, data.first_name, data.last_name, data.start_date, data.dob, data.last_worked, data.job_title, data.department, data.pay_rate,
+        data.emp_id, (data.pin ? hashSecret(data.pin) : existingEmployee.pin || null), data.first_name, data.last_name, data.start_date, data.dob, data.last_worked, data.job_title, data.department, data.pay_rate,
         data.email, data.cell, data.residency, data.street_number, data.id_number, data.passport, data.bank_name, data.portal_enabled || 'no', data.country_of_issue, data.province, data.account_holder, data.account_no, data.account_type,
         data.tax_number, data.ismibco || null, data.isunion || null, data.union_name, data.address1, data.address2, data.address3,
         data.address4, data.postal_code, data.paye_credit, data.classification, data.annual_leave, data.sick_leave, data.family_leave,
@@ -341,7 +342,7 @@ export function registerWorkforceRoutes({
       }
 
       logActivity(req, 'UPDATE_EMPLOYEE', { id, emp_id: data.emp_id, name: `${data.first_name} ${data.last_name}` });
-      res.json({ id, ...data });
+      res.json(sanitizeEmployeeForResponse({ id, ...data }));
     } catch (e: any) {
       console.error(e);
       res.status(500).json({ error: e?.message || 'Failed to update employee' });
@@ -494,7 +495,7 @@ export function registerWorkforceRoutes({
       db.prepare('INSERT INTO shifts (id, label, start, end, lunch) VALUES (?, ?, ?, ?, ?)')
         .run(id, data.label, data.start, data.end, data.lunch);
       logActivity(req, 'CREATE_SHIFT', { id, label: data.label });
-      res.json({ id, ...data });
+      res.json(sanitizeEmployeeForResponse({ id, ...data }));
     } catch (e: any) {
       console.error(e);
       res.status(500).json({ error: e?.message || 'Failed to create shift.' });

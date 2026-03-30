@@ -2,6 +2,7 @@ import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import bcrypt from 'bcryptjs';
 import type { Express, Request } from 'express';
+import { deleteStoredObjectIfPresent, uploadBase64FileToSupabaseStorage } from '../utils/storage';
 
 type Middleware = (req: any, res: any, next: any) => unknown;
 
@@ -330,6 +331,14 @@ export function registerAdminRoutes({
         if (!parent || parent.type !== 'folder' || parent.client_id !== req.params.id) return res.status(400).json({ error: 'Parent folder not found.' });
       }
 
+      const uploadedAsset = type === 'file' && typeof url === 'string'
+        ? await uploadBase64FileToSupabaseStorage({
+            bucket: env.supabaseBucketVaultFiles,
+            fileName: name,
+            folder: `client/${req.params.id}/${id}`,
+            rawValue: url,
+          })
+        : null;
       const payload = {
         id,
         client_id: req.params.id,
@@ -337,11 +346,11 @@ export function registerAdminRoutes({
         employee_id: null,
         name,
         type,
-        mime_type: extension || null,
-        size_bytes: size || null,
-        storage_bucket: type === 'file' ? env.supabaseBucketVaultFiles : null,
-        storage_path: type === 'file' ? `client/${req.params.id}/${id}/${name}` : null,
-        public_url: url || null,
+        mime_type: uploadedAsset?.mimeType || extension || null,
+        size_bytes: uploadedAsset?.sizeBytes || size || null,
+        storage_bucket: type === 'file' ? (uploadedAsset?.storageBucket || env.supabaseBucketVaultFiles) : null,
+        storage_path: type === 'file' ? (uploadedAsset?.storagePath || `client/${req.params.id}/${id}/${name}`) : null,
+        public_url: uploadedAsset ? uploadedAsset.publicUrl : (url || null),
         password: password || null,
         uploaded_by: (req.session as any)?.userId || null,
       };
@@ -402,6 +411,8 @@ export function registerAdminRoutes({
       const removeRecursively = async (fileId: string) => {
         const { data: children } = await supabaseAdmin.from('files').select('id').eq('parent_id', fileId).eq('client_id', req.params.clientId);
         for (const child of children || []) await removeRecursively(child.id);
+        const { data: row } = await supabaseAdmin.from('files').select('storage_bucket,storage_path').eq('id', fileId).eq('client_id', req.params.clientId).maybeSingle();
+        await deleteStoredObjectIfPresent({ storageBucket: row?.storage_bucket, storagePath: row?.storage_path });
         await supabaseAdmin.from('files').delete().eq('id', fileId).eq('client_id', req.params.clientId);
       };
       await removeRecursively(req.params.fileId);

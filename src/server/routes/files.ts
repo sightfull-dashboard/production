@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import type { Express, Request } from 'express';
+import { deleteStoredObjectIfPresent, resolveDownloadUrl, uploadBase64FileToSupabaseStorage } from '../utils/storage';
 
 type Middleware = (req: any, res: any, next: any) => unknown;
 
@@ -15,7 +16,7 @@ type FilesRoutesDeps = {
   getActorClientId: (req: any) => string | null;
   ensureClientVaultStructure: (clientId: string | null | undefined) => void;
   hydrateFileRow: (row: any) => any;
-  buildFolderDownloadPayload: (folderRow: any) => any;
+  buildFolderDownloadPayload: (folderRow: any) => Promise<any>;
   serializePayrollSubmission: (row: any) => any;
   getEffectiveClientId: (db: any, req: any) => string | null;
   toLocalIsoDate: (value: Date) => string;
@@ -194,6 +195,14 @@ export function registerFilesRoutes({
         if (!parent || parent.type !== 'folder') return res.status(400).json({ error: 'Parent folder not found' });
       }
       const id = Math.random().toString(36).substr(2, 9);
+      const uploadedAsset = type === 'file' && typeof url === 'string'
+        ? await uploadBase64FileToSupabaseStorage({
+            bucket: env.supabaseBucketVaultFiles,
+            fileName: name,
+            folder: ownerEmployeeId ? `employee/${ownerEmployeeId}/${id}` : `client/${ownerClientId || 'shared'}/${id}`,
+            rawValue: url,
+          })
+        : null;
       const payload = {
         id,
         client_id: ownerClientId,
@@ -201,11 +210,11 @@ export function registerFilesRoutes({
         employee_id: ownerEmployeeId,
         name,
         type,
-        mime_type: extension || null,
-        size_bytes: size || null,
-        storage_bucket: type === 'file' ? env.supabaseBucketVaultFiles : null,
-        storage_path: type === 'file' ? `${ownerEmployeeId ? `employee/${ownerEmployeeId}` : `client/${ownerClientId || 'shared'}`}/${id}/${name}` : null,
-        public_url: url || null,
+        mime_type: uploadedAsset?.mimeType || extension || null,
+        size_bytes: uploadedAsset?.sizeBytes || size || null,
+        storage_bucket: type === 'file' ? (uploadedAsset?.storageBucket || env.supabaseBucketVaultFiles) : null,
+        storage_path: type === 'file' ? (uploadedAsset?.storagePath || `${ownerEmployeeId ? `employee/${ownerEmployeeId}` : `client/${ownerClientId || 'shared'}`}/${id}/${name}`) : null,
+        public_url: uploadedAsset ? uploadedAsset.publicUrl : (url || null),
         password: password || null,
         uploaded_by: (req.session as any)?.userId || null,
       };
@@ -253,6 +262,8 @@ export function registerFilesRoutes({
       const removeRecursively = async (fileId: string) => {
         const { data: children } = await supabaseAdmin.from('files').select('id').eq('parent_id', fileId);
         for (const child of children || []) await removeRecursively(child.id);
+        const row = await fetchSupabaseFileById(fileId);
+        await deleteStoredObjectIfPresent({ storageBucket: row?.storage_bucket, storagePath: row?.storage_path });
         await supabaseAdmin.from('files').delete().eq('id', fileId);
       };
       await removeRecursively(req.params.id);
@@ -279,10 +290,18 @@ export function registerFilesRoutes({
         return res.status(403).json({ error: 'Forbidden' });
       }
       if (existing.type === 'folder') {
-        const payload = buildFolderDownloadPayload(existing);
+        const payload = await buildFolderDownloadPayload(existing);
         return res.json(payload);
       }
-      res.json({ id: existing.id, name: existing.name, url: existing.url || existing.public_url || existing.storage_path || null, extension: existing.extension || existing.mime_type || null, size: existing.size || existing.size_bytes || null });
+      const downloadUrl = env.databaseProvider === 'supabase'
+        ? await resolveDownloadUrl({
+            storageBucket: existing.storage_bucket,
+            storagePath: existing.storage_path,
+            fallbackUrl: existing.public_url || existing.url || null,
+            ttlSeconds: env.fileDownloadUrlTtlSeconds,
+          })
+        : (existing.url || existing.public_url || existing.storage_path || null);
+      res.json({ id: existing.id, name: existing.name, url: downloadUrl, extension: existing.extension || existing.mime_type || null, size: existing.size || existing.size_bytes || null });
     } catch (error) {
       console.error('Failed to prepare file download:', error);
       res.status(500).json({ error: 'Failed to prepare file download' });

@@ -1,7 +1,6 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import session from "express-session";
-import bcrypt from "bcryptjs";
 import path from "node:path";
 import { assertRuntimeConfiguration, env, isProduction, isSmtpConfigured, isSupabaseConfigured, runtimeConfigWarnings } from "./src/server/config/env";
 import { db, getDatabaseReadiness } from "./src/server/db/index";
@@ -15,6 +14,8 @@ import { registerLeaveRoutes } from "./src/server/routes/leave";
 import { registerWorkforceRoutes } from "./src/server/routes/workforce";
 import { registerSupabaseCoreRoutes } from "./src/server/routes/supabaseCore";
 import { getActorClientId, getEffectiveClientId } from "./src/server/utils/tenant";
+import { createOriginProtectionMiddleware, createRateLimitMiddleware, hashSecret, securityHeadersMiddleware } from "./src/server/utils/security";
+import { createSqliteSessionStore } from "./src/server/utils/sqliteSessionStore";
 
 assertRuntimeConfiguration();
 runtimeConfigWarnings.forEach((warning) => console.warn(`[CONFIG] ${warning}`));
@@ -552,9 +553,7 @@ const serializePayrollSubmission = (row: any) => ({
     : safeJsonParse(row.employee_breakdown, safeJsonParse(row.breakdown_json, [])),
 });
 
-const superAdminEmails = ["superadmin@sightfull.co.za", "mudassar.khopatkar@offernet.net"];
-const allowedSuperAdminEmails = new Set(superAdminEmails.map((email) => String(email).trim().toLowerCase()));
-const defaultSuperAdminPasswordHash = bcrypt.hashSync("superadmin123", 10);
+const allowedSuperAdminEmails = new Set(env.superAdminEmails.map((email) => String(email).trim().toLowerCase()));
 
 // Initialize Database
 if (env.databaseProvider !== "supabase") {
@@ -1016,21 +1015,6 @@ db.prepare("UPDATE clients SET enabled_definitions = ? WHERE enabled_definitions
 
 // No default client seed data. Clients are created through Super Admin.
 
-// Seed/repair default super admin accounts
-superAdminEmails.forEach(email => {
-  const normalizedEmail = String(email).trim().toLowerCase();
-  const exists = db.prepare("SELECT * FROM users WHERE lower(email) = ?").get(normalizedEmail) as any;
-  if (!exists) {
-    db.prepare("INSERT INTO users (id, email, password, role, is_verified) VALUES (?, ?, ?, ?, ?)")
-      .run(Math.random().toString(36).substr(2, 9), normalizedEmail, defaultSuperAdminPasswordHash, "superadmin", 1);
-  } else {
-    db.prepare("UPDATE users SET role = 'superadmin', is_verified = 1 WHERE lower(email) = ?").run(normalizedEmail);
-    if (!exists.password) {
-      db.prepare("UPDATE users SET password = ? WHERE lower(email) = ?").run(defaultSuperAdminPasswordHash, normalizedEmail);
-    }
-  }
-});
-
 // No default admin/trial seed users. These are created through the app when needed.
 
 // Seed initial shifts
@@ -1110,6 +1094,57 @@ async function logActivity(req: any, action: string, details: any = {}) {
   }
 }
 
+const ensureBootstrapSuperAdminAccount = async () => {
+  if (!env.bootstrapSuperAdminEmail || !env.bootstrapSuperAdminPassword) {
+    return;
+  }
+
+  allowedSuperAdminEmails.add(env.bootstrapSuperAdminEmail);
+  const passwordHash = hashSecret(env.bootstrapSuperAdminPassword);
+
+  if (env.databaseProvider !== "supabase") {
+    const existing = db.prepare("SELECT id FROM users WHERE lower(email) = ? LIMIT 1").get(env.bootstrapSuperAdminEmail) as any;
+    if (!existing) {
+      db.prepare("INSERT INTO users (id, email, password, role, is_verified, name) VALUES (?, ?, ?, 'superadmin', 1, ?)")
+        .run(Math.random().toString(36).slice(2, 11), env.bootstrapSuperAdminEmail, passwordHash, 'Super Admin');
+    } else {
+      db.prepare("UPDATE users SET password = ?, role = 'superadmin', is_verified = 1 WHERE id = ?")
+        .run(passwordHash, existing.id);
+    }
+    console.log(`[BOOTSTRAP] Super admin ready for ${env.bootstrapSuperAdminEmail}`);
+    return;
+  }
+
+  const { supabaseAdmin } = await import('./src/server/integrations/supabase');
+  const { data: existing } = await supabaseAdmin
+    .from('users')
+    .select('id')
+    .ilike('email', env.bootstrapSuperAdminEmail)
+    .limit(1);
+
+  if (!existing?.length) {
+    const { error } = await supabaseAdmin.from('users').insert({
+      id: Math.random().toString(36).slice(2, 11),
+      email: env.bootstrapSuperAdminEmail,
+      password: passwordHash,
+      role: 'superadmin',
+      is_verified: true,
+      client_id: null,
+      name: 'Super Admin',
+    });
+    if (error) throw error;
+  } else {
+    const { error } = await supabaseAdmin.from('users').update({
+      password: passwordHash,
+      role: 'superadmin',
+      is_verified: true,
+    }).eq('id', existing[0].id);
+    if (error) throw error;
+  }
+
+  console.log(`[BOOTSTRAP] Super admin ready for ${env.bootstrapSuperAdminEmail}`);
+};
+
 async function startServer() {
   const app = express();
 
@@ -1119,9 +1154,22 @@ if (isSmtpConfigured) {
     .catch((error) => console.error('SMTP verification failed:', error));
 }
   const PORT = env.port;
+  const bodyLimit = `${env.bodyLimitMb}mb`;
+  const authRateLimit = createRateLimitMiddleware({
+    windowMs: env.authRateLimitWindowMs,
+    maxAttempts: env.authRateLimitMaxAttempts,
+    keyPrefix: 'auth',
+    message: 'Too many sign-in attempts. Please try again later.',
+  });
 
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  await ensureBootstrapSuperAdminAccount();
+
+  app.disable('x-powered-by');
+  app.use(securityHeadersMiddleware);
+  app.use(createOriginProtectionMiddleware(env.appUrl, isProduction));
+  app.use(express.json({ limit: bodyLimit }));
+  app.use(express.urlencoded({ limit: bodyLimit, extended: true }));
+  app.use(['/api/auth/login', '/api/employee-auth/login', '/api/system/test-email'], authRateLimit);
   
   // Request logging middleware
   app.use((req, res, next) => {
@@ -1466,17 +1514,28 @@ if (isSmtpConfigured) {
     return res.status(401).json({ error: 'Unauthorized' });
   };
 
-  app.set('trust proxy', true); // trust all proxies
+  app.set('trust proxy', env.trustProxy);
+  let sessionStore: session.Store | undefined;
+  try {
+    sessionStore = await createSqliteSessionStore(env.sessionSqlitePath);
+  } catch (error) {
+    if (isProduction) throw error;
+    console.warn('[SESSION] Falling back to in-memory store in development:', error);
+  }
   app.use(session({
+    name: 'sightfull.sid',
+    store: sessionStore,
     secret: env.sessionSecret,
     resave: false,
     saveUninitialized: false,
-    proxy: isProduction,
+    proxy: env.trustProxy,
+    rolling: true,
     cookie: {
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
+      secure: env.sessionCookieSecure,
+      sameSite: env.sessionCookieSameSite as any,
       httpOnly: true,
-      maxAge: env.sessionMaxAgeMs
+      maxAge: env.sessionMaxAgeMs,
+      path: '/',
     }
   }));
 
@@ -1767,24 +1826,45 @@ if (isSmtpConfigured) {
     return Buffer.concat([...fileParts, centralDirectory, endRecord]);
   };
 
-  const buildFolderDownloadPayload = (folderRow: any) => {
+  const buildFolderDownloadPayload = async (folderRow: any) => {
     const filesToZip: Array<{ name: string; data: Buffer }> = [];
 
-    const walkFolder = (folderId: string, prefix: string) => {
-      const children = db.prepare('SELECT * FROM files WHERE parent_id = ? ORDER BY type DESC, name ASC').all(folderId) as any[];
-      children.forEach((child) => {
-        if (child.type === 'folder') {
-          walkFolder(child.id, `${prefix}${child.name}/`);
-          return;
+    const walkFolder = async (folderId: string, prefix: string) => {
+      if (env.databaseProvider !== 'supabase') {
+        const children = db.prepare('SELECT * FROM files WHERE parent_id = ? ORDER BY type DESC, name ASC').all(folderId) as any[];
+        for (const child of children) {
+          if (child.type === 'folder') {
+            await walkFolder(child.id, `${prefix}${child.name}/`);
+            continue;
+          }
+          filesToZip.push({
+            name: `${prefix}${child.name}`,
+            data: normalizeFileBufferFromStoredUrl(child.url),
+          });
         }
-        filesToZip.push({
-          name: `${prefix}${child.name}`,
-          data: normalizeFileBufferFromStoredUrl(child.url),
-        });
-      });
+        return;
+      }
+
+      const { supabaseAdmin } = await import('./src/server/integrations/supabase');
+      const { data: children, error } = await supabaseAdmin.from('files').select('*').eq('parent_id', folderId).order('type', { ascending: false }).order('name', { ascending: true });
+      if (error) throw error;
+      for (const child of children || []) {
+        if (child.type === 'folder') {
+          await walkFolder(child.id, `${prefix}${child.name}/`);
+          continue;
+        }
+        let data = normalizeFileBufferFromStoredUrl(child.public_url || child.url || null);
+        if (child.storage_bucket && child.storage_path) {
+          const { data: fileBlob, error: downloadError } = await supabaseAdmin.storage.from(child.storage_bucket).download(child.storage_path);
+          if (downloadError) throw downloadError;
+          const arrayBuffer = await fileBlob.arrayBuffer();
+          data = Buffer.from(arrayBuffer);
+        }
+        filesToZip.push({ name: `${prefix}${child.name}`, data });
+      }
     };
 
-    walkFolder(folderRow.id, `${folderRow.name}/`);
+    await walkFolder(folderRow.id, `${folderRow.name}/`);
 
     const zipBuffer = buildStoredZipBuffer(filesToZip);
     return {

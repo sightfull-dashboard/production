@@ -3,6 +3,7 @@ import type { Express } from 'express';
 import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../../lib/shifts';
+import { hashSecret, sanitizeEmployeeForResponse, sanitizeEmployeesForResponse, shouldUpgradeLegacySecret, verifySecret } from '../utils/security';
 
 const parseJsonArray = (value: any) => Array.isArray(value) ? value : (() => {
   try { return value ? JSON.parse(value) : []; } catch { return []; }
@@ -477,12 +478,17 @@ export function registerSupabaseCoreRoutes({
       const pin = String(req.body?.pin ?? '').trim();
       if (!identifier || !pin) return res.status(400).json({ error: 'Identifier and PIN are required' });
       const employee = await fetchEmployeeByIdentifier(identifier);
-      if (!employee || String(employee.pin ?? '') !== pin) {
+      if (!employee || !verifySecret(pin, employee.pin)) {
         return res.status(401).json({ error: 'Invalid Email/Phone or PIN' });
+      }
+      if (shouldUpgradeLegacySecret(pin, employee.pin)) {
+        const upgradedPin = hashSecret(pin);
+        await supabaseAdmin.from('employees').update({ pin: upgradedPin }).eq('id', employee.id);
+        employee.pin = upgradedPin;
       }
       (req.session as any).employeeId = employee.id;
       (req.session as any).employeeClientId = employee.client_id || null;
-      return res.json(employee);
+      return res.json(sanitizeEmployeeForResponse(employee));
     } catch (error: any) {
       return res.status(500).json({ error: error?.message || 'Failed to sign in employee' });
     }
@@ -494,7 +500,7 @@ export function registerSupabaseCoreRoutes({
     const employee = await fetchEmployeeById(employeeId);
     if (!employee || employee.status === 'offboarded') return res.status(401).json({ error: 'Employee not found' });
     const client = await fetchClientById(employee.client_id);
-    return res.json({ ...employee, fallback_image: client?.fallback_image || null });
+    return res.json(sanitizeEmployeeForResponse({ ...employee, fallback_image: client?.fallback_image || null }));
   });
 
   app.post('/api/employee-auth/logout', (req, res) => {
@@ -541,7 +547,7 @@ export function registerSupabaseCoreRoutes({
     const employeePayload = sanitizeEmployeeForSupabase({
       id,
       ...persistableData,
-      pin: data.pin || null,
+      pin: data.pin ? hashSecret(data.pin) : null,
       client_id: actorClientId,
       annual_leave_last_accrual_date: data.start_date,
       sick_cycle_start_date: data.start_date,
@@ -551,7 +557,7 @@ export function registerSupabaseCoreRoutes({
     const { error } = await supabaseAdmin.from('employees').insert(employeePayload);
     if (error) return res.status(500).json({ error: error.message });
     logActivity(req, 'CREATE_EMPLOYEE', { emp_id: data.emp_id, name: `${data.first_name} ${data.last_name}` });
-    res.json({ id, ...employeePayload });
+    res.json(sanitizeEmployeeForResponse({ id, ...employeePayload }));
   });
 
   app.put('/api/employees/:id', async (req, res) => {
@@ -566,9 +572,10 @@ export function registerSupabaseCoreRoutes({
     const errors = validateEmployeePayload(data);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
     const { allow_blank_pin: _allowBlankPin, ...persistableData } = data as any;
-    const { data: updated, error } = await supabaseAdmin.from('employees').update(sanitizeEmployeeForSupabase(persistableData)).eq('id', req.params.id).select('*').single();
+    const updatePayload = sanitizeEmployeeForSupabase({ ...persistableData, pin: data.pin ? hashSecret(data.pin) : existing.pin || null });
+    const { data: updated, error } = await supabaseAdmin.from('employees').update(updatePayload).eq('id', req.params.id).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
-    res.json(updated);
+    res.json(sanitizeEmployeeForResponse(updated));
   });
 
   app.post('/api/employees/:id/offboard', async (req, res) => {

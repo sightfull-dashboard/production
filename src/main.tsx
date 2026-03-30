@@ -1,10 +1,12 @@
-import {StrictMode} from 'react';
+import { Fragment, StrictMode } from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
+const RootWrapper = import.meta.env.DEV ? Fragment : StrictMode;
+
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
+  <RootWrapper>
     <App />
-  </StrictMode>,
+  </RootWrapper>,
 );

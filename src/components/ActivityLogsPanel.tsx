@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2, Search, Calendar, User, Activity, Clock } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 
 interface Log {
   id: string;
@@ -35,16 +35,19 @@ export function ActivityLogsPanel() {
     }
   };
 
-  const filteredLogs = logs.filter(log => 
-    log.user_email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.action.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log.details.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredLogs = logs.filter((log) => {
+    const userEmail = String(log.user_email || '').toLowerCase();
+    const action = String(log.action || '').toLowerCase();
+    const details = String(log.details || '').toLowerCase();
+    const query = searchTerm.toLowerCase();
+    return userEmail.includes(query) || action.includes(query) || details.includes(query);
+  });
 
   const formatDetails = (detailsStr: string) => {
+    if (!detailsStr) return '-';
     try {
       const details = JSON.parse(detailsStr);
-      if (Object.keys(details).length === 0) return '-';
+      if (!details || typeof details !== 'object' || Object.keys(details).length === 0) return '-';
       return (
         <div className="text-xs space-y-1">
           {Object.entries(details).map(([k, v]) => (
@@ -56,8 +59,31 @@ export function ActivityLogsPanel() {
         </div>
       );
     } catch {
-      return detailsStr;
+      return detailsStr || '-';
     }
+  };
+
+  const formatTimestamp = (value: string) => {
+    if (!value) return '-';
+
+    const candidates = [
+      value,
+      value.includes('Z') || /[+-]\d{2}:?\d{2}$/.test(value) ? '' : `${value}Z`,
+    ].filter(Boolean) as string[];
+
+    for (const candidate of candidates) {
+      const parsed = parseISO(candidate);
+      if (isValid(parsed)) {
+        return format(parsed, 'MMM d, yyyy HH:mm:ss');
+      }
+    }
+
+    const fallback = new Date(value);
+    if (isValid(fallback)) {
+      return format(fallback, 'MMM d, yyyy HH:mm:ss');
+    }
+
+    return 'Invalid date';
   };
 
   const getActionColor = (action: string) => {
@@ -117,7 +143,7 @@ export function ActivityLogsPanel() {
                 filteredLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="py-4 px-6 text-sm text-slate-600 font-medium whitespace-nowrap">
-                      {format(new Date(log.created_at + 'Z'), 'MMM d, yyyy HH:mm:ss')}
+                      {formatTimestamp(log.created_at)}
                     </td>
                     <td className="py-4 px-6">
                       <div className="flex flex-col">

@@ -1,4 +1,5 @@
 import type { Express, Request, Response, NextFunction } from 'express';
+import { hashSecret, sanitizeEmployeeForResponse, shouldUpgradeLegacySecret, verifySecret } from '../utils/security';
 
 type Middleware = (req: Request, res: Response, next: NextFunction) => unknown;
 
@@ -111,7 +112,7 @@ export function registerLeaveRoutes({
         return res.status(401).json({ error: 'Employee not found' });
       }
       (req.session as any).employeeClientId = employee.client_id || null;
-      res.json(employee);
+      res.json(sanitizeEmployeeForResponse(employee));
     } catch (error) {
       console.error('Employee auth check failed:', error);
       res.status(500).json({ error: 'Failed to verify employee session' });
@@ -135,13 +136,18 @@ export function registerLeaveRoutes({
         return emailMatch || cellMatch || exactCellMatch;
       });
 
-      if (!employee || String(employee.pin ?? '') !== pin) {
+      if (!employee || !verifySecret(pin, employee.pin)) {
         return res.status(401).json({ error: 'Invalid Email/Phone or PIN' });
+      }
+
+      if (shouldUpgradeLegacySecret(pin, employee.pin)) {
+        db.prepare('UPDATE employees SET pin = ? WHERE id = ?').run(hashSecret(pin), employee.id);
+        employee.pin = hashSecret(pin);
       }
 
       (req.session as any).employeeId = employee.id;
       (req.session as any).employeeClientId = employee.client_id || null;
-      res.json(employee);
+      res.json(sanitizeEmployeeForResponse(employee));
     } catch (error) {
       console.error('Employee login failed:', error);
       res.status(500).json({ error: 'Failed to sign in employee' });
