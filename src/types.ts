@@ -131,10 +131,27 @@ export type OffboardReason =
   | 'parental_leave' 
   | 'other';
 
+export type InternalPermission = 
+  | 'view_clients'
+  | 'view_tickets'
+  | 'view_logs'
+  | 'view_global_logs'
+  | 'view_client_logs'
+  | 'view_payroll'
+  | 'view_files'
+  | 'view_employees'
+  | 'manage_client_users'
+  | 'view_analytics'
+  | 'edit_client_details'
+  | 'submit_payroll'
+  | 'resolve_tickets';
+
+export type UserRole = 'admin' | 'user' | 'superadmin' | 'staff';
+
 export type User = {
   id: string;
   email: string;
-  role: 'admin' | 'user' | 'superadmin';
+  role: UserRole;
   is_verified?: boolean;
   client_id?: string;
   image?: string; // base64 or URL
@@ -148,6 +165,14 @@ export type User = {
   enabledDefinitions?: RosterDefinition[];
   roster_start_day?: 0 | 1 | 2 | 3 | 4 | 5 | 6;
   roster_duration?: '1_week' | '2_weeks' | '1_month';
+  mfa_required?: boolean;
+  mfa_enabled?: boolean;
+  mfaPending?: boolean;
+  lastLogin?: string;
+  permissions?: InternalPermission[];
+  assigned_clients?: string[];
+  full_name?: string;
+  status?: 'active' | 'deactivated';
 };
 
 export type Client = {
@@ -222,6 +247,19 @@ export type LeaveRequest = {
 export type SupportTicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
 export type SupportTicketPriority = 'low' | 'medium' | 'high' | 'urgent';
 
+export type TicketComment = {
+  id: string;
+  ticket_id: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  user_image?: string;
+  role: UserRole;
+  message: string;
+  created_at: string;
+  tagged_users?: string[]; // Array of user IDs
+};
+
 export type SupportTicket = {
   id: string;
   client_id: string;
@@ -235,6 +273,7 @@ export type SupportTicket = {
   created_at: string;
   updated_at: string;
   admin_notes?: string;
+  comments?: TicketComment[];
 };
 
 
@@ -264,4 +303,27 @@ export type PayrollSubmission = {
   processedBy?: string;
   processedAt?: string;
   employeeBreakdown?: EmployeePayrollBreakdown[];
+};
+
+export type InternalNotificationType = 'support_tag' | 'support_comment' | 'support_resolved' | 'payroll_submission' | 'worker_failed' | 'system_alert' | 'general';
+
+export type InternalNotification = {
+  id: string;
+  type: InternalNotificationType;
+  title: string;
+  message: string;
+  created_at: string;
+  updated_at?: string;
+  read: boolean;
+  read_at?: string | null;
+  link?: string | null;
+  actor_user_id?: string | null;
+  client_id?: string | null;
+  metadata?: {
+    ticket_id?: string;
+    client_id?: string;
+    user_id?: string;
+    comment_id?: string;
+    [key: string]: unknown;
+  };
 };

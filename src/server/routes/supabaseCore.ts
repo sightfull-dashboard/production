@@ -355,6 +355,7 @@ async function buildAuthResponse(user: any, allowedSuperAdminEmails: Set<string>
     email: user.email,
     role: user.role,
     name: user.name || displayNameFromEmail(user.email),
+    full_name: user.name || displayNameFromEmail(user.email),
     image: user.image || null,
     fallbackImage: client?.fallback_image || null,
     client_id: user.client_id || null,
@@ -365,6 +366,11 @@ async function buildAuthResponse(user: any, allowedSuperAdminEmails: Set<string>
     roster_duration: client?.roster_duration || '1_week',
     rosterMode: client?.roster_mode || 'Manual',
     rosterSeedWeekStart: client?.roster_seed_week_start || null,
+    mfa_required: !!user.mfa_required,
+    mfa_enabled: !!user.mfa_enabled,
+    permissions: parseJsonArray(user.permissions).map((value: any) => String(value)).filter(Boolean),
+    assigned_clients: parseJsonArray(user.assigned_clients).map((value: any) => String(value)).filter(Boolean),
+    status: String(user.status || 'active').toLowerCase() === 'deactivated' ? 'deactivated' : 'active',
     isTrial: Boolean(user.is_trial),
     trialStartedAt: client?.trial_started_at || null,
     trialEndDate: user.trial_end_date || client?.trial_end_date || null,
@@ -450,10 +456,13 @@ export function registerSupabaseCoreRoutes({
       (req.session as any).userId = user.id;
       (req.session as any).userRole = allowedSuperAdminEmails.has(String(user.email || '').trim().toLowerCase()) ? 'superadmin' : user.role;
       (req.session as any).userClientId = user.client_id || null;
+      if (user.mfa_required || user.mfa_enabled) {
+        (req.session as any).mfaPending = true;
+      }
       await supabaseAdmin.from('users').update({ last_login: new Date().toISOString(), role: (req.session as any).userRole, is_verified: true }).eq('id', user.id);
       const payload = await buildAuthResponse({ ...user, role: (req.session as any).userRole, is_verified: true }, allowedSuperAdminEmails, mergeDefinitions, baseRosterDefinitions);
       logActivity(req, 'LOGIN_SUCCESS', { email: user.email, role: payload?.role, client_id: payload?.client_id || null });
-      return res.json(payload);
+      return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending });
     } catch (error: any) {
       return res.status(500).json({ error: error?.message || 'Login failed' });
     }
@@ -464,7 +473,7 @@ export function registerSupabaseCoreRoutes({
     if (!userId) return res.status(401).json({ error: 'Not authenticated' });
     const user = await fetchUserById(userId);
     const payload = await buildAuthResponse(user, allowedSuperAdminEmails, mergeDefinitions, baseRosterDefinitions);
-    return res.json(payload);
+    return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending });
   });
 
   app.post('/api/auth/logout', (req, res) => {

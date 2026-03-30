@@ -1,5 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../lib/api";
-import type { Employee, LeaveRequest, PayrollSubmission, RosterAssignment, RosterMeta, Shift, SupportTicket, User } from "../types";
+import type { Employee, InternalNotification, LeaveRequest, PayrollSubmission, RosterAssignment, RosterMeta, Shift, SupportTicket, User, TicketComment } from "../types";
 
 export const appService = {
   getEmployees: () => apiGet<Employee[]>("/api/employees"),
@@ -25,6 +25,14 @@ export const appService = {
   getSupportTickets: () => apiGet<SupportTicket[]>('/api/support-tickets'),
   createSupportTicket: (payload: Record<string, unknown>) => apiPost('/api/support-tickets', payload),
   updateSupportTicket: (id: string, payload: Record<string, unknown>) => apiPatch<SupportTicket>(`/api/support-tickets/${id}`, payload),
+  getTicketComments: (ticketId: string) => apiGet<TicketComment[]>(`/api/support-tickets/${ticketId}/comments`),
+  addTicketComment: (ticketId: string, payload: Record<string, unknown>) => apiPost<TicketComment>(`/api/support-tickets/${ticketId}/comments`, payload),
+  getInternalMentionableUsers: (clientId?: string) => apiGet<User[]>(clientId ? `/api/internal/users?client_id=${encodeURIComponent(clientId)}` : '/api/internal/users'),
+
+  getInternalNotifications: () => apiGet<InternalNotification[]>('/api/internal-notifications'),
+  markInternalNotificationRead: (id: string) => apiPost<{ success: boolean }>(`/api/internal-notifications/${id}/read`),
+  markAllInternalNotificationsRead: () => apiPost<{ updated: number }>('/api/internal-notifications/read-all'),
+  dismissInternalNotification: (id: string) => apiDelete<{ success: boolean }>(`/api/internal-notifications/${id}`),
 
   getAuthUser: () => apiGet<User>('/api/auth/me'),
   login: (email: string, password: string) => apiPost<User>('/api/auth/login', { email, password }),

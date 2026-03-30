@@ -26,6 +26,7 @@ import {
   MessageSquare,
   AlertCircle,
   Send,
+  Settings,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, startOfWeek, addDays, differenceInDays, subDays } from 'date-fns';
@@ -33,7 +34,7 @@ import type { RosterDefinition, Shift, Employee, RosterAssignment, RosterMeta, O
 import { cn } from './lib/utils';
 import { ApiError } from './lib/api';
 import { buildActiveClientHeaders, clearStoredActiveClientId, setStoredActiveClientId } from './lib/activeClient';
-import { isEmployeePath, isSuperAdminPath, isSuperAdminRole, normalizeUserRole } from './lib/auth';
+import { isEmployeePath, isSuperAdminPath, isInternalRole, isSuperAdminRole, normalizeUserRole } from './lib/auth';
 import { COUNTRY_OF_ISSUE_OPTIONS, BANK_NAME_OPTIONS, SIDEBAR_LOGO as sidebarLogo } from './app/shared/formOptions';
 import {
   compareEmployeeIds,
@@ -61,6 +62,8 @@ import { OffboardModal } from './components/OffboardModal';
 import { Login } from './components/Login';
 import { SuperAdminLogin } from './components/SuperAdminLogin';
 import { EmployeeLogin } from './components/EmployeeLogin';
+import { MfaSetup } from './components/MfaSetup';
+import { MfaVerify } from './components/MfaVerify';
 import { EmployeeDashboard } from './components/employee/EmployeeDashboard';
 import { ApplyLeave } from './components/employee/ApplyLeave';
 import { MyLeave } from './components/employee/MyLeave';
@@ -69,10 +72,12 @@ import { EmployeeDocuments } from './components/employee/EmployeeDocuments';
 import { EmployeeProfile } from './components/employee/EmployeeProfile';
 import { AdminPanel } from './components/AdminPanel';
 import { InternalPanel } from './components/InternalPanel';
+import { InternalNotifications } from './components/InternalNotifications';
 import { SupportTicketsPanel } from './components/SupportTicketsPanel';
 import { ClientNotificationsPanel } from './components/ClientNotificationsPanel';
 import { AnalyticsSection } from './components/AnalyticsSection';
 import { ActivityLogsPanel } from './components/ActivityLogsPanel';
+import { SettingsSection } from './components/SettingsSection';
 import { Tooltip } from './components/Tooltip';
 import { Toaster, toast } from 'sonner';
 import { calculateEmployeePayroll } from './services/PayrollService';
@@ -85,7 +90,7 @@ export default function App() {
   const [employeeAuth, setEmployeeAuth] = useState<{ employee: Employee | null, loading: boolean }>({ employee: null, loading: true });
 
   const clearEmployeeAuth = () => setEmployeeAuth({ employee: null, loading: false });
-  const [superAdminSection, setSuperAdminSection] = useState<'internal' | 'admin' | 'logs' | 'notifications' | 'tickets'>('internal');
+  const [superAdminSection, setSuperAdminSection] = useState<'internal' | 'admin' | 'logs' | 'notifications' | 'tickets' | 'settings'>('internal');
   const [impersonatedClient, setImpersonatedClient] = useState<any | null>(null);
   const [lockedFeatures, setLockedFeatures] = useState<string[]>([]);
   const [enabledDefinitions, setEnabledDefinitions] = useState<RosterDefinition[]>(['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
@@ -314,7 +319,7 @@ export default function App() {
       const user = await appService.getAuthUser();
       const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
       setAuth({ user: normalizedUser, loading: false });
-      if ((normalizeUserRole(normalizedUser.role) || '').toLowerCase() === 'superadmin') {
+      if (isInternalRole(normalizedUser.role)) {
         setImpersonatedClient(null);
         setActiveSection('internal');
       }
@@ -642,43 +647,47 @@ export default function App() {
     return normalizeFlexibleDateInput(raw.replace(/\//g, '-'));
   };
 
-  const buildEmployeePayload = (formData: FormData) => ({
-    emp_id: sanitizeString(formData.get('emp_id')),
-    pin: sanitizeString(formData.get('pin')),
-        first_name: sanitizeString(formData.get('first_name')),
-    last_name: sanitizeString(formData.get('last_name')),
-    start_date: normalizeFlexibleDateInput(sanitizeString(formData.get('start_date'))),
-    dob: normalizeFlexibleDateInput((dobDisplay || sanitizeString(formData.get('dob'))).replace(/\//g, '-')),
-    job_title: sanitizeString(formData.get('job_title')),
-    department: sanitizeString(formData.get('department')),
-    pay_rate: parseHourlyRateInputToNumber(sanitizeString(formData.get('pay_rate'))),
-    email: sanitizeString(formData.get('email')),
-    cell: normalizeSouthAfricanCell(sanitizeString(formData.get('cell'))),
-    residency: sanitizeString(formData.get('residency')),
-    street_number: sanitizeString(formData.get('street_number')),
-    id_number: sanitizeString(formData.get('id_number')),
-    passport: sanitizeString(formData.get('passport')),
-    bank_name: sanitizeString(formData.get('bank_name')),
-    country_of_issue: showCountryOfIssue ? sanitizeString(formData.get('country_of_issue')) : '',
-    province: sanitizeString(formData.get('province')),
-    account_holder: sanitizeString(formData.get('account_holder')),
-    account_no: sanitizeString(formData.get('account_no')),
-    account_type: sanitizeString(formData.get('account_type')),
-    tax_number: sanitizeString(formData.get('tax_number')),
-    ismibco: sanitizeString(formData.get('ismibco')),
-    isunion: sanitizeString(formData.get('isunion')),
-    union_name: sanitizeString(formData.get('union_name')),
-    address1: sanitizeString(formData.get('address1')),
-    address2: sanitizeString(formData.get('address2')),
-    address3: sanitizeString(formData.get('address3')),
-    address4: sanitizeString(formData.get('address4')),
-    postal_code: sanitizeString(formData.get('postal_code')),
-    paye_credit: sanitizeString(formData.get('paye_credit')),
-    classification: sanitizeString(formData.get('classification')),
-    annual_leave: parseLeaveInputToNumber(annualLeaveDisplay || sanitizeString(formData.get('annual_leave'))),
-    sick_leave: parseLeaveInputToNumber(sickLeaveDisplay || sanitizeString(formData.get('sick_leave'))),
-    family_leave: parseLeaveInputToNumber(familyLeaveDisplay || sanitizeString(formData.get('family_leave'))),
-  });
+  const buildEmployeePayload = (formData: FormData) => {
+    const canManageLeaveValues = isSuperAdminRole(auth.user?.role);
+
+    return {
+      emp_id: sanitizeString(formData.get('emp_id')),
+      pin: sanitizeString(formData.get('pin')),
+      first_name: sanitizeString(formData.get('first_name')),
+      last_name: sanitizeString(formData.get('last_name')),
+      start_date: normalizeFlexibleDateInput(sanitizeString(formData.get('start_date'))),
+      dob: normalizeFlexibleDateInput((dobDisplay || sanitizeString(formData.get('dob'))).replace(/\//g, '-')),
+      job_title: sanitizeString(formData.get('job_title')),
+      department: sanitizeString(formData.get('department')),
+      pay_rate: parseHourlyRateInputToNumber(sanitizeString(formData.get('pay_rate'))),
+      email: sanitizeString(formData.get('email')),
+      cell: normalizeSouthAfricanCell(sanitizeString(formData.get('cell'))),
+      residency: sanitizeString(formData.get('residency')),
+      street_number: sanitizeString(formData.get('street_number')),
+      id_number: sanitizeString(formData.get('id_number')),
+      passport: sanitizeString(formData.get('passport')),
+      bank_name: sanitizeString(formData.get('bank_name')),
+      country_of_issue: showCountryOfIssue ? sanitizeString(formData.get('country_of_issue')) : '',
+      province: sanitizeString(formData.get('province')),
+      account_holder: sanitizeString(formData.get('account_holder')),
+      account_no: sanitizeString(formData.get('account_no')),
+      account_type: sanitizeString(formData.get('account_type')),
+      tax_number: sanitizeString(formData.get('tax_number')),
+      ismibco: sanitizeString(formData.get('ismibco')),
+      isunion: sanitizeString(formData.get('isunion')),
+      union_name: sanitizeString(formData.get('union_name')),
+      address1: sanitizeString(formData.get('address1')),
+      address2: sanitizeString(formData.get('address2')),
+      address3: sanitizeString(formData.get('address3')),
+      address4: sanitizeString(formData.get('address4')),
+      postal_code: sanitizeString(formData.get('postal_code')),
+      paye_credit: sanitizeString(formData.get('paye_credit')),
+      classification: sanitizeString(formData.get('classification')),
+      annual_leave: canManageLeaveValues ? parseLeaveInputToNumber(annualLeaveDisplay || sanitizeString(formData.get('annual_leave'))) : 0,
+      sick_leave: canManageLeaveValues ? parseLeaveInputToNumber(sickLeaveDisplay || sanitizeString(formData.get('sick_leave'))) : 0,
+      family_leave: canManageLeaveValues ? parseLeaveInputToNumber(familyLeaveDisplay || sanitizeString(formData.get('family_leave'))) : 0,
+    };
+  };
 
   const validateEmployeeFormPayload = (employeeData: ReturnType<typeof buildEmployeePayload>, options?: { allowBlankPin?: boolean }) => {
     employeeData.emp_id = employeeData.emp_id.toUpperCase();
@@ -840,9 +849,15 @@ export default function App() {
       employeeData.union_name = '';
     }
 
-    for (const [label, value] of [['Annual leave', employeeData.annual_leave], ['Sick leave', employeeData.sick_leave], ['Family leave', employeeData.family_leave]] as const) {
-      if (!Number.isFinite(value) || value < 0) return `${label} must be 0 or more.`;
-      if (String(value).includes('.') && String(value).split('.')[1].length > 4) return `${label} can have up to 4 decimal places.`;
+    if (isSuperAdminRole(auth.user?.role)) {
+      for (const [label, value] of [['Annual leave', employeeData.annual_leave], ['Sick leave', employeeData.sick_leave], ['Family leave', employeeData.family_leave]] as const) {
+        if (!Number.isFinite(value) || value < 0) return `${label} must be 0 or more.`;
+        if (String(value).includes('.') && String(value).split('.')[1].length > 4) return `${label} can have up to 4 decimal places.`;
+      }
+    } else {
+      employeeData.annual_leave = 0;
+      employeeData.sick_leave = 0;
+      employeeData.family_leave = 0;
     }
 
     return null;
@@ -1417,7 +1432,24 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
-  if (isSuperAdminRoute && !isSuperAdminRole(auth.user.role)) {
+  if (auth.user.mfaPending) {
+    const handleMfaComplete = async () => {
+      try {
+        const user = await appService.getAuthUser();
+        const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
+        setAuth({ user: normalizedUser, loading: false });
+      } catch (error) {
+        console.error('Failed to refresh session after MFA:', error);
+      }
+    };
+
+    if (auth.user.mfa_enabled) {
+      return <MfaVerify onComplete={handleMfaComplete} onCancel={handleLogout} />;
+    }
+    return <MfaSetup onComplete={handleMfaComplete} onCancel={handleLogout} />;
+  }
+
+  if (isSuperAdminRoute && !isInternalRole(auth.user.role)) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
         <div className="bg-slate-800 p-8 rounded-[32px] text-center space-y-4 max-w-md w-full border border-slate-700 shadow-2xl">
@@ -1435,7 +1467,7 @@ export default function App() {
     );
   }
 
-  if (isSuperAdminRole(auth.user.role) && !impersonatedClient) {
+  if (isInternalRole(auth.user.role) && !impersonatedClient) {
     return (
       <div className="flex min-h-screen bg-slate-50">
         <Toaster position="top-right" richColors />
@@ -1446,16 +1478,27 @@ export default function App() {
             </div>
             <div className="flex flex-col">
               <h1 className="text-2xl font-black tracking-tighter leading-none">SIGHTFULL</h1>
-              <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] mt-1">Super Admin</span>
+              <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] mt-1">{isSuperAdminRole(auth.user.role) ? 'Super Admin' : 'Staff Access'}</span>
             </div>
           </div>
 
           <nav className="flex-1 space-y-2">
-            <SuperAdminSidebarItem icon={Building2} label="Client Dashboards" active={superAdminSection === 'internal'} onClick={() => setSuperAdminSection('internal')} />
-            <SuperAdminSidebarItem icon={MessageSquare} label="Support Tickets" active={superAdminSection === 'tickets'} onClick={() => setSuperAdminSection('tickets')} badge={openTicketsCount} />
-            <SuperAdminSidebarItem icon={Inbox} label="Client Notifications" active={superAdminSection === 'notifications'} onClick={() => setSuperAdminSection('notifications')} badge={superAdminPendingNotificationsCount} />
-            <SuperAdminSidebarItem icon={Users} label="User Management" active={superAdminSection === 'admin'} onClick={() => setSuperAdminSection('admin')} />
-            <SuperAdminSidebarItem icon={Activity} label="Activity Logs" active={superAdminSection === 'logs'} onClick={() => setSuperAdminSection('logs')} />
+            {(isSuperAdminRole(auth.user.role) || auth.user.permissions?.includes('view_clients')) && (
+              <SuperAdminSidebarItem icon={Building2} label="Client Dashboards" active={superAdminSection === 'internal'} onClick={() => setSuperAdminSection('internal')} />
+            )}
+            {(isSuperAdminRole(auth.user.role) || auth.user.permissions?.includes('view_tickets')) && (
+              <SuperAdminSidebarItem icon={MessageSquare} label="Support Tickets" active={superAdminSection === 'tickets'} onClick={() => setSuperAdminSection('tickets')} badge={openTicketsCount} />
+            )}
+            {(isSuperAdminRole(auth.user.role) || auth.user.permissions?.includes('view_payroll')) && (
+              <SuperAdminSidebarItem icon={Inbox} label="Client Notifications" active={superAdminSection === 'notifications'} onClick={() => setSuperAdminSection('notifications')} badge={superAdminPendingNotificationsCount} />
+            )}
+            {isSuperAdminRole(auth.user.role) && (
+              <SuperAdminSidebarItem icon={Users} label="User Management" active={superAdminSection === 'admin'} onClick={() => setSuperAdminSection('admin')} />
+            )}
+            {(isSuperAdminRole(auth.user.role) || auth.user.permissions?.includes('view_global_logs') || auth.user.permissions?.includes('view_logs')) && (
+              <SuperAdminSidebarItem icon={Activity} label="Activity Logs" active={superAdminSection === 'logs'} onClick={() => setSuperAdminSection('logs')} />
+            )}
+            <SuperAdminSidebarItem icon={Settings} label="Settings" active={superAdminSection === 'settings'} onClick={() => setSuperAdminSection('settings')} />
           </nav>
 
           <div className="pt-8 mt-8 border-t border-slate-800">
@@ -1492,6 +1535,15 @@ export default function App() {
         </aside>
 
         <main className="flex-1 ml-72 p-12 overflow-y-auto">
+          <div className="fixed bottom-8 right-8 z-[95]">
+            <InternalNotifications 
+              currentUser={auth.user || undefined} 
+              onNavigate={(section) => {
+                setSuperAdminSection(section as any);
+              }}
+            />
+          </div>
+
           <motion.div
             key={superAdminSection}
             initial={{ opacity: 0, y: 20 }}
@@ -1500,6 +1552,7 @@ export default function App() {
             className="max-w-7xl mx-auto"
           >
             {superAdminSection === 'internal' && <InternalPanel 
+              currentUser={auth.user || undefined}
               onLoginAsSuperAdmin={(client) => {
                 setImpersonatedClient(client);
                 setLockedFeatures(client.lockedFeatures || []);
@@ -1516,6 +1569,7 @@ export default function App() {
             {superAdminSection === 'tickets' && (
               <SupportTicketsPanel 
                 tickets={clientTickets} 
+                currentUser={auth.user || undefined}
                 onUpdateTicket={async (updatedTicket) => {
                   try {
                     const saved = await appService.updateSupportTicket(updatedTicket.id, {
@@ -1541,6 +1595,12 @@ export default function App() {
             )}
             {superAdminSection === 'admin' && <AdminPanel />}
             {superAdminSection === 'logs' && <ActivityLogsPanel />}
+            {superAdminSection === 'settings' && (
+              <SettingsSection 
+                user={auth.user} 
+                onUpdateUser={(updatedUser) => setAuth(prev => ({ ...prev, user: updatedUser }))}
+              />
+            )}
           </motion.div>
         </main>
       </div>

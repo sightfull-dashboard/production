@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Search, Calendar, User, Activity, Clock } from 'lucide-react';
+import { Loader2, Search, Calendar, User, Activity, Clock, Lock, ShieldCheck, Files } from 'lucide-react';
 import { format, parseISO, isValid } from 'date-fns';
+import { cn } from '../lib/utils';
 
 interface Log {
   id: string;
@@ -63,38 +64,6 @@ export function ActivityLogsPanel() {
     }
   };
 
-  const formatTimestamp = (value: string) => {
-    if (!value) return '-';
-
-    const candidates = [
-      value,
-      value.includes('Z') || /[+-]\d{2}:?\d{2}$/.test(value) ? '' : `${value}Z`,
-    ].filter(Boolean) as string[];
-
-    for (const candidate of candidates) {
-      const parsed = parseISO(candidate);
-      if (isValid(parsed)) {
-        return format(parsed, 'MMM d, yyyy HH:mm:ss');
-      }
-    }
-
-    const fallback = new Date(value);
-    if (isValid(fallback)) {
-      return format(fallback, 'MMM d, yyyy HH:mm:ss');
-    }
-
-    return 'Invalid date';
-  };
-
-  const getActionColor = (action: string) => {
-    if (action.includes('LOGIN')) return 'text-emerald-600 bg-emerald-50 border-emerald-200';
-    if (action.includes('LOGOUT')) return 'text-slate-600 bg-slate-50 border-slate-200';
-    if (action.includes('CREATE')) return 'text-indigo-600 bg-indigo-50 border-indigo-200';
-    if (action.includes('UPDATE')) return 'text-amber-600 bg-amber-50 border-amber-200';
-    if (action.includes('DELETE')) return 'text-rose-600 bg-rose-50 border-rose-200';
-    return 'text-slate-600 bg-slate-50 border-slate-200';
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -114,65 +83,62 @@ export function ActivityLogsPanel() {
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/50">
-                <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  <div className="flex items-center gap-2"><Clock className="w-3 h-3" /> Timestamp</div>
-                </th>
-                <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  <div className="flex items-center gap-2"><User className="w-3 h-3" /> User</div>
-                </th>
-                <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  <div className="flex items-center gap-2"><Activity className="w-3 h-3" /> Action</div>
-                </th>
-                <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Details</th>
-                <th className="py-4 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">IP Address</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {loading ? (
-                <tr>
-                  <td colSpan={5} className="py-12 text-center">
-                    <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
-                  </td>
-                </tr>
-              ) : filteredLogs.length > 0 ? (
-                filteredLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="py-4 px-6 text-sm text-slate-600 font-medium whitespace-nowrap">
-                      {formatTimestamp(log.created_at)}
-                    </td>
-                    <td className="py-4 px-6">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-bold text-slate-800">{log.user_email}</span>
-                        {log.user_id && <span className="text-[10px] text-slate-400 font-mono">{log.user_id}</span>}
+      <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+        <div className="p-8 max-h-[800px] overflow-y-auto no-scrollbar">
+          {loading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+            </div>
+          ) : filteredLogs.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-slate-500 font-medium">No logs found matching your search.</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {filteredLogs.map((log, index, arr) => (
+                <div key={log.id} className="flex gap-6 relative group">
+                  {index !== arr.length - 1 && (
+                    <div className="absolute left-6 top-12 bottom-[-24px] w-px bg-slate-100 group-hover:bg-indigo-100 transition-colors" />
+                  )}
+                  <div className="flex flex-col items-center shrink-0 relative z-10">
+                    <div className={cn(
+                      "w-12 h-12 rounded-2xl flex items-center justify-center border-4 border-white shadow-sm transition-transform group-hover:scale-110",
+                      log.action.includes('LOGIN') ? "bg-indigo-50 text-indigo-600" : 
+                      log.action.includes('PAYROLL') ? "bg-emerald-50 text-emerald-600" :
+                      log.action.includes('FILE') ? "bg-amber-50 text-amber-600" : "bg-slate-50 text-slate-500"
+                    )}>
+                      {log.action.includes('LOGIN') ? <Lock className="w-5 h-5" /> : 
+                       log.action.includes('PAYROLL') ? <ShieldCheck className="w-5 h-5" /> :
+                       log.action.includes('FILE') ? <Files className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
+                    </div>
+                  </div>
+                  <div className="flex-1 bg-white rounded-3xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-4">
+                      <div>
+                        <div className="flex items-center gap-3 mb-1.5">
+                          <span className="text-base font-black text-slate-800">{log.action.replace(/_/g, ' ')}</span>
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">
+                            {log.ip_address}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
+                          <User className="w-4 h-4 text-slate-400" />
+                          {log.user_email}
+                        </div>
                       </div>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-black tracking-widest uppercase border ${getActionColor(log.action)}`}>
-                        {log.action.replace(/_/g, ' ')}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6">
+                      <div className="text-left sm:text-right shrink-0">
+                        <p className="text-sm font-black text-slate-800">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{new Date(log.created_at).toLocaleDateString()}</p>
+                      </div>
+                    </div>
+                    <div className="bg-slate-50/50 rounded-2xl p-4 border border-slate-100">
                       {formatDetails(log.details)}
-                    </td>
-                    <td className="py-4 px-6 text-xs font-mono text-slate-500">
-                      {log.ip_address}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={5} className="py-12 text-center text-slate-500 font-medium">
-                    No logs found matching your search.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

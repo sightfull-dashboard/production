@@ -22,20 +22,62 @@ type RegisterAdminRoutesDeps = {
   serializeAdminClient: (row: any) => any;
 };
 
-const mapAdminUserRow = (row: any) => ({
-  id: row.id,
-  name: row.name || row.email?.split('@')[0] || 'User',
-  email: row.email,
-  role: row.role,
-  is_verified: !!row.is_verified,
-  client_id: row.client_id ?? null,
-  lastLogin: row.last_login || 'Never',
-  image: row.image || null,
-});
+const mapAdminUserRow = (row: any) => {
+  const rawPermissions = parseJsonArray(row.permissions).map((value: any) => String(value)).filter(Boolean);
+  const permissions = rawPermissions.includes('view_logs')
+    ? Array.from(new Set([...rawPermissions, 'view_global_logs', 'view_client_logs']))
+    : rawPermissions;
+  return ({
+    id: row.id,
+    name: row.name || row.email?.split('@')[0] || 'User',
+    full_name: row.name || row.email?.split('@')[0] || 'User',
+    email: row.email,
+    role: row.role,
+    is_verified: !!row.is_verified,
+    client_id: row.client_id ?? null,
+    lastLogin: row.last_login || 'Never',
+    image: row.image || null,
+    mfa_required: !!row.mfa_required,
+    mfa_enabled: !!row.mfa_enabled,
+    permissions,
+    assigned_clients: parseJsonArray(row.assigned_clients).map((value: any) => String(value)).filter(Boolean),
+    status: String(row.status || 'active').toLowerCase() === 'deactivated' ? 'deactivated' : 'active',
+  });
+};
 
 const parseJsonArray = (value: any) => Array.isArray(value) ? value : (() => {
   try { return value ? JSON.parse(value) : []; } catch { return []; }
 })();
+
+const getPermissions = (row: any) => parseJsonArray(row?.permissions).map((value: any) => String(value)).filter(Boolean);
+const getAssignedClients = (row: any) => parseJsonArray(row?.assigned_clients).map((value: any) => String(value)).filter(Boolean);
+const isInternalRoleValue = (role: unknown) => ['superadmin', 'staff'].includes(String(role || '').toLowerCase());
+const hasInternalPermission = (row: any, permission?: string | null) => {
+  const role = String(row?.role || '').toLowerCase();
+  if (role === 'superadmin') return true;
+  if (role !== 'staff') return false;
+  if (!permission) return true;
+  return getPermissions(row).includes(permission);
+};
+const hasAnyInternalPermission = (row: any, permissions: (string | null | undefined)[]) => {
+  const role = String(row?.role || '').toLowerCase();
+  if (role === 'superadmin') return true;
+  if (role !== 'staff') return false;
+  const current = getPermissions(row);
+  return permissions.filter(Boolean).some((permission) => current.includes(String(permission)));
+};
+const canAccessClient = (row: any, clientId: string | null | undefined, permission?: string | null) => {
+  if (!clientId) return false;
+  if (!hasInternalPermission(row, permission)) return false;
+  if (String(row?.role || '').toLowerCase() === 'superadmin') return true;
+  return getAssignedClients(row).includes(String(clientId));
+};
+const canAccessClientWithAnyPermission = (row: any, clientId: string | null | undefined, permissions: (string | null | undefined)[]) => {
+  if (!clientId) return false;
+  if (!hasAnyInternalPermission(row, permissions)) return false;
+  if (String(row?.role || '').toLowerCase() === 'superadmin') return true;
+  return getAssignedClients(row).includes(String(clientId));
+};
 
 const uploadBinaryLimit = `${env.directUploadLimitMb}mb`;
 
@@ -132,7 +174,190 @@ export function registerAdminRoutes({
   getWeekBounds,
   serializeAdminClient,
 }: RegisterAdminRoutesDeps) {
-  app.post('/api/admin/clients/:id/files/upload-binary', isSuperAdmin, express.raw({ type: '*/*', limit: uploadBinaryLimit }), async (req, res) => {
+  const resolveSessionActor = async (req: any) => {
+    const sessionUserId = (req.session as any)?.userId;
+    if (!sessionUserId) return null;
+    if (env.databaseProvider !== 'supabase') {
+      return db.prepare('SELECT * FROM users WHERE id = ?').get(sessionUserId) as any;
+    }
+    return fetchSupabaseUserById(sessionUserId);
+  };
+
+  const requireInternalActor = (permission?: string | null) => async (req: any, res: any, next: any) => {
+    try {
+      const actor = await resolveSessionActor(req);
+      if (!actor || !isInternalRoleValue(actor.role)) {
+        return res.status(403).json({ error: 'Forbidden: Internal access required' });
+      }
+      if (!hasInternalPermission(actor, permission)) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      req.internalActor = actor;
+      return next();
+    } catch (error) {
+      console.error('Internal access resolution failed:', error);
+      return res.status(500).json({ error: 'Failed to resolve access' });
+    }
+  };
+
+  const requireClientAccess = (permission?: string | null) => async (req: any, res: any, next: any) => {
+    try {
+      const actor = await resolveSessionActor(req);
+      if (!actor || !isInternalRoleValue(actor.role)) {
+        return res.status(403).json({ error: 'Forbidden: Internal access required' });
+      }
+      if (!canAccessClient(actor, req.params.id || req.params.clientId, permission)) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      req.internalActor = actor;
+      return next();
+    } catch (error) {
+      console.error('Client access resolution failed:', error);
+      return res.status(500).json({ error: 'Failed to resolve client access' });
+    }
+  };
+
+  const requireClientAccessAny = (permissions: (string | null | undefined)[]) => async (req: any, res: any, next: any) => {
+    try {
+      const actor = await resolveSessionActor(req);
+      if (!actor || !isInternalRoleValue(actor.role)) {
+        return res.status(403).json({ error: 'Forbidden: Internal access required' });
+      }
+      if (!canAccessClientWithAnyPermission(actor, req.params.id || req.params.clientId, permissions)) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      req.internalActor = actor;
+      return next();
+    } catch (error) {
+      console.error('Client access resolution failed:', error);
+      return res.status(500).json({ error: 'Failed to resolve client access' });
+    }
+  };
+
+
+  app.get('/api/internal-notifications', requireInternalActor(), async (req, res) => {
+    try {
+      const actor = (req as any).internalActor || await resolveSessionActor(req);
+      if (!actor) return res.status(401).json({ error: 'Unauthorized' });
+      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+
+      if (env.databaseProvider !== 'supabase') {
+        try {
+          const rows = db.prepare(`SELECT * FROM internal_notifications WHERE user_id = ? ORDER BY datetime(created_at) DESC LIMIT ?`).all(actor.id, limit) as any[];
+          return res.json(rows.map((row) => ({
+            ...row,
+            is_read: !!row.is_read,
+            metadata: typeof row.metadata === 'string' ? safeJsonParse(row.metadata, {}) : (row.metadata || {}),
+          })));
+        } catch {
+          return res.json([]);
+        }
+      }
+
+      const { data, error } = await supabaseAdmin
+        .from('internal_notifications')
+        .select('*')
+        .eq('user_id', actor.id)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return res.json((data || []).map((row: any) => ({
+        ...row,
+        is_read: !!row.is_read,
+        metadata: row.metadata || {},
+      })));
+    } catch (error) {
+      console.error('Failed to fetch internal notifications:', error);
+      return res.status(500).json({ error: 'Failed to fetch internal notifications' });
+    }
+  });
+
+  app.post('/api/internal-notifications/read-all', requireInternalActor(), async (req, res) => {
+    try {
+      const actor = (req as any).internalActor || await resolveSessionActor(req);
+      if (!actor) return res.status(401).json({ error: 'Unauthorized' });
+
+      if (env.databaseProvider !== 'supabase') {
+        try {
+          const result = db.prepare(`UPDATE internal_notifications SET is_read = 1, read_at = COALESCE(read_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND COALESCE(is_read, 0) = 0`).run(actor.id) as any;
+          return res.json({ updated: Number(result?.changes) || 0 });
+        } catch {
+          return res.json({ updated: 0 });
+        }
+      }
+
+      const now = new Date().toISOString();
+      const { data, error } = await supabaseAdmin
+        .from('internal_notifications')
+        .update({ is_read: true, read_at: now, updated_at: now })
+        .eq('user_id', actor.id)
+        .eq('is_read', false)
+        .select('id');
+      if (error) throw error;
+      return res.json({ updated: Array.isArray(data) ? data.length : 0 });
+    } catch (error) {
+      console.error('Failed to mark all internal notifications as read:', error);
+      return res.status(500).json({ error: 'Failed to mark all notifications as read' });
+    }
+  });
+
+  app.post('/api/internal-notifications/:id/read', requireInternalActor(), async (req, res) => {
+    try {
+      const actor = (req as any).internalActor || await resolveSessionActor(req);
+      if (!actor) return res.status(401).json({ error: 'Unauthorized' });
+
+      if (env.databaseProvider !== 'supabase') {
+        try {
+          const result = db.prepare(`UPDATE internal_notifications SET is_read = 1, read_at = COALESCE(read_at, CURRENT_TIMESTAMP), updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?`).run(req.params.id, actor.id) as any;
+          return res.json({ success: Number(result?.changes) > 0 });
+        } catch {
+          return res.json({ success: false });
+        }
+      }
+
+      const now = new Date().toISOString();
+      const { data, error } = await supabaseAdmin
+        .from('internal_notifications')
+        .update({ is_read: true, read_at: now, updated_at: now })
+        .eq('id', req.params.id)
+        .eq('user_id', actor.id)
+        .select('id')
+        .maybeSingle();
+      if (error) throw error;
+      return res.json({ success: !!data });
+    } catch (error) {
+      console.error('Failed to mark internal notification as read:', error);
+      return res.status(500).json({ error: 'Failed to mark notification as read' });
+    }
+  });
+
+  app.delete('/api/internal-notifications/:id', requireInternalActor(), async (req, res) => {
+    try {
+      const actor = (req as any).internalActor || await resolveSessionActor(req);
+      if (!actor) return res.status(401).json({ error: 'Unauthorized' });
+
+      if (env.databaseProvider !== 'supabase') {
+        try {
+          const result = db.prepare(`DELETE FROM internal_notifications WHERE id = ? AND user_id = ?`).run(req.params.id, actor.id) as any;
+          return res.json({ success: Number(result?.changes) > 0 });
+        } catch {
+          return res.json({ success: false });
+        }
+      }
+
+      const { error } = await supabaseAdmin
+        .from('internal_notifications')
+        .delete()
+        .eq('id', req.params.id)
+        .eq('user_id', actor.id);
+      if (error) throw error;
+      return res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to dismiss internal notification:', error);
+      return res.status(500).json({ error: 'Failed to dismiss notification' });
+    }
+  });
+  app.post('/api/admin/clients/:id/files/upload-binary', requireClientAccess('view_files'), express.raw({ type: '*/*', limit: uploadBinaryLimit }), async (req, res) => {
     const name = getQueryValue(req.query.name);
     const parent_id = getQueryValue(req.query.parent_id) || null;
     if (!name) return res.status(400).json({ error: 'File name is required.' });
@@ -196,17 +421,57 @@ export function registerAdminRoutes({
     }
   });
 
+  app.get('/api/internal/users', requireInternalActor('view_tickets'), async (req, res) => {
+    try {
+      const actor = (req as any).internalActor || await resolveSessionActor(req);
+      if (!actor) return res.status(401).json({ error: 'Unauthorized' });
+      const clientId = String(req.query.client_id || '').trim() || null;
+
+      if (clientId && !canAccessClient(actor, clientId, 'view_tickets')) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      let rows: any[] = [];
+      if (env.databaseProvider !== 'supabase') {
+        rows = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status FROM users WHERE client_id IS NULL AND role IN ('superadmin','staff') ORDER BY email ASC").all() as any[];
+      } else {
+        const { data, error } = await supabaseAdmin
+          .from('users')
+          .select('id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status')
+          .is('client_id', null)
+          .in('role', ['superadmin', 'staff'])
+          .order('email', { ascending: true });
+        if (error) throw error;
+        rows = data || [];
+      }
+
+      const filtered = rows.filter((row: any) => {
+        const role = String(row.role || '').toLowerCase();
+        if (role === 'superadmin') return true;
+        if (!clientId) return row.id === actor.id;
+        return getAssignedClients(row).includes(clientId);
+      });
+
+      return res.json(filtered.map(mapAdminUserRow));
+    } catch (error) {
+      console.error('Failed to load internal users directory:', error);
+      return res.status(500).json({ error: 'Failed to load internal users' });
+    }
+  });
+
+
   app.get("/api/admin/users", isSuperAdmin, async (_req, res) => {
     if (env.databaseProvider !== 'supabase') {
-      const users = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login FROM users WHERE client_id IS NULL ORDER BY email ASC").all() as any[];
+      const users = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status FROM users WHERE client_id IS NULL AND role IN ('superadmin','staff') ORDER BY email ASC").all() as any[];
       return res.json(users.map(mapAdminUserRow));
     }
 
     try {
       const { data, error } = await supabaseAdmin
         .from('users')
-        .select('id, email, role, is_verified, client_id, name, image, last_login')
+        .select('id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status')
         .is('client_id', null)
+        .in('role', ['superadmin', 'staff'])
         .order('email', { ascending: true });
       if (error) throw error;
       return res.json((data || []).map(mapAdminUserRow));
@@ -216,7 +481,7 @@ export function registerAdminRoutes({
     }
   });
 
-  app.get("/api/admin/logs", isSuperAdmin, async (_req, res) => {
+  app.get("/api/admin/logs", requireInternalActor('view_global_logs'), async (_req, res) => {
     if (env.databaseProvider !== 'supabase') {
       const logs = db.prepare(`
         SELECT al.*
@@ -252,16 +517,16 @@ export function registerAdminRoutes({
     }
   });
 
-  app.get("/api/admin/clients/:id/users", isSuperAdmin, async (req, res) => {
+  app.get("/api/admin/clients/:id/users", requireClientAccess('manage_client_users'), async (req, res) => {
     if (env.databaseProvider !== 'supabase') {
-      const rows = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login FROM users WHERE client_id = ? ORDER BY email ASC").all(req.params.id) as any[];
+      const rows = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status FROM users WHERE client_id = ? ORDER BY email ASC").all(req.params.id) as any[];
       return res.json(rows.map(mapAdminUserRow));
     }
 
     try {
       const { data, error } = await supabaseAdmin
         .from('users')
-        .select('id, email, role, is_verified, client_id, name, image, last_login')
+        .select('id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status')
         .eq('client_id', req.params.id)
         .order('email', { ascending: true });
       if (error) throw error;
@@ -272,9 +537,10 @@ export function registerAdminRoutes({
     }
   });
 
-  app.post("/api/admin/clients/:id/users", isSuperAdmin, async (req, res) => {
-    const { email, password, role, name, image } = req.body || {};
-    if (!email || !password || !role) return res.status(400).json({ error: 'Email, password and role are required' });
+  app.post("/api/admin/clients/:id/users", requireClientAccess('manage_client_users'), async (req, res) => {
+    const { email, password, name, image } = req.body || {};
+    const role = 'admin';
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
     try {
       const id = Math.random().toString(36).substr(2, 9);
@@ -283,14 +549,14 @@ export function registerAdminRoutes({
           .run(id, email, bcrypt.hashSync(password, 10), role, 1, req.params.id, name || null, image || null, null);
 
         logActivity(req, 'CREATE_CLIENT_USER', { clientId: req.params.id, userId: id, email, role });
-        const row = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login FROM users WHERE id = ?").get(id) as any;
+        const row = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status FROM users WHERE id = ?").get(id) as any;
         return res.status(201).json(mapAdminUserRow(row));
       }
 
       const { data, error } = await supabaseAdmin
         .from('users')
         .insert({ id, email, password: bcrypt.hashSync(password, 10), role, is_verified: true, client_id: req.params.id, name: name || null, image: image || null, last_login: null })
-        .select('id, email, role, is_verified, client_id, name, image, last_login')
+        .select('id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status')
         .single();
       if (error) {
         if (String(error.message || '').toLowerCase().includes('duplicate')) return res.status(400).json({ error: 'User already exists' });
@@ -305,34 +571,36 @@ export function registerAdminRoutes({
     }
   });
 
-  app.patch("/api/admin/clients/:clientId/users/:userId", isSuperAdmin, async (req, res) => {
+  app.patch("/api/admin/clients/:clientId/users/:userId", requireClientAccess('manage_client_users'), async (req, res) => {
     const existing = env.databaseProvider !== 'supabase'
       ? db.prepare("SELECT * FROM users WHERE id = ? AND client_id = ?").get(req.params.userId, req.params.clientId) as any
       : await fetchSupabaseUserById(req.params.userId);
     if (!existing || existing.client_id !== req.params.clientId) return res.status(404).json({ error: 'User not found' });
 
     const nextEmail = req.body.email ?? existing.email;
-    const nextRole = req.body.role ?? existing.role;
+    const nextRole = existing.role;
     const nextName = req.body.name ?? existing.name;
     const nextImage = req.body.image ?? existing.image ?? null;
     const nextPassword = req.body.password ? bcrypt.hashSync(req.body.password, 10) : existing.password;
     const nextVerified = typeof req.body.is_verified === 'undefined' ? existing.is_verified : !!req.body.is_verified;
+    const nextMfaRequired = typeof req.body.mfa_required === 'undefined' ? existing.mfa_required : !!req.body.mfa_required;
+    const clearMfaPayload = !nextMfaRequired ? { mfa_enabled: false, mfa_secret: null, mfa_backup_codes: [] } : {};
 
     try {
       if (env.databaseProvider !== 'supabase') {
-        db.prepare("UPDATE users SET email = ?, password = ?, role = ?, name = ?, image = ?, is_verified = ? WHERE id = ?")
-          .run(nextEmail, nextPassword, nextRole, nextName, nextImage, nextVerified ? 1 : 0, req.params.userId);
+        db.prepare("UPDATE users SET email = ?, password = ?, role = ?, name = ?, image = ?, is_verified = ?, mfa_required = ?, mfa_enabled = ?, mfa_secret = ?, mfa_backup_codes = ? WHERE id = ?")
+          .run(nextEmail, nextPassword, nextRole, nextName, nextImage, nextVerified ? 1 : 0, nextMfaRequired ? 1 : 0, nextMfaRequired ? (existing.mfa_enabled ? 1 : 0) : 0, nextMfaRequired ? existing.mfa_secret ?? null : null, JSON.stringify(nextMfaRequired ? parseJsonArray(existing.mfa_backup_codes) : []), req.params.userId);
         logActivity(req, 'UPDATE_CLIENT_USER', { clientId: req.params.clientId, userId: req.params.userId, email: nextEmail, role: nextRole });
-        const row = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login FROM users WHERE id = ?").get(req.params.userId) as any;
+        const row = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled FROM users WHERE id = ?").get(req.params.userId) as any;
         return res.json(mapAdminUserRow(row));
       }
 
       const { data, error } = await supabaseAdmin
         .from('users')
-        .update({ email: nextEmail, password: nextPassword, role: nextRole, name: nextName, image: nextImage, is_verified: nextVerified })
+        .update({ email: nextEmail, password: nextPassword, role: nextRole, name: nextName, image: nextImage, is_verified: nextVerified, mfa_required: nextMfaRequired, ...clearMfaPayload })
         .eq('id', req.params.userId)
         .eq('client_id', req.params.clientId)
-        .select('id, email, role, is_verified, client_id, name, image, last_login')
+        .select('id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status')
         .single();
       if (error) {
         if (String(error.message || '').toLowerCase().includes('duplicate')) return res.status(400).json({ error: 'Email already exists' });
@@ -347,7 +615,7 @@ export function registerAdminRoutes({
     }
   });
 
-  app.delete("/api/admin/clients/:clientId/users/:userId", isSuperAdmin, async (req, res) => {
+  app.delete("/api/admin/clients/:clientId/users/:userId", requireClientAccess('manage_client_users'), async (req, res) => {
     if (env.databaseProvider !== 'supabase') {
       const result = db.prepare("DELETE FROM users WHERE id = ? AND client_id = ?").run(req.params.userId, req.params.clientId);
       if (!result.changes) return res.status(404).json({ error: 'User not found' });
@@ -361,7 +629,7 @@ export function registerAdminRoutes({
     return res.json({ success: true });
   });
 
-  app.get("/api/admin/clients/:id/files", isSuperAdmin, async (req, res) => {
+  app.get("/api/admin/clients/:id/files", requireClientAccess('view_files'), async (req, res) => {
     try {
       if (env.databaseProvider !== 'supabase') {
         ensureClientVaultStructure(req.params.id);
@@ -500,7 +768,7 @@ export function registerAdminRoutes({
     }
   });
 
-  app.get("/api/admin/clients/:id/logs", isSuperAdmin, async (req, res) => {
+  app.get("/api/admin/clients/:id/logs", requireClientAccessAny(['view_client_logs', 'view_logs']), async (req, res) => {
     if (env.databaseProvider !== 'supabase') {
       const rows = db.prepare("SELECT * FROM activity_logs WHERE client_id = ? ORDER BY created_at DESC LIMIT 500").all(req.params.id);
       return res.json(rows);
@@ -521,7 +789,7 @@ export function registerAdminRoutes({
     }
   });
 
-  app.get("/api/admin/clients/:id/payroll-logs", isSuperAdmin, async (req, res) => {
+  app.get("/api/admin/clients/:id/payroll-logs", requireClientAccess('view_payroll'), async (req, res) => {
     const client = env.databaseProvider !== 'supabase'
       ? db.prepare("SELECT id, name FROM clients WHERE id = ?").get(req.params.id) as any
       : await fetchSupabaseClientById(req.params.id);
@@ -602,9 +870,15 @@ export function registerAdminRoutes({
 
   app.post("/api/admin/users", isSuperAdmin, async (req, res) => {
     console.log("Creating user with data:", { ...req.body, password: "[REDACTED]" });
-    const { email, password, role, image } = req.body;
+    const { email, password, image } = req.body;
+    const submittedName = (req.body.full_name ?? req.body.name ?? '').toString().trim() || null;
+    const requestedRole = String(req.body.role || 'staff').toLowerCase();
+    const role = requestedRole === 'superadmin' ? 'superadmin' : 'staff';
+    const permissions = role === 'superadmin' ? [] : getPermissions({ permissions: req.body.permissions });
+    const assignedClients = role === 'superadmin' ? [] : getAssignedClients({ assigned_clients: req.body.assigned_clients });
+    const status = String(req.body.status || 'active').toLowerCase() === 'deactivated' ? 'deactivated' : 'active';
 
-    if (!email || !password || !role) {
+    if (!email || !password) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
@@ -613,10 +887,23 @@ export function registerAdminRoutes({
     try {
       const id = Math.random().toString(36).substr(2, 9);
       if (env.databaseProvider !== 'supabase') {
-        db.prepare("INSERT INTO users (id, email, password, role, is_verified, client_id, name, image, last_login) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)")
-          .run(id, email, hashedPassword, role, 1, req.body.name || null, image || null, null);
+        db.prepare("INSERT INTO users (id, email, password, role, is_verified, client_id, name, image, last_login, permissions, assigned_clients, status) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)")
+          .run(id, email, hashedPassword, role, 1, submittedName, image || null, null, JSON.stringify(permissions), JSON.stringify(assignedClients), status);
       } else {
-        const { error } = await supabaseAdmin.from('users').insert({ id, email, password: hashedPassword, role, is_verified: true, client_id: null, name: req.body.name || null, image: image || null, last_login: null });
+        const { error } = await supabaseAdmin.from('users').insert({
+          id,
+          email,
+          password: hashedPassword,
+          role,
+          is_verified: true,
+          client_id: null,
+          name: submittedName,
+          image: image || null,
+          last_login: null,
+          permissions,
+          assigned_clients: assignedClients,
+          status,
+        });
         if (error) {
           if (String(error.message || '').toLowerCase().includes('duplicate')) return res.status(400).json({ error: 'User already exists' });
           throw error;
@@ -624,7 +911,7 @@ export function registerAdminRoutes({
       }
 
       console.log(`User created: ${email} with role ${role}`);
-      logActivity(req, 'CREATE_USER', { email, role, scope: 'super_panel' });
+      logActivity(req, 'CREATE_USER', { email, role, scope: 'super_panel', permissions, assignedClientsCount: assignedClients.length });
       res.json({ success: true });
     } catch (error: any) {
       console.error("User creation error:", error);
@@ -666,24 +953,31 @@ export function registerAdminRoutes({
   });
 
   app.patch("/api/admin/users/:id", isSuperAdmin, async (req, res) => {
-    const { email, password, role, is_verified } = req.body;
+    const { email, password, is_verified } = req.body;
+    const submittedName = typeof req.body.full_name !== 'undefined' ? req.body.full_name : req.body.name;
     const existing = env.databaseProvider !== 'supabase'
       ? db.prepare("SELECT * FROM users WHERE id = ? AND client_id IS NULL").get(req.params.id) as any
       : await fetchSupabaseUserById(req.params.id);
     if (!existing || existing.client_id !== null) return res.status(404).json({ error: "User not found" });
 
+    const requestedRole = String(req.body.role || existing.role || 'staff').toLowerCase();
+    const nextRole = requestedRole === 'superadmin' ? 'superadmin' : 'staff';
     const nextEmail = email ?? existing.email;
-    const nextRole = role ?? existing.role;
     const nextVerified = typeof is_verified === 'undefined' ? existing.is_verified : !!is_verified;
     const nextPassword = password ? bcrypt.hashSync(password, 10) : existing.password;
+    const nextPermissions = nextRole === 'superadmin' ? [] : getPermissions({ permissions: typeof req.body.permissions === 'undefined' ? existing.permissions : req.body.permissions });
+    const nextAssignedClients = nextRole === 'superadmin' ? [] : getAssignedClients({ assigned_clients: typeof req.body.assigned_clients === 'undefined' ? existing.assigned_clients : req.body.assigned_clients });
+    const nextStatus = typeof req.body.status === 'undefined'
+      ? (String(existing.status || 'active').toLowerCase() === 'deactivated' ? 'deactivated' : 'active')
+      : (String(req.body.status || 'active').toLowerCase() === 'deactivated' ? 'deactivated' : 'active');
 
     try {
       if (env.databaseProvider !== 'supabase') {
-        db.prepare("UPDATE users SET email = ?, password = ?, role = ?, is_verified = ?, name = ?, image = ? WHERE id = ? AND client_id IS NULL")
-          .run(nextEmail, nextPassword, nextRole, nextVerified ? 1 : 0, req.body.name ?? existing.name ?? null, req.body.image ?? existing.image ?? null, req.params.id);
-        logActivity(req, 'UPDATE_USER', { userId: req.params.id, email: nextEmail, role: nextRole, scope: 'super_panel' });
-        const updated = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login FROM users WHERE id = ? AND client_id IS NULL").get(req.params.id) as any;
-        return res.json(updated);
+        db.prepare("UPDATE users SET email = ?, password = ?, role = ?, is_verified = ?, name = ?, image = ?, permissions = ?, assigned_clients = ?, status = ? WHERE id = ? AND client_id IS NULL")
+          .run(nextEmail, nextPassword, nextRole, nextVerified ? 1 : 0, submittedName ?? existing.name ?? null, req.body.image ?? existing.image ?? null, JSON.stringify(nextPermissions), JSON.stringify(nextAssignedClients), nextStatus, req.params.id);
+        logActivity(req, 'UPDATE_USER', { userId: req.params.id, email: nextEmail, role: nextRole, scope: 'super_panel', permissions: nextPermissions, assignedClientsCount: nextAssignedClients.length });
+        const updated = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status FROM users WHERE id = ? AND client_id IS NULL").get(req.params.id) as any;
+        return res.json(mapAdminUserRow(updated));
       }
 
       const { data, error } = await supabaseAdmin.from('users').update({
@@ -691,15 +985,18 @@ export function registerAdminRoutes({
         password: nextPassword,
         role: nextRole,
         is_verified: nextVerified,
-        name: req.body.name ?? existing.name ?? null,
+        name: submittedName ?? existing.name ?? null,
         image: req.body.image ?? existing.image ?? null,
-      }).eq('id', req.params.id).is('client_id', null).select('id, email, role, is_verified, client_id, name, image, last_login').single();
+        permissions: nextPermissions,
+        assigned_clients: nextAssignedClients,
+        status: nextStatus,
+      }).eq('id', req.params.id).is('client_id', null).select('id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status').single();
       if (error) {
         if (String(error.message || '').toLowerCase().includes('duplicate')) return res.status(400).json({ error: 'Email already exists' });
         throw error;
       }
-      logActivity(req, 'UPDATE_USER', { userId: req.params.id, email: nextEmail, role: nextRole, scope: 'super_panel' });
-      return res.json(data);
+      logActivity(req, 'UPDATE_USER', { userId: req.params.id, email: nextEmail, role: nextRole, scope: 'super_panel', permissions: nextPermissions, assignedClientsCount: nextAssignedClients.length });
+      return res.json(mapAdminUserRow(data));
     } catch (error: any) {
       if (error.message?.includes("UNIQUE constraint failed")) {
         return res.status(400).json({ error: "Email already exists" });
@@ -708,8 +1005,64 @@ export function registerAdminRoutes({
     }
   });
 
-  app.get("/api/admin/clients", isSuperAdmin, async (_req, res) => {
+  app.patch('/api/admin/users/:id/deactivate', isSuperAdmin, async (req, res) => {
+    try {
+      if (env.databaseProvider !== 'supabase') {
+        const result = db.prepare("UPDATE users SET status = 'deactivated' WHERE id = ? AND client_id IS NULL").run(req.params.id);
+        if (!result.changes) return res.status(404).json({ error: 'User not found' });
+      } else {
+        const { data, error } = await supabaseAdmin.from('users').update({ status: 'deactivated' }).eq('id', req.params.id).is('client_id', null).select('id').single();
+        if (error || !data) return res.status(404).json({ error: 'User not found' });
+      }
+      logActivity(req, 'DEACTIVATE_USER', { userId: req.params.id, scope: 'super_panel' });
+      return res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to deactivate internal user:', error);
+      return res.status(500).json({ error: 'Failed to deactivate user' });
+    }
+  });
+
+  app.post('/api/admin/users/:id/reset-password', isSuperAdmin, async (req, res) => {
+    try {
+      const temporaryPassword = Math.random().toString(36).slice(-10) + 'A!';
+      const hashedPassword = bcrypt.hashSync(temporaryPassword, 10);
+      if (env.databaseProvider !== 'supabase') {
+        const result = db.prepare("UPDATE users SET password = ? WHERE id = ? AND client_id IS NULL").run(hashedPassword, req.params.id);
+        if (!result.changes) return res.status(404).json({ error: 'User not found' });
+      } else {
+        const { data, error } = await supabaseAdmin.from('users').update({ password: hashedPassword }).eq('id', req.params.id).is('client_id', null).select('id').single();
+        if (error || !data) return res.status(404).json({ error: 'User not found' });
+      }
+      logActivity(req, 'RESET_USER_PASSWORD', { userId: req.params.id, scope: 'super_panel' });
+      return res.json({ success: true, temporaryPassword });
+    } catch (error) {
+      console.error('Failed to reset internal user password:', error);
+      return res.status(500).json({ error: 'Failed to reset password' });
+    }
+  });
+
+  app.post('/api/admin/users/:id/reset-2fa', isSuperAdmin, async (req, res) => {
+    try {
+      const payload = { mfa_required: false, mfa_enabled: false, mfa_secret: null, mfa_backup_codes: [] as any[] };
+      if (env.databaseProvider !== 'supabase') {
+        const result = db.prepare("UPDATE users SET mfa_required = 0, mfa_enabled = 0, mfa_secret = NULL, mfa_backup_codes = '[]' WHERE id = ? AND client_id IS NULL").run(req.params.id);
+        if (!result.changes) return res.status(404).json({ error: 'User not found' });
+      } else {
+        const { data, error } = await supabaseAdmin.from('users').update(payload).eq('id', req.params.id).is('client_id', null).select('id').single();
+        if (error || !data) return res.status(404).json({ error: 'User not found' });
+      }
+      logActivity(req, 'RESET_USER_2FA', { userId: req.params.id, scope: 'super_panel' });
+      return res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to reset internal user 2FA:', error);
+      return res.status(500).json({ error: 'Failed to reset 2FA' });
+    }
+  });
+
+  app.get("/api/admin/clients", requireInternalActor('view_clients'), async (req, res) => {
     const { start, end } = getWeekBounds();
+    const actor = (req as any).internalActor as any;
+    const assignedClientIds = getAssignedClients(actor);
     if (env.databaseProvider !== 'supabase') {
       try {
         const rows = db.prepare(`
@@ -737,7 +1090,8 @@ export function registerAdminRoutes({
           FROM clients c
           ORDER BY datetime(c.created_at) DESC
         `).all(start, end, start, end) as any[];
-        return res.json(rows.map(serializeAdminClient));
+        const filteredRows = String(actor?.role || "").toLowerCase() === "staff" ? rows.filter((row: any) => assignedClientIds.includes(String(row.id))) : rows;
+        return res.json(filteredRows.map(serializeAdminClient));
       } catch (error) {
         console.error('Failed to load clients from SQLite:', error);
         return res.status(500).json({ error: 'Failed to load clients' });
@@ -751,7 +1105,8 @@ export function registerAdminRoutes({
         .order('created_at', { ascending: false });
       if (error) throw error;
 
-      const rows = await Promise.all((clients || []).map(async (client: any) => {
+      const visibleClients = String(actor?.role || "").toLowerCase() === "staff" ? (clients || []).filter((client: any) => assignedClientIds.includes(String(client.id))) : (clients || []);
+      const rows = await Promise.all(visibleClients.map(async (client: any) => {
         const [users, employees, files] = await Promise.all([
           countSupabaseRows('users', 'client_id', client.id),
           countSupabaseEmployees(client.id),

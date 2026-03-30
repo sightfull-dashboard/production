@@ -13,6 +13,7 @@ import { registerFilesRoutes } from "./src/server/routes/files";
 import { registerLeaveRoutes } from "./src/server/routes/leave";
 import { registerWorkforceRoutes } from "./src/server/routes/workforce";
 import { registerSupabaseCoreRoutes } from "./src/server/routes/supabaseCore";
+import { registerMfaRoutes } from "./src/server/routes/mfa";
 import { getActorClientId, getEffectiveClientId } from "./src/server/utils/tenant";
 import { createMemoryRateLimitStore, createOriginProtectionMiddleware, createRateLimitMiddleware, createSqliteRateLimitStore, createSupabaseRateLimitStore, hashSecret, securityHeadersMiddleware } from "./src/server/utils/security";
 import { createSqliteSessionStore } from "./src/server/utils/sqliteSessionStore";
@@ -600,6 +601,15 @@ try {
   }
   if (!columns.includes('last_login')) {
     db.exec("ALTER TABLE users ADD COLUMN last_login TEXT");
+  }
+  if (!columns.includes('mfa_required')) {
+    db.exec("ALTER TABLE users ADD COLUMN mfa_required INTEGER DEFAULT 0");
+  }
+  if (!columns.includes('mfa_enabled')) {
+    db.exec("ALTER TABLE users ADD COLUMN mfa_enabled INTEGER DEFAULT 0");
+  }
+  if (!columns.includes('mfa_secret')) {
+    db.exec("ALTER TABLE users ADD COLUMN mfa_secret TEXT");
   }
   if (!columns.includes('client_id')) {
     db.exec("ALTER TABLE users ADD COLUMN client_id TEXT");
@@ -1509,6 +1519,20 @@ if (isSmtpConfigured) {
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
+    if ((req.session as any)?.mfaPending) {
+      return res.status(403).json({ error: 'MFA required', mfa_pending: true });
+    }
+    return next();
+  };
+
+  const requireMfaPending = (req: any, res: any, next: any) => {
+    const userId = (req.session as any)?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (!(req.session as any)?.mfaPending) {
+      return res.status(400).json({ error: 'MFA not pending' });
+    }
     return next();
   };
 
@@ -2079,6 +2103,13 @@ if (isSmtpConfigured) {
     safeJsonParse,
     getWeekBounds,
     serializeAdminClient,
+  });
+
+  registerMfaRoutes({
+    app,
+    db,
+    requireMfaPending,
+    logActivity,
   });
 
   registerFilesRoutes({

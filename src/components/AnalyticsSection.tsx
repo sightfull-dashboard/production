@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, ComposedChart, Area
@@ -15,6 +15,34 @@ const Card = ({ children, className }: { children: React.ReactNode, className?: 
 );
 
 const COLORS = ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#64748b'];
+
+
+const SafeResponsiveChart = ({ children, minHeight = 300, className = '' }: { children: React.ReactNode; minHeight?: number; className?: string }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useLayoutEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    const update = () => {
+      const rect = node.getBoundingClientRect();
+      setReady(rect.width > 0 && rect.height > 0);
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={containerRef} className={cn('w-full h-full min-w-0', className)} style={{ minHeight }}>
+      {ready ? <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer> : <div className="h-full min-h-[300px]" />}
+    </div>
+  );
+};
+
 
 interface AnalyticsSectionProps {
   onViewLeaveEmployeeProfile?: (employeeName: string) => void;
@@ -180,7 +208,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
           <h4 className="font-bold text-slate-800 mb-6">Shifts vs Salary Bill (Weekly)</h4>
           <div className="flex-1 min-h-[320px] min-w-0">
             {data?.weeklyChart?.length > 0 ? (
-              <ResponsiveContainer minHeight={300} width="100%" height="100%">
+              <SafeResponsiveChart minHeight={300}>
                 <ComposedChart data={data.weeklyChart} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
@@ -201,7 +229,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
                   <Bar yAxisId="left" dataKey="shifts" name="Shifts Count" fill="#e2e8f0" radius={[6, 6, 6, 6]} barSize={32} />
                   <Area yAxisId="right" type="monotone" dataKey="amount" name="Salary Bill" stroke="#4f46e5" strokeWidth={3} fillOpacity={1} fill="url(#colorAmount)" activeDot={{ r: 6, strokeWidth: 0, fill: '#4f46e5' }} />
                 </ComposedChart>
-              </ResponsiveContainer>
+              </SafeResponsiveChart>
             ) : (
               <div className="h-full flex items-center justify-center text-slate-400 font-medium">No data available for selected month</div>
             )}
@@ -214,7 +242,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
             {data?.breakdown?.length > 0 ? (
               <>
                 <div className="w-1/2 h-full min-w-0 min-h-[280px]">
-                  <ResponsiveContainer minHeight={300} width="100%" height="100%">
+                  <SafeResponsiveChart minHeight={300}>
                     <PieChart>
                       <Pie
                         data={data.breakdown}
@@ -237,7 +265,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
                         formatter={(value: number) => formatCurrency(value)} 
                       />
                     </PieChart>
-                  </ResponsiveContainer>
+                  </SafeResponsiveChart>
                 </div>
                 <div className="w-1/2 pl-4 overflow-y-auto max-h-full pr-2 min-w-0">
                   <div className="space-y-4">

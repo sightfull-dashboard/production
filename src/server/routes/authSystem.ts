@@ -99,6 +99,9 @@ export function registerAuthSystemRoutes({
       }
       (req.session as any).userId = user.id;
       (req.session as any).userRole = user.role;
+      if (user.mfa_required || user.mfa_enabled) {
+        (req.session as any).mfaPending = true;
+      }
 
       req.session.save((err: any) => {
         if (err) {
@@ -130,6 +133,9 @@ export function registerAuthSystemRoutes({
           roster_duration: client?.roster_duration || '1_week',
           rosterMode: client?.roster_mode || 'Manual',
           rosterSeedWeekStart: client?.roster_seed_week_start || null,
+          mfa_required: !!user.mfa_required,
+          mfa_enabled: !!user.mfa_enabled,
+          mfaPending: !!(req.session as any).mfaPending,
           ...trialState,
         });
       });
@@ -159,7 +165,7 @@ export function registerAuthSystemRoutes({
   app.get("/api/auth/me", (req, res) => {
     const userId = (req.session as any).userId;
     if (userId) {
-      const user: any = db.prepare("SELECT id, email, role, client_id, is_trial, trial_end_date, name, image FROM users WHERE id = ?").get(userId);
+      const user: any = db.prepare("SELECT id, email, role, client_id, is_trial, trial_end_date, name, image, mfa_required, mfa_enabled FROM users WHERE id = ?").get(userId);
       if (user?.email && allowedSuperAdminEmails.has(String(user.email).trim().toLowerCase()) && user.role !== 'superadmin') {
         db.prepare("UPDATE users SET role = 'superadmin', is_verified = 1 WHERE id = ?").run(user.id);
         user.role = 'superadmin';
@@ -173,6 +179,9 @@ export function registerAuthSystemRoutes({
       const displayName = String(user.email || '').split('@')[0].replace(/[._-]+/g, ' ').trim().replace(/\b\w/g, (m) => m.toUpperCase()) || 'User';
       res.json({
         ...user,
+        mfa_required: !!user.mfa_required,
+        mfa_enabled: !!user.mfa_enabled,
+        mfaPending: !!(req.session as any).mfaPending,
         name: user.name || displayName,
         image: user.image || null,
         fallbackImage: client?.fallback_image || null,

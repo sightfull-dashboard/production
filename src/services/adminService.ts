@@ -15,4 +15,12 @@ export const adminService = {
   deleteClientFile: (clientId: string, fileId: string) => apiDelete(`/api/admin/clients/${clientId}/files/${fileId}`),
   getClientLogs: (clientId: string) => apiGet<any[]>(`/api/admin/clients/${clientId}/logs`),
   getClientPayrollLogs: (clientId: string) => apiGet<any[]>(`/api/admin/clients/${clientId}/payroll-logs`),
+  getInternalUsers: () => apiGet<any[]>('/api/admin/users'),
+  createInternalUser: (payload: Record<string, unknown>) => apiPost('/api/admin/users', payload),
+  updateInternalUser: (id: string, payload: Record<string, unknown>) => apiPatch(`/api/admin/users/${id}`, payload),
+  deleteInternalUser: (id: string) => apiDelete(`/api/admin/users/${id}`),
+  verifyInternalUser: (id: string) => apiPatch(`/api/admin/users/${id}/verify`),
+  deactivateInternalUser: (id: string) => apiPatch(`/api/admin/users/${id}/deactivate`),
+  resetInternalUserPassword: (id: string) => apiPost(`/api/admin/users/${id}/reset-password`),
+  resetInternalUser2FA: (id: string) => apiPost(`/api/admin/users/${id}/reset-2fa`),
 };

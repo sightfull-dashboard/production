@@ -18,7 +18,7 @@ import {
   Activity,
   History,
   Clock,
-  User,
+  User as UserIcon,
   ShieldCheck,
   Calendar,
   ToggleLeft,
@@ -52,7 +52,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
-import type { FileItem, PayrollSubmission, SupportTicket, RosterDefinition } from '../types';
+import type { FileItem, PayrollSubmission, SupportTicket, RosterDefinition, User } from '../types';
 import { BrandedState } from './BrandedStates';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
@@ -73,6 +73,7 @@ const WhatsAppIcon = ({ className }: { className?: string }) => (
 
 const formatHarareLastAction = (dateString?: string | null) => {
   if (!dateString) return '—';
+  if (String(dateString).trim().toLowerCase() === 'never') return 'Never';
 
   const date = new Date(dateString);
   if (Number.isNaN(date.getTime())) return String(dateString);
@@ -104,9 +105,10 @@ const mockWaRows = [
 
 interface InternalPanelProps {
   onLoginAsSuperAdmin?: (client: any) => void;
+  currentUser?: User;
 }
 
-export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmin }) => {
+export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmin, currentUser }) => {
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'files' | 'logs' | 'settings' | 'activity' | 'payroll_logs' | 'support_tickets' | 'payroll_notifications' | 'whatsapp'>('overview');
@@ -207,13 +209,19 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
       }
       setLoadingClientData(true);
       try {
+        const canManageClientUsers = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('manage_client_users');
+        const canViewFiles = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_files');
+        const canViewClientLogs = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_client_logs') || currentUser?.permissions?.includes('view_logs');
+        const canViewPayroll = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll');
+        const canViewTickets = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_tickets');
+
         const [usersResult, filesResult, logsResult, payrollResult, supportResult, notificationsResult] = await Promise.allSettled([
-          adminService.getClientUsers(selectedClient.id),
-          adminService.getClientFiles(selectedClient.id),
-          adminService.getClientLogs(selectedClient.id),
-          adminService.getClientPayrollLogs(selectedClient.id),
-          appService.getSupportTickets(),
-          appService.getPayrollSubmissions(),
+          canManageClientUsers ? adminService.getClientUsers(selectedClient.id) : Promise.resolve([]),
+          canViewFiles ? adminService.getClientFiles(selectedClient.id) : Promise.resolve([]),
+          canViewClientLogs ? adminService.getClientLogs(selectedClient.id) : Promise.resolve([]),
+          canViewPayroll ? adminService.getClientPayrollLogs(selectedClient.id) : Promise.resolve([]),
+          canViewTickets ? appService.getSupportTickets() : Promise.resolve([]),
+          canViewPayroll ? appService.getPayrollSubmissions() : Promise.resolve([]),
         ]);
 
         const users = usersResult.status === 'fulfilled' ? usersResult.value : [];
@@ -332,20 +340,20 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   const formatDetails = (detailsStr: any) => {
     try {
       const details = typeof detailsStr === 'string' ? JSON.parse(detailsStr) : detailsStr;
-      if (!details || typeof details !== 'object') return String(detailsStr || '-');
-      if (Object.keys(details).length === 0) return '-';
+      if (!details || typeof details !== 'object') return <span className="text-slate-600">{String(detailsStr || '-')}</span>;
+      if (Object.keys(details).length === 0) return <span className="text-slate-400 italic">No additional details</span>;
       return (
-        <div className="text-xs space-y-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-xs">
           {Object.entries(details).map(([k, v]) => (
-            <div key={k} className="flex gap-2">
-              <span className="font-medium text-slate-500">{k}:</span>
-              <span className="text-slate-700 truncate max-w-[200px]" title={String(v)}>{String(v)}</span>
+            <div key={k} className="flex flex-col gap-1">
+              <span className="font-black text-slate-400 uppercase tracking-widest text-[9px]">{k.replace(/_/g, ' ')}</span>
+              <span className="text-slate-800 font-medium break-all" title={String(v)}>{String(v)}</span>
             </div>
           ))}
         </div>
       );
     } catch {
-      return typeof detailsStr === 'string' ? detailsStr : JSON.stringify(detailsStr ?? '-');
+      return <span className="text-slate-600">{typeof detailsStr === 'string' ? detailsStr : JSON.stringify(detailsStr ?? '-')}</span>;
     }
   };
 
@@ -358,6 +366,31 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   const [clientFallbackImage, setClientFallbackImage] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [generatedPassword, setGeneratedPassword] = useState('');
+  const [is2FAModalOpen, setIs2FAModalOpen] = useState(false);
+  const [userToToggle2FA, setUserToToggle2FA] = useState<any | null>(null);
+
+  const handleToggle2FA = async () => {
+    if (!userToToggle2FA || !selectedClient) return;
+    
+    const newStatus = !userToToggle2FA.mfa_required;
+    
+    try {
+      await adminService.updateClientUser(selectedClient.id, userToToggle2FA.id, {
+        mfa_required: newStatus
+      });
+      
+      setClientUsers(prev => prev.map(u => 
+        u.id === userToToggle2FA.id ? { ...u, mfa_required: newStatus } : u
+      ));
+      
+      toast.success(`2FA ${newStatus ? 'required' : 'disabled'} for ${userToToggle2FA.name}`);
+    } catch (error) {
+      toast.error('Failed to update 2FA status');
+    } finally {
+      setIs2FAModalOpen(false);
+      setUserToToggle2FA(null);
+    }
+  };
 
   const generatePassword = () => {
     const length = 12;
@@ -416,7 +449,6 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
     const payload = {
       name: formData.get('name') as string,
       email: formData.get('email') as string,
-      role: formData.get('role') as string,
       password: formData.get('password') as string,
     };
 
@@ -546,8 +578,8 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <h2 className="text-4xl font-black text-slate-800 tracking-tight">Super Admin</h2>
-          <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">System Management</p>
+          <h2 className="text-4xl font-black text-slate-800 tracking-tight">{currentUser?.role === 'staff' ? 'Staff Access' : 'Super Admin'}</h2>
+          <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">{currentUser?.role === 'staff' ? 'Assigned Client Management' : 'System Management'}</p>
         </div>
       </div>
 
@@ -922,31 +954,33 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
           </div>
         </div>
         
-        <Tooltip content="Access this client's dashboard with full admin privileges">
-          <button 
-            onClick={() => onLoginAsSuperAdmin?.({ ...selectedClient, lockedFeatures, dashboardType })}
-            className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-black text-sm bg-slate-800 text-white hover:bg-slate-900 shadow-xl shadow-slate-200 transition-all active:scale-95 group shrink-0"
-          >
-            <ShieldCheck className="w-5 h-5 group-hover:scale-110 transition-transform" />
-            Login as Super Admin
-          </button>
-        </Tooltip>
+        {currentUser?.role === 'superadmin' && (
+          <Tooltip content="Access this client's dashboard with full admin privileges">
+            <button 
+              onClick={() => onLoginAsSuperAdmin?.({ ...selectedClient, lockedFeatures, dashboardType })}
+              className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-black text-sm bg-slate-800 text-white hover:bg-slate-900 shadow-xl shadow-slate-200 transition-all active:scale-95 group shrink-0"
+            >
+              <ShieldCheck className="w-5 h-5 group-hover:scale-110 transition-transform" />
+              Login as Super Admin
+            </button>
+          </Tooltip>
+        )}
       </div>
 
       {/* Top Navigation */}
       <div className="border-b border-slate-200 mb-8">
         <div className="flex overflow-x-auto no-scrollbar gap-6">
-          {[
-            { id: 'overview', icon: BarChart3, label: 'Overview' },
-            { id: 'users', icon: Users, label: 'Users' },
-            { id: 'files', icon: Files, label: 'Files' },
-            { id: 'activity', icon: Activity, label: 'Activity Logs' },
-            { id: 'support_tickets', icon: MessageSquare, label: 'Support Tickets' },
-            { id: 'payroll_notifications', icon: Bell, label: 'Payroll Notifications' },
-            { id: 'payroll_logs', icon: History, label: 'Payroll Logs' },
-            { id: 'whatsapp', icon: WhatsAppIcon, label: 'WhatsApp' },
-            { id: 'settings', icon: Settings, label: 'Settings' }
-          ].map(tab => (
+          {([
+            { id: 'overview', icon: BarChart3, label: 'Overview', visible: true },
+            { id: 'users', icon: Users, label: 'Users', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('manage_client_users') },
+            { id: 'files', icon: Files, label: 'Files', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_files') },
+            { id: 'activity', icon: Activity, label: 'Activity Logs', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_client_logs') || currentUser?.permissions?.includes('view_logs') },
+            { id: 'support_tickets', icon: MessageSquare, label: 'Support Tickets', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_tickets') },
+            { id: 'payroll_notifications', icon: Bell, label: 'Payroll Notifications', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll') },
+            { id: 'payroll_logs', icon: History, label: 'Payroll Logs', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll') },
+            { id: 'whatsapp', icon: WhatsAppIcon, label: 'WhatsApp', visible: currentUser?.role === 'superadmin' },
+            { id: 'settings', icon: Settings, label: 'Settings', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('edit_client_details') }
+          ].filter(tab => tab.visible)).map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
@@ -1170,16 +1204,19 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                 </div>
                 <div className="p-8 flex-1">
                   <div className="space-y-6">
-                    {clientLogs.slice(0, 5).map((log, i) => (
+                    {clientLogs.slice(0, 5).map((log, i, arr) => (
                       <motion.div 
                         key={log.id} 
                         initial={{ opacity: 0, x: -10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.05 }}
-                        className="flex items-start gap-4 group"
+                        className="relative flex items-start gap-4 group"
                       >
+                        {i !== arr.length - 1 && (
+                          <div className="absolute left-5 top-10 bottom-[-24px] w-px bg-slate-100 group-hover:bg-indigo-100 transition-colors" />
+                        )}
                         <div className={cn(
-                          "w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 mt-0.5 transition-transform group-hover:scale-110",
+                          "relative z-10 w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 mt-0.5 transition-transform group-hover:scale-110 border-2 border-white shadow-sm",
                           log.action.includes('LOGIN') ? "bg-indigo-50 text-indigo-600" : 
                           log.action.includes('PAYROLL') ? "bg-emerald-50 text-emerald-600" :
                           log.action.includes('FILE') ? "bg-amber-50 text-amber-600" : "bg-slate-50 text-slate-400"
@@ -1195,7 +1232,10 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                               <span className="px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest">New</span>
                             )}
                           </div>
-                          <p className="text-xs font-bold text-slate-500 truncate">{log.user_email}</p>
+                          <p className="text-xs font-bold text-slate-500 truncate mb-2">{log.user_email}</p>
+                          <div className="bg-slate-50/50 rounded-xl p-3 border border-slate-100 mt-1">
+                            {formatDetails(log.details)}
+                          </div>
                         </div>
                         <div className="text-right shrink-0">
                           <p className="text-sm font-black text-slate-800">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
@@ -1322,6 +1362,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                         <th className="px-8 py-4">Name</th>
                         <th className="px-8 py-4">Role</th>
                         <th className="px-8 py-4">Last Login</th>
+                        <th className="px-8 py-4">2FA Status</th>
                         <th className="px-8 py-4 text-right">Actions</th>
                       </tr>
                     </thead>
@@ -1339,7 +1380,38 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                               {user.role}
                             </span>
                           </td>
-                          <td className="px-8 py-4 text-sm font-bold text-slate-500">{user.lastLogin}</td>
+                          <td className="px-8 py-4 text-sm font-bold text-slate-500">{formatHarareLastAction(user.lastLogin)}</td>
+                          <td className="px-8 py-4">
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  setUserToToggle2FA(user);
+                                  setIs2FAModalOpen(true);
+                                }}
+                                className={cn(
+                                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2",
+                                  user.mfa_required ? "bg-indigo-600" : "bg-slate-200"
+                                )}
+                              >
+                                <span
+                                  className={cn(
+                                    "inline-block h-3 w-3 transform rounded-full bg-white transition-transform",
+                                    user.mfa_required ? "translate-x-5" : "translate-x-1"
+                                  )}
+                                />
+                              </button>
+                              <span className={cn(
+                                "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
+                                !user.mfa_required ? "bg-slate-100 text-slate-500" :
+                                !user.mfa_enabled ? "bg-amber-100 text-amber-600" :
+                                "bg-emerald-100 text-emerald-600"
+                              )}>
+                                {!user.mfa_required ? "Not required" :
+                                 !user.mfa_enabled ? "Setup pending" :
+                                 "Enabled"}
+                              </span>
+                            </div>
+                          </td>
                           <td className="px-8 py-4 text-right">
                             <div className="flex items-center justify-end gap-2 transition-opacity">
                               <Tooltip content="Edit User">
@@ -1531,49 +1603,66 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                 />
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <div className="pl-8 pr-8 pb-4">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
-                      <th className="px-8 py-4"><div className="flex items-center gap-2"><Clock className="w-3 h-3" /> Timestamp</div></th>
-                      <th className="px-8 py-4"><div className="flex items-center gap-2"><User className="w-3 h-3" /> User</div></th>
-                      <th className="px-8 py-4"><div className="flex items-center gap-2"><Activity className="w-3 h-3" /> Action</div></th>
-                      <th className="px-8 py-4">Details</th>
-                      <th className="px-8 py-4">IP Address</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {clientLogs
-                      .filter(log => 
-                        log.user_email.toLowerCase().includes(logSearchTerm.toLowerCase()) ||
-                        log.action.toLowerCase().includes(logSearchTerm.toLowerCase()) ||
-                        log.details.toLowerCase().includes(logSearchTerm.toLowerCase())
-                      )
-                      .map(log => (
-                        <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="px-8 py-4 text-xs font-medium text-slate-500 whitespace-nowrap">
-                            {new Date(log.created_at).toLocaleString()}
-                          </td>
-                          <td className="px-8 py-4">
-                            <span className="text-sm font-bold text-slate-800">{log.user_email}</span>
-                          </td>
-                          <td className="px-8 py-4">
-                            <span className="inline-flex items-center px-2 py-1 rounded-md text-[9px] font-black tracking-widest uppercase bg-slate-100 text-slate-600">
-                              {log.action.replace(/_/g, ' ')}
-                            </span>
-                          </td>
-                          <td className="px-8 py-4 text-xs text-slate-600">
+            <div className="p-8 max-h-[600px] overflow-y-auto no-scrollbar">
+              {clientLogs.length === 0 ? (
+                <BrandedState
+                  type="empty"
+                  portal="superadmin"
+                  title="No Activity"
+                  message="No activity has been logged for this client yet."
+                />
+              ) : (
+                <div className="space-y-6">
+                  {clientLogs
+                    .filter(log => 
+                      log.user_email.toLowerCase().includes(logSearchTerm.toLowerCase()) ||
+                      log.action.toLowerCase().includes(logSearchTerm.toLowerCase()) ||
+                      log.details.toLowerCase().includes(logSearchTerm.toLowerCase())
+                    )
+                    .map((log, index, arr) => (
+                      <div key={log.id} className="flex gap-6 relative group">
+                        {index !== arr.length - 1 && (
+                          <div className="absolute left-6 top-12 bottom-[-24px] w-px bg-slate-100 group-hover:bg-indigo-100 transition-colors" />
+                        )}
+                        <div className="flex flex-col items-center shrink-0 relative z-10">
+                          <div className={cn(
+                            "w-12 h-12 rounded-2xl flex items-center justify-center border-4 border-white shadow-sm transition-transform group-hover:scale-110",
+                            log.action.includes('LOGIN') ? "bg-indigo-50 text-indigo-600" : 
+                            log.action.includes('PAYROLL') ? "bg-emerald-50 text-emerald-600" :
+                            log.action.includes('FILE') ? "bg-amber-50 text-amber-600" : "bg-slate-50 text-slate-500"
+                          )}>
+                            {log.action.includes('LOGIN') ? <Lock className="w-5 h-5" /> : 
+                             log.action.includes('PAYROLL') ? <ShieldCheck className="w-5 h-5" /> :
+                             log.action.includes('FILE') ? <Files className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
+                          </div>
+                        </div>
+                        <div className="flex-1 bg-white rounded-3xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-4">
+                            <div>
+                              <div className="flex items-center gap-3 mb-1.5">
+                                <span className="text-base font-black text-slate-800">{log.action.replace(/_/g, ' ')}</span>
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">
+                                  {log.ip_address}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
+                                <UserIcon className="w-4 h-4 text-slate-400" />
+                                {log.user_email}
+                              </div>
+                            </div>
+                            <div className="text-left sm:text-right shrink-0">
+                              <p className="text-sm font-black text-slate-800">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{new Date(log.created_at).toLocaleDateString()}</p>
+                            </div>
+                          </div>
+                          <div className="bg-slate-50/50 rounded-2xl p-4 border border-slate-100">
                             {formatDetails(log.details)}
-                          </td>
-                          <td className="px-8 py-4 text-xs font-mono text-slate-400">
-                            {log.ip_address}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1583,6 +1672,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
           <SupportTicketsPanel
             tickets={clientSupportTickets}
             clientScoped={true}
+            currentUser={currentUser}
             onUpdateTicket={async (updatedTicket) => {
               try {
                 const saved = await appService.updateSupportTicket(updatedTicket.id, {
@@ -1629,104 +1719,169 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
 
         
         {activeTab === 'payroll_logs' && (
-          <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between gap-4">
-              <div className="space-y-1">
-                <h3 className="font-black text-slate-800">Payroll Submission Logs</h3>
-                <p className="text-xs text-slate-500 font-medium tracking-tight">Submission history for this client only.</p>
+          <div className="space-y-6">
+            {/* Summary Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Submissions</p>
+                <div className="flex items-end gap-2">
+                  <h4 className="text-2xl font-black text-slate-800">{filteredPayrollLogs.length}</h4>
+                  <span className="text-[10px] text-slate-400 font-bold mb-1.5 uppercase tracking-tighter">Logs</span>
+                </div>
               </div>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                <input 
-                  type="text" 
-                  value={payrollLogSearchTerm}
-                  onChange={(e) => setPayrollLogSearchTerm(e.target.value)}
-                  placeholder="Search periods, status, submitter..." 
-                  className="pl-9 pr-4 py-2 bg-slate-50 border-none rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 w-72 shadow-sm"
-                />
+              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
+                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Processed</p>
+                <div className="flex items-end gap-2">
+                  <h4 className="text-2xl font-black text-emerald-600">{filteredPayrollLogs.filter(l => l.status === 'processed').length}</h4>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 mb-2" />
+                </div>
+              </div>
+              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
+                <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest mb-1">Pending Review</p>
+                <div className="flex items-end gap-2">
+                  <h4 className="text-2xl font-black text-amber-600">{filteredPayrollLogs.filter(l => l.status !== 'processed' && l.status !== 'archived').length}</h4>
+                  <AlertCircle className="w-4 h-4 text-amber-400 mb-2" />
+                </div>
+              </div>
+              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
+                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Total Value</p>
+                <div className="flex items-end gap-2">
+                  <h4 className="text-2xl font-black text-indigo-600">
+                    R {filteredPayrollLogs.reduce((acc, curr) => acc + (Number(curr.totalPay) || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </h4>
+                </div>
               </div>
             </div>
-            {filteredPayrollLogs.length === 0 ? (
-              <BrandedState
-                type="empty"
-                portal="superadmin"
-                title="No Payroll Logs"
-                message="No payroll submissions have been logged for this client yet."
-              />
-            ) : (
-              <div className="overflow-x-auto">
-                <div className="pl-8 pr-8 pb-4">
+
+            <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h3 className="text-xl font-black text-slate-800 tracking-tight">Payroll Submission History</h3>
+                  <p className="text-sm text-slate-500 font-medium">Detailed log of all payroll data submitted for processing.</p>
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input 
+                    type="text" 
+                    value={payrollLogSearchTerm}
+                    onChange={(e) => setPayrollLogSearchTerm(e.target.value)}
+                    placeholder="Search logs..." 
+                    className="pl-11 pr-6 py-3 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:outline-none focus:ring-4 focus:ring-indigo-500/10 w-80 transition-all"
+                  />
+                </div>
+              </div>
+
+              {filteredPayrollLogs.length === 0 ? (
+                <BrandedState
+                  type="empty"
+                  portal="superadmin"
+                  title="No Payroll Logs"
+                  message="No payroll submissions have been logged for this client yet."
+                />
+              ) : (
+                <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
-                        <th className="px-8 py-4"><div className="flex items-center gap-2"><Clock className="w-3 h-3" /> Submitted</div></th>
-                        <th className="px-8 py-4">Period</th>
-                        <th className="px-8 py-4">Submitted By</th>
-                        <th className="px-8 py-4">Employees</th>
-                        <th className="px-8 py-4">Hours</th>
-                        <th className="px-8 py-4">Total Pay</th>
-                        <th className="px-8 py-4">Status</th>
-                        <th className="px-8 py-4">Processed</th>
+                        <th className="px-8 py-6">Submission Details</th>
+                        <th className="px-8 py-6">Period</th>
+                        <th className="px-8 py-6">Metrics</th>
+                        <th className="px-8 py-6">Financials</th>
+                        <th className="px-8 py-6">Status & Processing</th>
+                        <th className="px-8 py-6 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredPayrollLogs.map((submission) => (
-                        <tr key={submission.id} className="hover:bg-slate-50/50 transition-colors group">
-                          <td className="px-8 py-4 text-xs font-medium text-slate-500 whitespace-nowrap">
-                            {submission.submittedAt ? new Date(submission.submittedAt).toLocaleString() : '—'}
-                          </td>
-                          <td className="px-8 py-4">
-                            <div className="space-y-0.5">
-                              <p className="text-sm font-bold text-slate-800">{submission.period || '—'}</p>
-                              <p className="text-[10px] text-slate-400 font-semibold">{submission.id}</p>
+                        <tr key={submission.id} className="hover:bg-indigo-50/30 transition-colors group">
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400">
+                                <FileText className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="text-sm font-black text-slate-800">{submission.submittedBy || 'System'}</p>
+                                <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                                  <Clock className="w-3 h-3" />
+                                  {submission.submittedAt ? new Date(submission.submittedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                                </div>
+                              </div>
                             </div>
                           </td>
-                          <td className="px-8 py-4 text-sm font-medium text-slate-700">
-                            {submission.submittedBy || '—'}
-                          </td>
-                          <td className="px-8 py-4 text-sm font-bold text-slate-800">
-                            {submission.employeeCount ?? 0}
-                          </td>
-                          <td className="px-8 py-4 text-sm font-bold text-slate-800">
-                            {Number(submission.totalHours || 0).toFixed(2)}
-                          </td>
-                          <td className="px-8 py-4 text-sm font-bold text-slate-800 whitespace-nowrap">
-                            R {Number(submission.totalPay || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-                          <td className="px-8 py-4">
-                            <div className={cn(
-                              "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                              submission.status === 'processed'
-                                ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
-                                : submission.status === 'archived'
-                                  ? "bg-slate-100 text-slate-600 border border-slate-200"
-                                  : "bg-amber-50 text-amber-600 border border-amber-100"
-                            )}>
-                              {submission.status === 'processed' ? (
-                                <CheckCircle2 className="w-3 h-3" />
-                              ) : submission.status === 'archived' ? (
-                                <History className="w-3 h-3" />
-                              ) : (
-                                <AlertCircle className="w-3 h-3" />
-                              )}
-                              {submission.status}
+                          <td className="px-8 py-6">
+                            <div className="space-y-1">
+                              <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest">
+                                {submission.period || 'N/A'}
+                              </span>
+                              <p className="text-[10px] text-slate-400 font-black uppercase tracking-tighter">ID: {submission.id.substring(0, 8)}...</p>
                             </div>
                           </td>
-                          <td className="px-8 py-4">
+                          <td className="px-8 py-6">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-2">
+                                <Users className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-sm font-bold text-slate-700">{submission.employeeCount ?? 0} Employees</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-medium text-slate-500">{Number(submission.totalHours || 0).toFixed(1)} Hours</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
                             <div className="space-y-0.5">
-                              <p className="text-xs font-medium text-slate-700">{submission.processedBy || 'Not processed'}</p>
-                              <p className="text-[10px] text-slate-400 font-semibold">
-                                {submission.processedAt ? new Date(submission.processedAt).toLocaleString() : '—'}
+                              <p className="text-sm font-black text-indigo-600">
+                                R {Number(submission.totalPay || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </p>
+                              <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Gross Total</p>
                             </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex flex-col gap-3">
+                              <div className={cn(
+                                "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest w-fit",
+                                submission.status === 'processed'
+                                  ? "bg-emerald-100 text-emerald-600"
+                                  : submission.status === 'archived'
+                                    ? "bg-slate-100 text-slate-600"
+                                    : "bg-amber-100 text-amber-600"
+                              )}>
+                                {submission.status === 'processed' ? (
+                                  <CheckCircle2 className="w-3 h-3" />
+                                ) : submission.status === 'archived' ? (
+                                  <History className="w-3 h-3" />
+                                ) : (
+                                  <AlertCircle className="w-3 h-3" />
+                                )}
+                                {submission.status}
+                              </div>
+                              {submission.processedBy && (
+                                <div className="flex items-center gap-2">
+                                  <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center text-[8px] font-black text-slate-500">
+                                    {submission.processedBy.substring(0, 2).toUpperCase()}
+                                  </div>
+                                  <div className="space-y-0">
+                                    <p className="text-[10px] font-bold text-slate-600 leading-none">{submission.processedBy}</p>
+                                    <p className="text-[9px] text-slate-400 font-medium">
+                                      {submission.processedAt ? new Date(submission.processedAt).toLocaleDateString() : ''}
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-8 py-6 text-right">
+                            <button className="p-2.5 hover:bg-white rounded-xl text-slate-400 hover:text-indigo-600 transition-colors shadow-sm">
+                              <Eye className="w-4 h-4" />
+                            </button>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 
@@ -2283,6 +2438,57 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
           </>
         )}
       </AnimatePresence>
+      {/* 2FA Confirmation Modal */}
+      <AnimatePresence>
+        {is2FAModalOpen && userToToggle2FA && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIs2FAModalOpen(false)}
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-[40px] shadow-2xl z-[101] overflow-hidden"
+            >
+              <div className="p-10 space-y-8">
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-black text-slate-800 tracking-tight">
+                    {userToToggle2FA.mfa_required ? 'Disable 2FA?' : 'Require 2FA?'}
+                  </h3>
+                  <p className="text-sm text-slate-500 font-bold">
+                    {userToToggle2FA.mfa_required 
+                      ? `Are you sure you want to disable 2FA for ${userToToggle2FA.name}? They will no longer be required to use Google Authenticator.`
+                      : `The user will be asked to set up Google Authenticator the next time they log in. They will not be able to access the dashboard until setup is complete.`}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIs2FAModalOpen(false)}
+                    className="px-6 py-3 text-slate-500 hover:bg-slate-100 rounded-2xl font-bold text-sm transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggle2FA}
+                    className="px-6 py-3 bg-indigo-600 text-white hover:bg-indigo-700 rounded-2xl font-black text-sm transition-colors shadow-lg shadow-indigo-200"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* New User Modal */}
       <AnimatePresence>
         {isNewUserModalOpen && (
@@ -2347,12 +2553,13 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Role</label>
-                    <select name="role" defaultValue={editingUser?.role || 'User'} className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm appearance-none bg-white">
-                      <option value="Admin">Admin</option>
-                      <option value="Manager">Manager</option>
-                      <option value="User">User</option>
-                    </select>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Access Level</label>
+                    <input
+                      value="Client Admin"
+                      readOnly
+                      tabIndex={-1}
+                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-slate-500 outline-none font-bold text-sm cursor-not-allowed"
+                    />
                   </div>
 
                   <div className="flex gap-3 pt-4">

@@ -55,6 +55,93 @@ const normalizeRow = (row: any): BackgroundJobRecord | null => {
   };
 };
 
+const resolveJobClientId = (job: Partial<BackgroundJobRecord> & { payload?: any }) => {
+  const payload = parseJson((job as any)?.payload, {});
+  const direct = payload?.clientId ?? payload?.client_id ?? null;
+  return direct ? String(direct) : null;
+};
+
+const resolveJobClientName = (job: Partial<BackgroundJobRecord> & { payload?: any }) => {
+  const payload = parseJson((job as any)?.payload, {});
+  const direct = payload?.clientName ?? payload?.client_name ?? null;
+  return direct ? String(direct) : null;
+};
+
+const resolveJobActor = (job: Partial<BackgroundJobRecord> & { payload?: any }) => {
+  const payload = parseJson((job as any)?.payload, {});
+  return {
+    userId: payload?.requestedByUserId ? String(payload.requestedByUserId) : null,
+    userEmail: payload?.requestedByEmail ? String(payload.requestedByEmail) : null,
+  };
+};
+
+const insertActivityLogRow = async (input: {
+  clientId: string | null;
+  action: string;
+  details?: Record<string, any>;
+  userId?: string | null;
+  userEmail?: string | null;
+  ipAddress?: string | null;
+}) => {
+  if (!input.clientId) return;
+  const row = {
+    id: randomUUID(),
+    user_id: input.userId || null,
+    user_email: input.userEmail || 'System/Worker',
+    action: input.action,
+    details: JSON.stringify(input.details || {}),
+    ip_address: input.ipAddress || 'worker',
+    client_id: input.clientId,
+    created_at: nowIso(),
+  };
+
+  if (env.databaseProvider !== 'supabase') {
+    db.prepare(`
+      INSERT INTO activity_logs (id, user_id, user_email, action, details, ip_address, client_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(row.id, row.user_id, row.user_email, row.action, row.details, row.ip_address, row.client_id);
+    return;
+  }
+
+  if (!supabaseAdmin) throw new Error('Supabase is not configured for activity logging.');
+  const { error } = await supabaseAdmin.from('activity_logs').insert(row);
+  if (error) throw error;
+};
+
+const logWorkerJobEvent = async (
+  action: string,
+  job: Partial<BackgroundJobRecord> & { payload?: any },
+  extraDetails: Record<string, any> = {},
+  options: { userId?: string | null; userEmail?: string | null; ipAddress?: string | null } = {},
+) => {
+  try {
+    const clientId = resolveJobClientId(job);
+    if (!clientId) return;
+    const clientName = resolveJobClientName(job);
+    const actor = resolveJobActor(job);
+    const payload = parseJson((job as any)?.payload, {});
+    await insertActivityLogRow({
+      clientId,
+      action,
+      userId: options.userId ?? actor.userId ?? null,
+      userEmail: options.userEmail ?? actor.userEmail ?? null,
+      ipAddress: options.ipAddress ?? 'worker',
+      details: {
+        jobId: job.id || null,
+        jobType: job.job_type || null,
+        clientName,
+        payrollSubmissionId: payload?.payrollSubmissionId || null,
+        attempts: job.attempts ?? null,
+        maxAttempts: job.max_attempts ?? null,
+        status: job.status || null,
+        ...extraDetails,
+      },
+    });
+  } catch (error) {
+    console.warn('[WORKER LOGS] Failed to write worker activity log:', error instanceof Error ? error.message : error);
+  }
+};
+
 export const ensureBackgroundJobTables = async () => {
   if (env.databaseProvider === 'supabase') return;
   db.prepare(`
@@ -163,7 +250,7 @@ export const claimNextBackgroundJob = async (workerId: string, allowedTypes?: Ba
 
   if (env.databaseProvider !== 'supabase') {
     await ensureBackgroundJobTables();
-    const tx = db.transaction(() => {
+    const claimTransaction = db.transaction(() => {
       let sql = `
         SELECT *
         FROM background_jobs
@@ -193,7 +280,11 @@ export const claimNextBackgroundJob = async (workerId: string, allowedTypes?: Ba
       const updated = db.prepare(`SELECT * FROM background_jobs WHERE id = ?`).get(row.id) as any;
       return normalizeRow(updated);
     });
-    return tx();
+    const claimed = claimTransaction();
+    if (claimed) {
+      await logWorkerJobEvent('WORKER_TASK_STARTED', claimed, { workerId }, { userEmail: 'System/Worker' });
+    }
+    return claimed;
   }
 
   if (!supabaseAdmin) throw new Error('Supabase is not configured for background jobs.');
@@ -205,10 +296,14 @@ export const claimNextBackgroundJob = async (workerId: string, allowedTypes?: Ba
     throw new Error(`Supabase background worker claim failed. Run BACKGROUND_WORKER_TABLES.sql first. ${error.message}`);
   }
   const row = Array.isArray(data) ? data[0] : data;
-  return normalizeRow(row);
+  const normalized = normalizeRow(row);
+  if (normalized) {
+    await logWorkerJobEvent('WORKER_TASK_STARTED', normalized, { workerId }, { userEmail: 'System/Worker' });
+  }
+  return normalized;
 };
 
-export const markBackgroundJobCompleted = async (jobId: string, result: any = null) => {
+export const markBackgroundJobCompleted = async (job: BackgroundJobRecord, result: any = null) => {
   const now = nowIso();
   if (env.databaseProvider !== 'supabase') {
     await ensureBackgroundJobTables();
@@ -222,7 +317,8 @@ export const markBackgroundJobCompleted = async (jobId: string, result: any = nu
           finished_at = ?,
           updated_at = ?
       WHERE id = ?
-    `).run(JSON.stringify(result ?? null), now, now, jobId);
+    `).run(JSON.stringify(result ?? null), now, now, job.id);
+    await logWorkerJobEvent('WORKER_TASK_COMPLETED', { ...job, status: 'completed', result, finished_at: now, updated_at: now }, {}, { userEmail: 'System/Worker' });
     return;
   }
   if (!supabaseAdmin) throw new Error('Supabase is not configured for background jobs.');
@@ -237,8 +333,9 @@ export const markBackgroundJobCompleted = async (jobId: string, result: any = nu
       finished_at: now,
       updated_at: now,
     })
-    .eq('id', jobId);
+    .eq('id', job.id);
   if (error) throw error;
+  await logWorkerJobEvent('WORKER_TASK_COMPLETED', { ...job, status: 'completed', result, finished_at: now, updated_at: now }, {}, { userEmail: 'System/Worker' });
 };
 
 export const markBackgroundJobFailed = async (job: BackgroundJobRecord, errorMessage: string) => {
@@ -264,6 +361,14 @@ export const markBackgroundJobFailed = async (job: BackgroundJobRecord, errorMes
           updated_at = ?
       WHERE id = ?
     `).run(nextStatus, shouldRetry ? nextAvailable : job.available_at, errorMessage, finishedAt, now, job.id);
+    await logWorkerJobEvent(shouldRetry ? 'WORKER_TASK_RETRY_SCHEDULED' : 'WORKER_TASK_FAILED', {
+      ...job,
+      status: nextStatus,
+      available_at: shouldRetry ? nextAvailable : job.available_at,
+      last_error: errorMessage,
+      finished_at: finishedAt,
+      updated_at: now,
+    }, { error: errorMessage, retryScheduledFor: shouldRetry ? nextAvailable : null }, { userEmail: 'System/Worker' });
     return;
   }
   if (!supabaseAdmin) throw new Error('Supabase is not configured for background jobs.');
@@ -280,6 +385,14 @@ export const markBackgroundJobFailed = async (job: BackgroundJobRecord, errorMes
     })
     .eq('id', job.id);
   if (error) throw error;
+  await logWorkerJobEvent(shouldRetry ? 'WORKER_TASK_RETRY_SCHEDULED' : 'WORKER_TASK_FAILED', {
+    ...job,
+    status: nextStatus,
+    available_at: shouldRetry ? nextAvailable : job.available_at,
+    last_error: errorMessage,
+    finished_at: finishedAt,
+    updated_at: now,
+  }, { error: errorMessage, retryScheduledFor: shouldRetry ? nextAvailable : null }, { userEmail: 'System/Worker' });
 };
 
 export const getBackgroundJobById = async (jobId: string) => {

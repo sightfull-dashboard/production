@@ -34,7 +34,7 @@ async function main() {
       console.log(`[WORKER] Processing ${job.job_type} job ${job.id}`);
       try {
         const result = await processBackgroundJob(job);
-        await markBackgroundJobCompleted(job.id, result);
+        await markBackgroundJobCompleted(job, result);
         console.log(`[WORKER] Completed ${job.id}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

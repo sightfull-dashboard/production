@@ -33,7 +33,7 @@ const fetchSupabaseUserById = async (id: string | null | undefined) => {
   if (!id) return null;
   const { data, error } = await supabaseAdmin
     .from('users')
-    .select('id, email, client_id')
+    .select('id, email, client_id, role, permissions, assigned_clients, name, image')
     .eq('id', id)
     .maybeSingle();
   if (error) throw error;
@@ -74,6 +74,78 @@ const fetchSupabaseFileById = async (id: string | null | undefined) => {
   return data as any;
 };
 
+const parseJsonArray = (value: any) => Array.isArray(value) ? value : (() => {
+  try { return value ? JSON.parse(value) : []; } catch { return []; }
+})();
+const getPermissions = (row: any) => parseJsonArray(row?.permissions).map((value: any) => String(value)).filter(Boolean);
+const getAssignedClients = (row: any) => parseJsonArray(row?.assigned_clients).map((value: any) => String(value)).filter(Boolean);
+const hasInternalPermission = (row: any, permission?: string | null) => {
+  const role = String(row?.role || '').toLowerCase();
+  if (role === 'superadmin') return true;
+  if (role !== 'staff') return false;
+  if (!permission) return true;
+  return getPermissions(row).includes(permission);
+};
+const canAccessAssignedClient = (row: any, clientId: string | null | undefined, permission?: string | null) => {
+  if (!clientId) return false;
+  if (!hasInternalPermission(row, permission)) return false;
+  if (String(row?.role || '').toLowerCase() === 'superadmin') return true;
+  return getAssignedClients(row).includes(String(clientId));
+};
+const getDisplayName = (row: any) => String(row?.name || row?.email || 'User').trim();
+
+
+const addDaysToIsoDate = (isoDate: string, days: number) => {
+  const date = new Date(`${isoDate}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const countInclusivePeriodDays = (startIso: string, endIso: string) => {
+  const start = new Date(`${startIso}T00:00:00`);
+  const end = new Date(`${endIso}T00:00:00`);
+  const diffMs = end.getTime() - start.getTime();
+  if (!Number.isFinite(diffMs) || diffMs < 0) return 0;
+  return Math.floor(diffMs / 86400000) + 1;
+};
+
+const hasPriorPayrollSubmission = async (provider: string, db: any, clientId: string, currentPeriodStart: string) => {
+  if (provider !== 'supabase') {
+    const row = db.prepare(`SELECT id FROM payroll_submissions WHERE client_id = ? AND period_end < ? LIMIT 1`).get(clientId, currentPeriodStart) as any;
+    return Boolean(row?.id);
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('payroll_submissions')
+    .select('id')
+    .eq('client_id', clientId)
+    .lt('period_end', currentPeriodStart)
+    .limit(1);
+
+  if (error) throw error;
+  return Boolean((data || [])[0]?.id);
+};
+
+const hasExactPayrollSubmissionWindow = async (provider: string, db: any, clientId: string, periodStart: string, periodEnd: string) => {
+  if (provider !== 'supabase') {
+    const row = db.prepare(`SELECT id FROM payroll_submissions WHERE client_id = ? AND period_start = ? AND period_end = ? LIMIT 1`).get(clientId, periodStart, periodEnd) as any;
+    return Boolean(row?.id);
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('payroll_submissions')
+    .select('id')
+    .eq('client_id', clientId)
+    .eq('period_start', periodStart)
+    .eq('period_end', periodEnd)
+    .limit(1);
+
+  if (error) throw error;
+  return Boolean((data || [])[0]?.id);
+};
 
 const uploadBinaryLimit = `${env.directUploadLimitMb}mb`;
 
@@ -529,6 +601,35 @@ export function registerFilesRoutes({
     const startDate = new Date(`${periodStart}T00:00:00`);
     const endDate = new Date(`${periodEnd}T00:00:00`);
     const missingAssignments: string[] = [];
+    const actorRole = String(user?.role || (req.session as any)?.userRole || '').toLowerCase();
+
+    if (client?.id && actorRole !== 'superadmin') {
+      try {
+        const periodDays = countInclusivePeriodDays(periodStart, periodEnd);
+        if (periodDays > 0) {
+          const previousPeriodEnd = addDaysToIsoDate(periodStart, -1);
+          const previousPeriodStart = addDaysToIsoDate(periodStart, -periodDays);
+          const hasAnyEarlierSubmission = await hasPriorPayrollSubmission(env.databaseProvider, db, client.id, periodStart);
+          if (hasAnyEarlierSubmission) {
+            const hasImmediatePreviousSubmission = await hasExactPayrollSubmissionWindow(
+              env.databaseProvider,
+              db,
+              client.id,
+              previousPeriodStart,
+              previousPeriodEnd,
+            );
+            if (!hasImmediatePreviousSubmission) {
+              return res.status(400).json({
+                error: `Cannot submit payroll for ${periodStart} to ${periodEnd} until the previous payroll period (${previousPeriodStart} to ${previousPeriodEnd}) has been submitted.`,
+              });
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to validate previous payroll submission requirement:', error);
+        return res.status(500).json({ error: 'Failed to validate previous payroll submission requirement' });
+      }
+    }
 
     if (client?.id) {
       if (env.databaseProvider !== 'supabase') {
@@ -666,7 +767,17 @@ export function registerFilesRoutes({
             clientName,
             payrollEmail,
             payrollCc,
+            requestedByUserId: sessionUserId || null,
+            requestedByEmail: user?.email || null,
           },
+        });
+        logActivity(req, 'WORKER_TASK_QUEUED', {
+          clientId,
+          clientName,
+          jobId: queuedJob.id,
+          jobType: 'payroll_submission_email',
+          payrollSubmissionId: id,
+          requestedByEmail: user?.email || null,
         });
         mailResult = { sent: false, queued: true, jobId: queuedJob.id };
       } catch (error: any) {
@@ -911,12 +1022,19 @@ export function registerFilesRoutes({
     const sessionUserId = (req.session as any)?.userId;
     const sessionRole = (req.session as any)?.userRole;
     const actingUser = env.databaseProvider !== 'supabase'
-      ? (sessionUserId ? db.prepare("SELECT id, email, client_id FROM users WHERE id = ?").get(sessionUserId) as any : null)
+      ? (sessionUserId ? db.prepare("SELECT id, email, client_id, role, permissions, assigned_clients FROM users WHERE id = ?").get(sessionUserId) as any : null)
       : await fetchSupabaseUserById(sessionUserId);
 
     if (env.databaseProvider !== 'supabase') {
       if (sessionRole === 'superadmin' && !actingUser?.client_id) {
         const rows = db.prepare("SELECT * FROM support_tickets ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC").all();
+        return res.json(rows);
+      }
+      if (sessionRole === 'staff' && hasInternalPermission(actingUser, 'view_tickets')) {
+        const assignedClientIds = getAssignedClients(actingUser);
+        if (assignedClientIds.length === 0) return res.json([]);
+        const placeholders = assignedClientIds.map(() => '?').join(', ');
+        const rows = db.prepare(`SELECT * FROM support_tickets WHERE client_id IN (${placeholders}) ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC`).all(...assignedClientIds);
         return res.json(rows);
       }
       const effectiveClientId = getEffectiveClientId(db, req) || actingUser?.client_id || null;
@@ -929,11 +1047,22 @@ export function registerFilesRoutes({
 
     try {
       let query = supabaseAdmin.from('support_tickets').select('*').order('updated_at', { ascending: false }).order('created_at', { ascending: false });
-      if (!(sessionRole === 'superadmin' && !actingUser?.client_id)) {
-        const effectiveClientId = getEffectiveClientId(env.databaseProvider !== 'supabase' ? db : null, req) || actingUser?.client_id || null;
-        if (!effectiveClientId) return res.json([]);
-        query = query.eq('client_id', effectiveClientId);
+      if (sessionRole === 'superadmin' && !actingUser?.client_id) {
+        const { data, error } = await query;
+        if (error) throw error;
+        return res.json(data || []);
       }
+      if (sessionRole === 'staff' && hasInternalPermission(actingUser, 'view_tickets')) {
+        const assignedClientIds = getAssignedClients(actingUser);
+        if (assignedClientIds.length === 0) return res.json([]);
+        query = query.in('client_id', assignedClientIds);
+        const { data, error } = await query;
+        if (error) throw error;
+        return res.json(data || []);
+      }
+      const effectiveClientId = getEffectiveClientId(env.databaseProvider !== 'supabase' ? db : null, req) || actingUser?.client_id || null;
+      if (!effectiveClientId) return res.json([]);
+      query = query.eq('client_id', effectiveClientId);
       const { data, error } = await query;
       if (error) throw error;
       return res.json(data || []);
@@ -977,32 +1106,138 @@ export function registerFilesRoutes({
     }
   });
 
-  app.patch("/api/support-tickets/:id", isSuperAdmin, async (req, res) => {
+  app.patch("/api/support-tickets/:id", ensureFileAccess, async (req, res) => {
     try {
+      const sessionUserId = (req.session as any)?.userId;
+      const sessionRole = (req.session as any)?.userRole;
+      const actingUser = env.databaseProvider !== 'supabase'
+        ? (sessionUserId ? db.prepare("SELECT id, email, client_id, role, permissions, assigned_clients, name, image FROM users WHERE id = ?").get(sessionUserId) as any : null)
+        : await fetchSupabaseUserById(sessionUserId);
+
+      if (!actingUser) return res.status(401).json({ error: 'Unauthorized' });
+
       if (env.databaseProvider !== 'supabase') {
         const existing = db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(req.params.id) as any;
         if (!existing) return res.status(404).json({ error: 'Support ticket not found' });
-        db.prepare(`UPDATE support_tickets SET status = ?, priority = ?, admin_notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-          .run(req.body.status ?? existing.status, req.body.priority ?? existing.priority, req.body.admin_notes ?? existing.admin_notes ?? '', req.params.id);
+        const canEdit = sessionRole === 'superadmin'
+          || (sessionRole === 'staff' && canAccessAssignedClient(actingUser, existing.client_id, 'view_tickets'));
+        if (!canEdit) return res.status(403).json({ error: 'Forbidden' });
+        const nextStatus = req.body.status ?? existing.status;
+        if (String(nextStatus).toLowerCase() === 'resolved' && sessionRole === 'staff' && !hasInternalPermission(actingUser, 'resolve_tickets')) {
+          return res.status(403).json({ error: 'Forbidden' });
+        }
+        db.prepare(`UPDATE support_tickets SET status = ?, priority = ?, admin_notes = ?, updated_at = CURRENT_TIMESTAMP, resolved_at = ?, resolved_by_user_id = ?, resolved_by_name = ? WHERE id = ?`)
+          .run(nextStatus, req.body.priority ?? existing.priority, req.body.admin_notes ?? existing.admin_notes ?? '', String(nextStatus).toLowerCase() === 'resolved' ? new Date().toISOString() : existing.resolved_at ?? null, String(nextStatus).toLowerCase() === 'resolved' ? actingUser.id : existing.resolved_by_user_id ?? null, String(nextStatus).toLowerCase() === 'resolved' ? getDisplayName(actingUser) : existing.resolved_by_name ?? null, req.params.id);
         const ticket = db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(req.params.id);
-        logActivity(req, 'UPDATE_SUPPORT_TICKET', { ticketId: req.params.id, status: req.body.status ?? existing.status });
+        logActivity(req, 'UPDATE_SUPPORT_TICKET', { ticketId: req.params.id, status: nextStatus, clientId: existing.client_id });
         return res.json(ticket);
       }
 
       const { data: existing, error: fetchError } = await supabaseAdmin.from('support_tickets').select('*').eq('id', req.params.id).single();
       if (fetchError || !existing) return res.status(404).json({ error: 'Support ticket not found' });
+      const canEdit = sessionRole === 'superadmin'
+        || (sessionRole === 'staff' && canAccessAssignedClient(actingUser, existing.client_id, 'view_tickets'));
+      if (!canEdit) return res.status(403).json({ error: 'Forbidden' });
+      const nextStatus = req.body.status ?? existing.status;
+      if (String(nextStatus).toLowerCase() === 'resolved' && sessionRole === 'staff' && !hasInternalPermission(actingUser, 'resolve_tickets')) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
 
       const { data, error } = await supabaseAdmin.from('support_tickets').update({
-        status: req.body.status ?? existing.status,
+        status: nextStatus,
         priority: req.body.priority ?? existing.priority,
         admin_notes: req.body.admin_notes ?? existing.admin_notes ?? '',
+        resolved_at: String(nextStatus).toLowerCase() === 'resolved' ? new Date().toISOString() : existing.resolved_at ?? null,
+        resolved_by_user_id: String(nextStatus).toLowerCase() === 'resolved' ? actingUser.id : existing.resolved_by_user_id ?? null,
+        resolved_by_name: String(nextStatus).toLowerCase() === 'resolved' ? getDisplayName(actingUser) : existing.resolved_by_name ?? null,
       }).eq('id', req.params.id).select('*').single();
       if (error || !data) throw error;
-      logActivity(req, 'UPDATE_SUPPORT_TICKET', { ticketId: req.params.id, status: req.body.status ?? existing.status });
+      logActivity(req, 'UPDATE_SUPPORT_TICKET', { ticketId: req.params.id, status: nextStatus, clientId: existing.client_id });
       return res.json(data);
     } catch (error) {
       console.error('Failed to update support ticket:', error);
       return res.status(500).json({ error: 'Failed to update support ticket' });
+    }
+  });
+
+  app.get('/api/support-tickets/:id/comments', ensureFileAccess, async (req, res) => {
+    try {
+      const sessionUserId = (req.session as any)?.userId;
+      const sessionRole = (req.session as any)?.userRole;
+      const actingUser = env.databaseProvider !== 'supabase'
+        ? (sessionUserId ? db.prepare("SELECT id, email, client_id, role, permissions, assigned_clients FROM users WHERE id = ?").get(sessionUserId) as any : null)
+        : await fetchSupabaseUserById(sessionUserId);
+      if (!actingUser || !['superadmin','staff'].includes(String(sessionRole || '').toLowerCase())) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      const ticket = env.databaseProvider !== 'supabase'
+        ? db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(req.params.id) as any
+        : await supabaseAdmin.from('support_tickets').select('*').eq('id', req.params.id).maybeSingle().then(({ data }) => data as any);
+      if (!ticket) return res.status(404).json({ error: 'Support ticket not found' });
+      if (!canAccessAssignedClient(actingUser, ticket.client_id, 'view_tickets')) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      if (env.databaseProvider !== 'supabase') {
+        const rows = db.prepare("SELECT * FROM support_ticket_comments WHERE ticket_id = ? ORDER BY datetime(created_at) ASC").all(req.params.id) as any[];
+        return res.json(rows.map((row) => ({ ...row, tagged_users: parseJsonArray(row.tagged_users) })));
+      }
+      const { data, error } = await supabaseAdmin.from('support_ticket_comments').select('*').eq('ticket_id', req.params.id).order('created_at', { ascending: true });
+      if (error) throw error;
+      return res.json((data || []).map((row: any) => ({ ...row, tagged_users: parseJsonArray(row.tagged_users) })));
+    } catch (error) {
+      console.error('Failed to load ticket comments:', error);
+      return res.status(500).json({ error: 'Failed to load ticket comments' });
+    }
+  });
+
+  app.post('/api/support-tickets/:id/comments', ensureFileAccess, async (req, res) => {
+    try {
+      const sessionUserId = (req.session as any)?.userId;
+      const sessionRole = (req.session as any)?.userRole;
+      const actingUser = env.databaseProvider !== 'supabase'
+        ? (sessionUserId ? db.prepare("SELECT id, email, client_id, role, permissions, assigned_clients, name, image FROM users WHERE id = ?").get(sessionUserId) as any : null)
+        : await fetchSupabaseUserById(sessionUserId);
+      if (!actingUser || !['superadmin','staff'].includes(String(sessionRole || '').toLowerCase())) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      const ticket = env.databaseProvider !== 'supabase'
+        ? db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(req.params.id) as any
+        : await supabaseAdmin.from('support_tickets').select('*').eq('id', req.params.id).maybeSingle().then(({ data }) => data as any);
+      if (!ticket) return res.status(404).json({ error: 'Support ticket not found' });
+      if (!canAccessAssignedClient(actingUser, ticket.client_id, 'view_tickets')) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+      const message = String(req.body.message || '').trim();
+      if (!message) return res.status(400).json({ error: 'Message is required' });
+      const taggedUsers = getAssignedClients({ assigned_clients: req.body.tagged_users || req.body.taggedUsers });
+      const commentId = `tcom_${Math.random().toString(36).slice(2, 10)}`;
+      const payload = {
+        id: commentId,
+        ticket_id: req.params.id,
+        user_id: actingUser.id,
+        user_name: String(req.body.user_name || getDisplayName(actingUser)).trim(),
+        user_email: String(req.body.user_email || actingUser.email || '').trim(),
+        user_image: req.body.user_image || actingUser.image || null,
+        role: String(actingUser.role || sessionRole || 'staff').toLowerCase(),
+        message,
+        tagged_users: taggedUsers,
+        created_at: new Date().toISOString(),
+      };
+      if (env.databaseProvider !== 'supabase') {
+        db.prepare(`INSERT INTO support_ticket_comments (id, ticket_id, user_id, user_name, user_email, user_image, role, message, tagged_users, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(payload.id, payload.ticket_id, payload.user_id, payload.user_name, payload.user_email, payload.user_image, payload.role, payload.message, JSON.stringify(payload.tagged_users), payload.created_at);
+        db.prepare("UPDATE support_tickets SET updated_at = CURRENT_TIMESTAMP, status = CASE WHEN status = 'open' THEN 'in_progress' ELSE status END WHERE id = ?").run(req.params.id);
+        logActivity(req, 'CREATE_SUPPORT_TICKET_COMMENT', { ticketId: req.params.id, clientId: ticket.client_id, taggedUsersCount: payload.tagged_users.length });
+        return res.status(201).json(payload);
+      }
+      const { data, error } = await supabaseAdmin.from('support_ticket_comments').insert(payload).select('*').single();
+      if (error) throw error;
+      await supabaseAdmin.from('support_tickets').update({ updated_at: new Date().toISOString(), status: ticket.status === 'open' ? 'in_progress' : ticket.status }).eq('id', req.params.id);
+      logActivity(req, 'CREATE_SUPPORT_TICKET_COMMENT', { ticketId: req.params.id, clientId: ticket.client_id, taggedUsersCount: payload.tagged_users.length });
+      return res.status(201).json({ ...data, tagged_users: parseJsonArray((data as any).tagged_users) });
+    } catch (error) {
+      console.error('Failed to create ticket comment:', error);
+      return res.status(500).json({ error: 'Failed to create ticket comment' });
     }
   });
 }

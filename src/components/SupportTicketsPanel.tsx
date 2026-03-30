@@ -4,21 +4,28 @@ import { MessageSquare, Eye, ShieldCheck, Search, Filter, X, CheckCircle2, Clock
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
 import { Tooltip } from './Tooltip';
-import { SupportTicket } from '../types';
+import { SupportTicket, User } from '../types';
 import { Modal } from './Modal';
+import { TicketDetailPage } from './TicketDetailPage';
 
 interface SupportTicketsPanelProps {
   tickets: SupportTicket[];
   onUpdateTicket?: (ticket: SupportTicket) => void;
   clientScoped?: boolean;
+  currentUser?: User;
 }
 
-export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({ tickets, onUpdateTicket, clientScoped = false }) => {
+export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({ 
+  tickets, 
+  onUpdateTicket, 
+  clientScoped = false,
+  currentUser
+}) => {
   const [filter, setFilter] = useState<'all' | 'open' | 'resolved'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClientFilter, setSelectedClientFilter] = useState<string>('all');
   const [selectedTicket, setSelectedTicket] = useState<SupportTicket | null>(null);
-  const [internalNote, setInternalNote] = useState('');
+  const [view, setView] = useState<'list' | 'detail'>('list');
 
   const uniqueClients = useMemo(() => {
     const clients = new Map<string, string>();
@@ -48,15 +55,21 @@ export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({ ticket
     }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [tickets, filter, searchQuery, selectedClientFilter, clientScoped]);
 
-  const handleSaveNote = () => {
-    if (!selectedTicket || !onUpdateTicket) return;
-    onUpdateTicket({
-      ...selectedTicket,
-      admin_notes: internalNote,
-      updated_at: new Date().toISOString()
-    });
+  const handleTicketClick = (ticket: SupportTicket) => {
+    setSelectedTicket(ticket);
+    setView('detail');
+  };
+
+  const handleBack = () => {
+    setView('list');
     setSelectedTicket(null);
-    setInternalNote('');
+  };
+
+  const handleUpdateTicket = (updated: SupportTicket) => {
+    if (onUpdateTicket) {
+      onUpdateTicket(updated);
+    }
+    setSelectedTicket(updated);
   };
 
   const handleResolveTicket = (ticket: SupportTicket) => {
@@ -66,9 +79,6 @@ export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({ ticket
       status: 'resolved',
       updated_at: new Date().toISOString()
     });
-    if (selectedTicket?.id === ticket.id) {
-      setSelectedTicket(null);
-    }
   };
 
   const getPriorityIcon = (priority: string) => {
@@ -78,6 +88,17 @@ export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({ ticket
       default: return <MessageSquare className="w-4 h-4" />;
     }
   };
+
+  if (view === 'detail' && selectedTicket && currentUser) {
+    return (
+      <TicketDetailPage 
+        ticket={selectedTicket}
+        onBack={handleBack}
+        onUpdateTicket={handleUpdateTicket}
+        currentUser={currentUser}
+      />
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -132,10 +153,7 @@ export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({ ticket
             <motion.div
               key={ticket.id}
               layoutId={`support-ticket-${ticket.id}`}
-              onClick={() => {
-                setSelectedTicket(ticket);
-                setInternalNote(ticket.admin_notes || '');
-              }}
+              onClick={() => handleTicketClick(ticket)}
               className="group bg-white p-6 rounded-[24px] border border-slate-100 hover:shadow-xl hover:shadow-indigo-900/5 transition-all cursor-pointer"
             >
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
@@ -179,7 +197,7 @@ export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({ ticket
                     <p className="text-xs font-bold text-slate-700">{format(new Date(ticket.created_at), 'MMM d, h:mm a')}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    {!clientScoped && ticket.status !== 'resolved' && ticket.status !== 'closed' && (
+                    {!clientScoped && ticket.status !== 'resolved' && ticket.status !== 'closed' && (currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('resolve_tickets')) && (
                       <Tooltip content="Mark as Resolved">
                         <button 
                           onClick={(e) => {
@@ -212,97 +230,6 @@ export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({ ticket
           </div>
         )}
       </div>
-
-      <Modal
-        isOpen={!!selectedTicket}
-        onClose={() => setSelectedTicket(null)}
-        title="Ticket Details"
-        size="lg"
-        footer={
-          <div className="flex items-center justify-between w-full">
-            <div className="flex items-center gap-2">
-              {selectedTicket?.status !== 'resolved' && selectedTicket?.status !== 'closed' && (
-                <button
-                  onClick={() => selectedTicket && handleResolveTicket(selectedTicket)}
-                  className="px-6 py-3 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded-xl font-black text-sm transition-colors flex items-center gap-2"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  Mark Resolved
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setSelectedTicket(null)}
-                className="px-6 py-3 text-slate-500 hover:bg-slate-100 rounded-xl font-bold text-sm transition-colors"
-              >
-                Close
-              </button>
-              {!clientScoped && (
-                <button
-                  onClick={handleSaveNote}
-                  className="px-6 py-3 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl font-black text-sm transition-colors shadow-lg shadow-indigo-200"
-                >
-                  Save Internal Note
-                </button>
-              )}
-            </div>
-          </div>
-        }
-      >
-        {selectedTicket && (
-          <div className="space-y-8">
-            <div className="flex items-start justify-between gap-6">
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <h2 className="text-2xl font-black text-slate-800">{selectedTicket.subject}</h2>
-                  <span className={cn(
-                    "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest",
-                    selectedTicket.status === 'open' ? "bg-indigo-100 text-indigo-600" :
-                    selectedTicket.status === 'in_progress' ? "bg-amber-100 text-amber-600" :
-                    "bg-emerald-100 text-emerald-600"
-                  )}>
-                    {selectedTicket.status.replace('_', '-')}
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 text-sm font-medium text-slate-500">
-                  <span>Client: <strong className="text-slate-700">{selectedTicket.client_name || selectedTicket.client_id}</strong></span>
-                  <span>•</span>
-                  <span>From: <strong className="text-slate-700">{selectedTicket.user_email}</strong></span>
-                  <span>•</span>
-                  <span>{format(new Date(selectedTicket.created_at), 'MMMM d, yyyy h:mm a')}</span>
-                </div>
-              </div>
-              <div className={cn(
-                "px-4 py-2 rounded-xl flex items-center gap-2",
-                selectedTicket.priority === 'urgent' ? "bg-rose-50 text-rose-600" :
-                selectedTicket.priority === 'high' ? "bg-amber-50 text-amber-600" :
-                "bg-indigo-50 text-indigo-600"
-              )}>
-                {getPriorityIcon(selectedTicket.priority)}
-                <span className="text-xs font-black uppercase tracking-widest">{selectedTicket.priority}</span>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Message</h4>
-              <p className="text-slate-700 whitespace-pre-wrap leading-relaxed">{selectedTicket.message}</p>
-            </div>
-
-            {!clientScoped && (
-              <div className="space-y-3">
-                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Internal Notes (Not visible to client)</h4>
-                <textarea
-                  value={internalNote}
-                  onChange={(e) => setInternalNote(e.target.value)}
-                  placeholder="Add internal notes, investigation details, or resolution steps..."
-                  className="w-full h-32 p-4 rounded-2xl border border-slate-200 focus:ring-2 focus:ring-indigo-600/20 outline-none resize-none font-medium text-slate-700 placeholder:text-slate-400 bg-yellow-50/30"
-                />
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
     </div>
   );
 };
