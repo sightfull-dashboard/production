@@ -1114,6 +1114,36 @@ export default function App() {
     }
   };
 
+
+  const handleRestoreEmployee = async (employee: Employee) => {
+    if (!isSuperAdminRole(auth.user?.role)) {
+      toast.error('Only Super Admin can restore off-boarded employees');
+      return;
+    }
+    if (!confirm(`Restore ${employee.first_name} ${employee.last_name} and keep all linked history?`)) return;
+
+    try {
+      const result = await appService.restoreEmployee(employee.id) as Employee & { restored_emp_id?: string | null; original_emp_id?: string | null; emp_id_changed?: boolean; emp_id_conflict?: boolean };
+      await fetchEmployees();
+      await fetchRoster();
+      await fetchRosterMeta();
+      if (result?.emp_id_conflict) {
+        toast.success(`Employee restored successfully. Original employee ID (${result.original_emp_id || 'unknown'}) could not be restored because it is already in use.`);
+      } else if (result?.emp_id_changed && result?.restored_emp_id) {
+        toast.success(`Employee restored successfully with employee ID ${result.restored_emp_id}`);
+      } else {
+        toast.success('Employee restored successfully');
+      }
+    } catch (error) {
+      console.error('Error restoring employee:', error);
+      if (error instanceof ApiError) {
+        toast.error(error.message || 'Failed to restore employee');
+      } else {
+        toast.error(`An error occurred during restore: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  };
+
   const handleSaveShift = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -1802,6 +1832,7 @@ export default function App() {
                 onDelete={handleDeleteEmployee}
                 onOffboard={(emp) => { setOffboardingEmployee(emp); setIsOffboardModalOpen(true); }}
                 onImport={handleImportEmployees}
+                onRestore={isSuperAdminRole(auth.user?.role) ? handleRestoreEmployee : undefined}
                 canImportCsv={isSuperAdminRole(auth.user?.role)}
                 fileVaultReadOnly={!isSuperAdminRole(auth.user?.role)}
               />

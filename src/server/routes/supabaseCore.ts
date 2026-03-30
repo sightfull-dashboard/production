@@ -17,6 +17,43 @@ const getSessionUserId = (req: any) => (req.session as any)?.userId || null;
 const getSessionEmployeeId = (req: any) => (req.session as any)?.employeeId || null;
 const getSessionClientId = (req: any) => (req.session as any)?.employeeClientId || null;
 
+
+const findSupabaseOriginalEmployeeIdFromActivityLog = async (employee: any) => {
+  try {
+    const query = supabaseAdmin
+      .from('activity_logs')
+      .select('details, created_at')
+      .in('action', ['OFFBOARD_EMPLOYEE', 'OFFBOARD_EMPLOYEE_DELETE_OVERRIDE'])
+      .order('created_at', { ascending: false })
+      .limit(250);
+
+    const scoped = employee?.client_id ? query.eq('client_id', employee.client_id) : query;
+    const { data, error } = await scoped;
+    if (error) {
+      console.error('Failed to query activity logs for employee restore:', error);
+      return null;
+    }
+
+    for (const row of data || []) {
+      try {
+        const details = row?.details ? JSON.parse(String(row.details)) : null;
+        if (!details) continue;
+        const matchesId = String(details.id || '') === String(employee.id);
+        const matchesNewEmpId = String(details.new_emp_id || '') === String(employee.emp_id || '');
+        if (matchesId || matchesNewEmpId) {
+          const originalEmpId = String(details.emp_id || '').trim();
+          if (originalEmpId) return originalEmpId;
+        }
+      } catch {
+        continue;
+      }
+    }
+  } catch (error) {
+    console.error('Failed to resolve original employee id from activity log:', error);
+  }
+  return null;
+};
+
 const getRequestedClientId = (req: any) => {
   const header = String(req.headers['x-active-client-id'] || '').trim();
   return header || null;
@@ -589,6 +626,8 @@ export function registerSupabaseCoreRoutes({
 
   app.post('/api/employees/:id/offboard', async (req, res) => {
     if (!ensureUser(req, res)) return;
+    const { data: existing } = await supabaseAdmin.from('employees').select('*').eq('id', req.params.id).single();
+    if (!existing) return res.status(404).json({ error: 'Employee not found' });
     const payload = {
       status: 'offboarded',
       last_worked: req.body?.last_worked || null,
@@ -597,7 +636,79 @@ export function registerSupabaseCoreRoutes({
     };
     const { data, error } = await supabaseAdmin.from('employees').update(payload).eq('id', req.params.id).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
+    logActivity(req, 'OFFBOARD_EMPLOYEE', {
+      id: existing.id,
+      clientId: existing.client_id || null,
+      emp_id: existing.emp_id,
+      new_emp_id: existing.emp_id,
+      reason: req.body?.delete_reason || null,
+      name: `${existing.first_name || ''} ${existing.last_name || ''}`.trim(),
+    });
     res.json(data);
+  });
+
+
+  app.post('/api/employees/:id/restore', async (req, res) => {
+    if (!ensureUser(req, res)) return;
+    const actorRole = getSessionRole(req);
+    if (actorRole !== 'superadmin') return res.status(403).json({ error: 'Forbidden: Super Admin access required' });
+
+    const { data: existing } = await supabaseAdmin.from('employees').select('*').eq('id', req.params.id).single();
+    if (!existing) return res.status(404).json({ error: 'Employee not found' });
+    if (String(existing.status || 'active').toLowerCase() !== 'offboarded') {
+      return res.status(400).json({ error: 'Employee is not off-boarded' });
+    }
+
+    const originalEmpId = await findSupabaseOriginalEmployeeIdFromActivityLog(existing);
+    let restoredEmpId = String(existing.emp_id || '').trim();
+    let empIdChanged = false;
+    let empIdConflict = false;
+
+    if (originalEmpId && originalEmpId !== restoredEmpId) {
+      const conflictQuery = supabaseAdmin
+        .from('employees')
+        .select('id')
+        .eq('emp_id', originalEmpId)
+        .neq('id', req.params.id)
+        .limit(1);
+      const scopedConflictQuery = existing.client_id ? conflictQuery.eq('client_id', existing.client_id) : conflictQuery;
+      const { data: conflictRows, error: conflictError } = await scopedConflictQuery;
+      if (conflictError) return res.status(500).json({ error: conflictError.message });
+      if (!conflictRows?.length) {
+        restoredEmpId = originalEmpId;
+        empIdChanged = true;
+      } else {
+        empIdConflict = true;
+      }
+    }
+
+    const payload = {
+      status: 'active',
+      emp_id: restoredEmpId,
+      last_worked: null,
+      last_worked_date: null,
+      delete_reason: null,
+    };
+    const { data: restored, error } = await supabaseAdmin.from('employees').update(payload).eq('id', req.params.id).select('*').single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    logActivity(req, 'RESTORE_EMPLOYEE', {
+      id: existing.id,
+      clientId: existing.client_id || null,
+      previous_emp_id: existing.emp_id,
+      restored_emp_id: restoredEmpId,
+      original_emp_id: originalEmpId,
+      emp_id_conflict: empIdConflict,
+      name: `${existing.first_name || ''} ${existing.last_name || ''}`.trim(),
+    });
+
+    res.json({
+      ...sanitizeEmployeeForResponse(restored),
+      restored_emp_id: restoredEmpId,
+      original_emp_id: originalEmpId,
+      emp_id_changed: empIdChanged,
+      emp_id_conflict: empIdConflict,
+    });
   });
 
   app.delete('/api/employees/:id', async (req, res) => {

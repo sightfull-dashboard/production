@@ -5,6 +5,7 @@ export const appService = {
   getEmployees: () => apiGet<Employee[]>("/api/employees"),
   saveEmployee: (employee: Record<string, unknown>, id?: string) => id ? apiPut<Employee>(`/api/employees/${id}`, employee) : apiPost<Employee>('/api/employees', employee),
   deleteEmployee: (id: string) => apiDelete(`/api/employees/${id}`),
+  restoreEmployee: (id: string) => apiPost<Employee>(`/api/employees/${id}/restore`),
 
   getShifts: () => apiGet<Shift[]>("/api/shifts"),
   saveShift: (shift: Partial<Shift>, id?: string) => id ? apiPut(`/api/shifts/${id}`, shift) : apiPost('/api/shifts', shift),

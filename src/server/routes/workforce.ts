@@ -20,6 +20,38 @@ const generateAutoEmployeeId = (db: any, clientId: string | null) => {
   return `EMP${String(nextSequence).padStart(3, '0')}`;
 };
 
+
+const findOriginalEmployeeIdFromActivityLog = (db: any, employee: any) => {
+  try {
+    const rows = db.prepare(`
+      SELECT details
+      FROM activity_logs
+      WHERE action IN ('OFFBOARD_EMPLOYEE', 'OFFBOARD_EMPLOYEE_DELETE_OVERRIDE')
+        AND (? IS NULL OR client_id = ?)
+      ORDER BY created_at DESC
+      LIMIT 250
+    `).all(employee.client_id || null, employee.client_id || null) as Array<{ details?: string | null }>;
+
+    for (const row of rows) {
+      try {
+        const details = row?.details ? JSON.parse(row.details) : null;
+        if (!details) continue;
+        const matchesId = String(details.id || '') === String(employee.id);
+        const matchesNewEmpId = String(details.new_emp_id || '') === String(employee.emp_id || '');
+        if (matchesId || matchesNewEmpId) {
+          const originalEmpId = String(details.emp_id || '').trim();
+          if (originalEmpId) return originalEmpId;
+        }
+      } catch {
+        continue;
+      }
+    }
+  } catch (error) {
+    console.error('Failed to resolve original employee id from activity log:', error);
+  }
+  return null;
+};
+
 type EmployeePayload = {
   emp_id: string;
   pin: string;
@@ -396,6 +428,72 @@ export function registerWorkforceRoutes({
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: 'Failed to offboard employee' });
+    }
+  });
+
+
+  app.post('/api/employees/:id/restore', requireActiveTrial, requireUnlockedFeature('employee_records'), (req, res) => {
+    const { id } = req.params;
+
+    try {
+      if (getSessionRole(req) !== 'superadmin') {
+        return res.status(403).json({ error: 'Forbidden: Super Admin access required' });
+      }
+
+      const employee = db.prepare('SELECT * FROM employees WHERE id = ?').get(id) as any;
+      if (!employee) return res.status(404).json({ error: 'Employee not found' });
+      if (String(employee.status || 'active').toLowerCase() !== 'offboarded') {
+        return res.status(400).json({ error: 'Employee is not off-boarded' });
+      }
+
+      const originalEmpId = findOriginalEmployeeIdFromActivityLog(db, employee);
+      let restoredEmpId = String(employee.emp_id || '').trim();
+      let empIdChanged = false;
+      let empIdConflict = false;
+
+      if (originalEmpId && originalEmpId !== restoredEmpId) {
+        const conflict = employee.client_id
+          ? db.prepare('SELECT id FROM employees WHERE client_id = ? AND emp_id = ? AND id != ? LIMIT 1').get(employee.client_id, originalEmpId, id) as any
+          : db.prepare('SELECT id FROM employees WHERE emp_id = ? AND id != ? LIMIT 1').get(originalEmpId, id) as any;
+        if (!conflict) {
+          restoredEmpId = originalEmpId;
+          empIdChanged = true;
+        } else {
+          empIdConflict = true;
+        }
+      }
+
+      db.prepare(`
+        UPDATE employees SET
+          status = 'active',
+          emp_id = ?,
+          last_worked = NULL,
+          last_worked_date = NULL,
+          delete_reason = NULL
+        WHERE id = ?
+      `).run(restoredEmpId, id);
+
+      const restored = db.prepare('SELECT * FROM employees WHERE id = ?').get(id) as any;
+      logActivity(req, 'RESTORE_EMPLOYEE', {
+        id,
+        clientId: employee.client_id || null,
+        previous_emp_id: employee.emp_id,
+        restored_emp_id: restoredEmpId,
+        original_emp_id: originalEmpId,
+        emp_id_conflict: empIdConflict,
+        name: `${employee.first_name || ''} ${employee.last_name || ''}`.trim(),
+      });
+
+      res.json({
+        ...sanitizeEmployeeForResponse(restored),
+        restored_emp_id: restoredEmpId,
+        original_emp_id: originalEmpId,
+        emp_id_changed: empIdChanged,
+        emp_id_conflict: empIdConflict,
+      });
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e?.message || 'Failed to restore employee' });
     }
   });
 

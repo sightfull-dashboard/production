@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Plus, Download, Upload, Edit3, Trash2, Filter, UserMinus, Folder, XCircle, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { Search, Plus, Download, Upload, Edit3, Trash2, Filter, UserMinus, Folder, XCircle, CheckCircle2, AlertCircle, X, RotateCcw } from 'lucide-react';
 import { Employee } from '../types';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
@@ -14,6 +14,7 @@ interface EmployeeSectionProps {
   onDelete: (id: string) => void;
   onOffboard: (emp: Employee) => void;
   onImport: (data: any[]) => void;
+  onRestore?: (emp: Employee) => void;
   canImportCsv?: boolean;
   fileVaultReadOnly?: boolean;
 }
@@ -22,7 +23,7 @@ import { downloadCSV } from '../utils/exportUtils';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
-export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onAdd, onEdit, onDelete, onOffboard, onImport, canImportCsv = false, fileVaultReadOnly = false }) => {
+export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onAdd, onEdit, onDelete, onOffboard, onImport, onRestore, canImportCsv = false, fileVaultReadOnly = false }) => {
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
   const [titleFilter, setTitleFilter] = useState('');
@@ -297,6 +298,16 @@ export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onA
                             className="p-2 hover:bg-rose-50 rounded-xl text-rose-400 hover:text-rose-600 transition-colors"
                           >
                             <UserMinus className="w-4 h-4" />
+                          </button>
+                        </Tooltip>
+                      )}
+                      {emp.status === 'offboarded' && onRestore && (
+                        <Tooltip content="Restore Employee">
+                          <button 
+                            onClick={() => onRestore(emp)}
+                            className="p-2 hover:bg-emerald-50 rounded-xl text-emerald-500 hover:text-emerald-700 transition-colors"
+                          >
+                            <RotateCcw className="w-4 h-4" />
                           </button>
                         </Tooltip>
                       )}
