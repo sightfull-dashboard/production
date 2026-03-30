@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import type { RequestHandler } from 'express';
+import { supabaseAdmin } from '../integrations/supabase';
 
 const BCRYPT_PREFIX = /^\$2[aby]\$\d{2}\$/;
 
@@ -8,6 +9,7 @@ type RateLimitOptions = {
   maxAttempts: number;
   keyPrefix: string;
   message?: string;
+  store?: RateLimitStore;
 };
 
 type RateLimitEntry = {
@@ -15,7 +17,102 @@ type RateLimitEntry = {
   resetAt: number;
 };
 
+export type RateLimitStore = {
+  increment: (key: string, windowMs: number, now: number) => Promise<RateLimitEntry>;
+};
+
 const rateLimitState = new Map<string, RateLimitEntry>();
+
+const memoryRateLimitStore: RateLimitStore = {
+  async increment(key, windowMs, now) {
+    const entry = rateLimitState.get(key);
+    if (!entry || entry.resetAt <= now) {
+      const next = { count: 1, resetAt: now + windowMs };
+      rateLimitState.set(key, next);
+      return next;
+    }
+    entry.count += 1;
+    return entry;
+  },
+};
+
+export const createMemoryRateLimitStore = () => memoryRateLimitStore;
+
+export const createSqliteRateLimitStore = async (sqlitePath: string): Promise<RateLimitStore> => {
+  const BetterSqlite3 = (await import('better-sqlite3')).default;
+  const sqlite = new BetterSqlite3(sqlitePath);
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS app_rate_limits (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL,
+      reset_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_app_rate_limits_reset_at ON app_rate_limits(reset_at);
+  `);
+
+  return {
+    async increment(key, windowMs, now) {
+      sqlite.prepare('DELETE FROM app_rate_limits WHERE reset_at <= ?').run(now);
+      const existing = sqlite.prepare('SELECT count, reset_at FROM app_rate_limits WHERE key = ? LIMIT 1').get(key) as { count: number; reset_at: number } | undefined;
+      if (!existing || existing.reset_at <= now) {
+        const next = { count: 1, resetAt: now + windowMs };
+        sqlite.prepare(`
+          INSERT INTO app_rate_limits (key, count, reset_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(key) DO UPDATE SET count = excluded.count, reset_at = excluded.reset_at, updated_at = excluded.updated_at
+        `).run(key, next.count, next.resetAt, now, now);
+        return next;
+      }
+      const next = { count: existing.count + 1, resetAt: existing.reset_at };
+      sqlite.prepare('UPDATE app_rate_limits SET count = ?, updated_at = ? WHERE key = ?').run(next.count, now, key);
+      return next;
+    },
+  };
+};
+
+export const createSupabaseRateLimitStore = (): RateLimitStore => {
+  if (!supabaseAdmin) {
+    throw new Error('Supabase rate-limit store requires Supabase to be configured.');
+  }
+
+  return {
+    async increment(key, windowMs, now) {
+      const nowIso = new Date(now).toISOString();
+      const { data: existing, error } = await supabaseAdmin
+        .from('app_rate_limits')
+        .select('key,count,reset_at')
+        .eq('key', key)
+        .maybeSingle();
+      if (error) throw error;
+
+      const existingResetAtMs = existing?.reset_at ? new Date(existing.reset_at).getTime() : 0;
+      if (!existing || !existingResetAtMs || existingResetAtMs <= now) {
+        const next = { count: 1, resetAt: now + windowMs };
+        const { error: upsertError } = await supabaseAdmin
+          .from('app_rate_limits')
+          .upsert({
+            key,
+            count: next.count,
+            reset_at: new Date(next.resetAt).toISOString(),
+            created_at: nowIso,
+            updated_at: nowIso,
+          }, { onConflict: 'key' });
+        if (upsertError) throw upsertError;
+        return next;
+      }
+
+      const next = { count: Number(existing.count || 0) + 1, resetAt: existingResetAtMs };
+      const { error: updateError } = await supabaseAdmin
+        .from('app_rate_limits')
+        .update({ count: next.count, updated_at: nowIso })
+        .eq('key', key);
+      if (updateError) throw updateError;
+      return next;
+    },
+  };
+};
 
 export const isHashedSecret = (value: unknown) => typeof value === 'string' && BCRYPT_PREFIX.test(value);
 
@@ -49,26 +146,22 @@ const getRequestIp = (req: any) => {
   return forwardedFor || req.ip || req.socket?.remoteAddress || 'unknown';
 };
 
-export const createRateLimitMiddleware = ({ windowMs, maxAttempts, keyPrefix, message }: RateLimitOptions): RequestHandler => {
+export const createRateLimitMiddleware = ({ windowMs, maxAttempts, keyPrefix, message, store = memoryRateLimitStore }: RateLimitOptions): RequestHandler => {
   const errorMessage = message || 'Too many requests. Please try again later.';
-  return (req, res, next) => {
-    const now = Date.now();
-    const key = `${keyPrefix}:${getRequestIp(req)}:${req.path}`;
-    const entry = rateLimitState.get(key);
-
-    if (!entry || entry.resetAt <= now) {
-      rateLimitState.set(key, { count: 1, resetAt: now + windowMs });
+  return async (req, res, next) => {
+    try {
+      const now = Date.now();
+      const key = `${keyPrefix}:${getRequestIp(req)}:${req.path}`;
+      const entry = await store.increment(key, windowMs, now);
+      if (entry.count > maxAttempts) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+        res.setHeader('Retry-After', String(retryAfterSeconds));
+        return res.status(429).json({ error: errorMessage });
+      }
       return next();
+    } catch (error) {
+      return next(error);
     }
-
-    entry.count += 1;
-    if (entry.count > maxAttempts) {
-      const retryAfterSeconds = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
-      res.setHeader('Retry-After', String(retryAfterSeconds));
-      return res.status(429).json({ error: errorMessage });
-    }
-
-    return next();
   };
 };
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Files, ChevronRight, Search, Plus, Upload, FileText, Folder, Download, Trash2, Loader2, Lock, ArrowLeft, ArrowRight, Home } from 'lucide-react';
 import { FileItem } from '../types';
 import { fileService } from '../services/fileService';
+import { fileUploadService } from '../services/fileUploadService';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -212,22 +213,10 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
 
     setIsUploading(true);
     try {
-      const url = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error('Failed to read file'));
-        reader.readAsDataURL(file);
-      });
-
-      const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : '';
-      const newFile = await fileService.create({
-        name: file.name,
-        type: 'file',
-        size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-        extension,
-        parent_id: currentFolderId,
-        employee_id: employeeId,
-        url,
+      const newFile = await fileUploadService.uploadVaultFile({
+        file,
+        parentId: currentFolderId,
+        employeeId,
       });
       setFiles(prev => [...prev, newFile]);
       toast.success('File uploaded successfully');

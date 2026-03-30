@@ -87,6 +87,51 @@ export const uploadBase64FileToSupabaseStorage = async ({
   };
 };
 
+
+export const uploadBinaryFileToSupabaseStorage = async ({
+  bucket,
+  fileName,
+  folder,
+  buffer,
+  contentType,
+}: {
+  bucket: string;
+  fileName: string;
+  folder: string;
+  buffer: Buffer;
+  contentType?: string | null;
+}): Promise<UploadedStorageAsset> => {
+  const safeFileName = sanitizePathSegment(fileName);
+  const safeFolder = folder.split('/').map((segment) => sanitizePathSegment(segment)).join('/');
+  const storagePath = `${safeFolder}/${safeFileName}`;
+  const normalizedContentType = contentType || guessMimeTypeFromName(fileName) || 'application/octet-stream';
+
+  const { error } = await supabaseAdmin.storage
+    .from(bucket)
+    .upload(storagePath, buffer, {
+      upsert: true,
+      contentType: normalizedContentType,
+    });
+
+  if (error) throw error;
+
+  return {
+    storagePath,
+    storageBucket: bucket,
+    sizeBytes: buffer.byteLength,
+    mimeType: normalizedContentType,
+    publicUrl: null,
+  };
+};
+
+export const encodeBufferAsDataUrl = ({
+  buffer,
+  contentType,
+}: {
+  buffer: Buffer;
+  contentType?: string | null;
+}) => `data:${contentType || 'application/octet-stream'};base64,${buffer.toString('base64')}`;
+
 export const resolveDownloadUrl = async ({
   storageBucket,
   storagePath,

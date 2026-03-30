@@ -27,6 +27,12 @@ const normalizeSameSite = (value: string | undefined) => {
   throw new Error('SESSION_COOKIE_SAMESITE must be one of lax, strict, or none.');
 };
 
+const normalizeDriver = (value: string | undefined, allowed: string[], fallback: string) => {
+  const normalized = String(value ?? fallback).trim().toLowerCase();
+  if (allowed.includes(normalized)) return normalized;
+  throw new Error(`Unsupported driver: ${normalized}. Allowed values: ${allowed.join(', ')}.`);
+};
+
 const parseCsv = (value: string | undefined) => String(value ?? '')
   .split(',')
   .map((item) => item.trim().toLowerCase())
@@ -62,11 +68,17 @@ const resolveSessionSecret = () => {
   return rawSessionSecret || DEV_ONLY_SESSION_SECRET;
 };
 
+const databaseProvider = normalizeDatabaseProvider(process.env.DATABASE_PROVIDER);
+const sessionStoreDriver = normalizeDriver(process.env.SESSION_STORE_DRIVER, ['sqlite', 'supabase'], databaseProvider === 'supabase' ? 'supabase' : 'sqlite');
+const authRateLimitStoreDriver = normalizeDriver(process.env.AUTH_RATE_LIMIT_STORE_DRIVER, ['memory', 'sqlite', 'supabase'], databaseProvider === 'supabase' ? 'supabase' : 'sqlite');
+
 export const env = {
   nodeEnv: rawNodeEnv,
   port: toInt(process.env.PORT, 3000),
   appUrl: process.env.APP_URL ?? 'http://localhost:3000',
-  databaseProvider: normalizeDatabaseProvider(process.env.DATABASE_PROVIDER),
+  databaseProvider,
+  sessionStoreDriver,
+  authRateLimitStoreDriver,
   sqlitePath: process.env.SQLITE_PATH ?? 'sightfull.db',
   sessionSqlitePath: process.env.SESSION_SQLITE_PATH ?? 'sightfull-sessions.db',
   sessionSecret: resolveSessionSecret(),
@@ -75,6 +87,11 @@ export const env = {
   sessionCookieSecure: toBool(process.env.SESSION_COOKIE_SECURE, isProductionNodeEnv),
   trustProxy: toBool(process.env.TRUST_PROXY, isProductionNodeEnv),
   bodyLimitMb: toInt(process.env.BODY_LIMIT_MB, 25),
+  directUploadLimitMb: toInt(process.env.DIRECT_UPLOAD_LIMIT_MB, 100),
+  workerPollIntervalMs: toInt(process.env.BACKGROUND_WORKER_POLL_INTERVAL_MS, 3000),
+  workerMaxAttempts: toInt(process.env.BACKGROUND_WORKER_MAX_ATTEMPTS, 4),
+  workerRetentionHours: toInt(process.env.BACKGROUND_WORKER_RETENTION_HOURS, 168),
+  payrollEmailAsync: toBool(process.env.PAYROLL_EMAIL_ASYNC, true),
   authRateLimitWindowMs: toInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS, 15 * 60 * 1000),
   authRateLimitMaxAttempts: toInt(process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS, 10),
   fileDownloadUrlTtlSeconds: toInt(process.env.FILE_DOWNLOAD_URL_TTL_SECONDS, 15 * 60),
@@ -114,6 +131,12 @@ export const runtimeConfigWarnings = [
   isSupabaseSelected
     ? 'DATABASE_PROVIDER=supabase is configured, but some legacy SQLite-shaped logic still exists in the repo. Validate all flows against Supabase before rollout.'
     : null,
+  env.sessionStoreDriver === 'supabase' && !isSupabaseConfigured
+    ? 'SESSION_STORE_DRIVER=supabase requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.'
+    : null,
+  env.authRateLimitStoreDriver === 'supabase' && !isSupabaseConfigured
+    ? 'AUTH_RATE_LIMIT_STORE_DRIVER=supabase requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.'
+    : null,
   isSupabaseSelected && !isSupabaseConfigured
     ? 'DATABASE_PROVIDER is set to supabase, but SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing. The app cannot safely run in this mode.'
     : null,
@@ -140,8 +163,24 @@ export const assertRuntimeConfiguration = () => {
     throw new Error('DATABASE_PROVIDER=supabase requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
   }
 
+  if ((env.sessionStoreDriver === 'supabase' || env.authRateLimitStoreDriver === 'supabase') && !isSupabaseConfigured) {
+    throw new Error('Supabase-backed session/rate-limit stores require SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+  }
+
   if (isProduction && (env.bodyLimitMb < 1 || env.bodyLimitMb > 100)) {
     throw new Error('BODY_LIMIT_MB must be between 1 and 100 in production.');
+  }
+
+  if (isProduction && (env.directUploadLimitMb < 1 || env.directUploadLimitMb > 500)) {
+    throw new Error('DIRECT_UPLOAD_LIMIT_MB must be between 1 and 500 in production.');
+  }
+
+  if (isProduction && (env.workerPollIntervalMs < 500 || env.workerPollIntervalMs > 60000)) {
+    throw new Error('BACKGROUND_WORKER_POLL_INTERVAL_MS must be between 500 and 60000 in production.');
+  }
+
+  if (isProduction && (env.workerMaxAttempts < 1 || env.workerMaxAttempts > 20)) {
+    throw new Error('BACKGROUND_WORKER_MAX_ATTEMPTS must be between 1 and 20 in production.');
   }
 
   if (env.bootstrapSuperAdminEmail || env.bootstrapSuperAdminPassword) {

@@ -14,11 +14,14 @@ import { registerLeaveRoutes } from "./src/server/routes/leave";
 import { registerWorkforceRoutes } from "./src/server/routes/workforce";
 import { registerSupabaseCoreRoutes } from "./src/server/routes/supabaseCore";
 import { getActorClientId, getEffectiveClientId } from "./src/server/utils/tenant";
-import { createOriginProtectionMiddleware, createRateLimitMiddleware, hashSecret, securityHeadersMiddleware } from "./src/server/utils/security";
+import { createMemoryRateLimitStore, createOriginProtectionMiddleware, createRateLimitMiddleware, createSqliteRateLimitStore, createSupabaseRateLimitStore, hashSecret, securityHeadersMiddleware } from "./src/server/utils/security";
 import { createSqliteSessionStore } from "./src/server/utils/sqliteSessionStore";
+import { createSupabaseSessionStore } from "./src/server/utils/supabaseSessionStore";
+import { ensureBackgroundJobTables } from "./src/server/utils/backgroundJobs";
 
 assertRuntimeConfiguration();
 runtimeConfigWarnings.forEach((warning) => console.warn(`[CONFIG] ${warning}`));
+await ensureBackgroundJobTables();
 
 async function getSessionUser(req: any) {
   const userId = (req.session as any)?.userId;
@@ -1155,11 +1158,25 @@ if (isSmtpConfigured) {
 }
   const PORT = env.port;
   const bodyLimit = `${env.bodyLimitMb}mb`;
+
+  let authRateLimitStore = createMemoryRateLimitStore();
+  try {
+    if (env.authRateLimitStoreDriver === 'supabase') {
+      authRateLimitStore = createSupabaseRateLimitStore();
+    } else if (env.authRateLimitStoreDriver === 'sqlite') {
+      authRateLimitStore = await createSqliteRateLimitStore(env.sessionSqlitePath);
+    }
+  } catch (error) {
+    if (isProduction) throw error;
+    console.warn('[RATE_LIMIT] Falling back to in-memory rate limiting in development:', error);
+  }
+
   const authRateLimit = createRateLimitMiddleware({
     windowMs: env.authRateLimitWindowMs,
     maxAttempts: env.authRateLimitMaxAttempts,
     keyPrefix: 'auth',
     message: 'Too many sign-in attempts. Please try again later.',
+    store: authRateLimitStore,
   });
 
   await ensureBootstrapSuperAdminAccount();
@@ -1517,7 +1534,11 @@ if (isSmtpConfigured) {
   app.set('trust proxy', env.trustProxy);
   let sessionStore: session.Store | undefined;
   try {
-    sessionStore = await createSqliteSessionStore(env.sessionSqlitePath);
+    if (env.sessionStoreDriver === 'supabase') {
+      sessionStore = await createSupabaseSessionStore();
+    } else {
+      sessionStore = await createSqliteSessionStore(env.sessionSqlitePath);
+    }
   } catch (error) {
     if (isProduction) throw error;
     console.warn('[SESSION] Falling back to in-memory store in development:', error);

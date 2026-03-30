@@ -1,8 +1,9 @@
+import express, { type Express, type Request } from 'express';
+import path from 'node:path';
 import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import bcrypt from 'bcryptjs';
-import type { Express, Request } from 'express';
-import { deleteStoredObjectIfPresent, uploadBase64FileToSupabaseStorage } from '../utils/storage';
+import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
 
 type Middleware = (req: any, res: any, next: any) => unknown;
 
@@ -35,6 +36,17 @@ const mapAdminUserRow = (row: any) => ({
 const parseJsonArray = (value: any) => Array.isArray(value) ? value : (() => {
   try { return value ? JSON.parse(value) : []; } catch { return []; }
 })();
+
+const uploadBinaryLimit = `${env.directUploadLimitMb}mb`;
+
+const getQueryValue = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+
+const normalizeRawBody = (value: any) => {
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Uint8Array) return Buffer.from(value);
+  if (typeof value === 'string') return Buffer.from(value);
+  return Buffer.alloc(0);
+};
 
 const serializeSupabaseClient = (row: any, extras?: { users?: number; employees?: number; files?: number }) => ({
   id: row.id,
@@ -120,6 +132,70 @@ export function registerAdminRoutes({
   getWeekBounds,
   serializeAdminClient,
 }: RegisterAdminRoutesDeps) {
+  app.post('/api/admin/clients/:id/files/upload-binary', isSuperAdmin, express.raw({ type: '*/*', limit: uploadBinaryLimit }), async (req, res) => {
+    const name = getQueryValue(req.query.name);
+    const parent_id = getQueryValue(req.query.parent_id) || null;
+    if (!name) return res.status(400).json({ error: 'File name is required.' });
+
+    const buffer = normalizeRawBody(req.body);
+    if (!buffer.length) return res.status(400).json({ error: 'File content is required.' });
+
+    const id = Math.random().toString(36).substr(2, 9);
+    const date = new Date().toISOString().split('T')[0];
+    const contentType = String(req.headers['content-type'] || 'application/octet-stream');
+    const extension = path.extname(name).replace(/^\./, '').toLowerCase() || null;
+
+    try {
+      if (parent_id) {
+        if (env.databaseProvider !== 'supabase') {
+          const parent = db.prepare("SELECT id, type, client_id FROM files WHERE id = ?").get(parent_id) as any;
+          if (!parent || parent.type !== 'folder' || parent.client_id !== req.params.id) return res.status(400).json({ error: 'Parent folder not found.' });
+        } else {
+          const { data: parent } = await supabaseAdmin.from('files').select('id,type,client_id').eq('id', parent_id).single();
+          if (!parent || parent.type !== 'folder' || parent.client_id !== req.params.id) return res.status(400).json({ error: 'Parent folder not found.' });
+        }
+      }
+
+      if (env.databaseProvider !== 'supabase') {
+        const url = encodeBufferAsDataUrl({ buffer, contentType });
+        db.prepare("INSERT INTO files (id, name, type, parent_id, employee_id, client_id, size, date, extension, url, password) VALUES (?, ?, 'file', ?, NULL, ?, ?, ?, ?, ?, NULL)")
+          .run(id, name, parent_id || null, req.params.id, `${(buffer.length / 1024 / 1024).toFixed(2)} MB`, date, extension || null, url);
+        logActivity(req, 'UPLOAD_CLIENT_FILE', { clientId: req.params.id, fileId: id, name, type: 'file', transport: 'binary' });
+        return res.status(201).json(db.prepare("SELECT * FROM files WHERE id = ?").get(id));
+      }
+
+      const uploadedAsset = await uploadBinaryFileToSupabaseStorage({
+        bucket: env.supabaseBucketVaultFiles,
+        fileName: name,
+        folder: `client/${req.params.id}/${id}`,
+        buffer,
+        contentType,
+      });
+      const payload = {
+        id,
+        client_id: req.params.id,
+        parent_id: parent_id || null,
+        employee_id: null,
+        name,
+        type: 'file',
+        mime_type: uploadedAsset.mimeType || extension || null,
+        size_bytes: uploadedAsset.sizeBytes,
+        storage_bucket: uploadedAsset.storageBucket,
+        storage_path: uploadedAsset.storagePath,
+        public_url: null,
+        password: null,
+        uploaded_by: (req.session as any)?.userId || null,
+      };
+      const { data, error } = await supabaseAdmin.from('files').insert(payload).select('*').single();
+      if (error) throw error;
+      logActivity(req, 'UPLOAD_CLIENT_FILE', { clientId: req.params.id, fileId: id, name, type: 'file', transport: 'binary' });
+      return res.status(201).json(hydrateFileRow({ ...data, size: data.size_bytes, extension: data.mime_type, url: data.public_url || data.storage_path || null }));
+    } catch (error) {
+      console.error('Failed to upload client file:', error);
+      return res.status(500).json({ error: 'Failed to create client file' });
+    }
+  });
+
   app.get("/api/admin/users", isSuperAdmin, async (_req, res) => {
     if (env.databaseProvider !== 'supabase') {
       const users = db.prepare("SELECT id, email, role, is_verified, client_id, name, image, last_login FROM users WHERE client_id IS NULL ORDER BY email ASC").all() as any[];
@@ -833,6 +909,7 @@ export function registerAdminRoutes({
   app.delete('/api/internal/clients/:clientId/users/:userId', isSuperAdmin, (req, res) => res.redirect(307, `/api/admin/clients/${req.params.clientId}/users/${req.params.userId}`));
   app.get('/api/internal/clients/:id/files', isSuperAdmin, (req, res) => res.redirect(307, `/api/admin/clients/${req.params.id}/files`));
   app.post('/api/internal/clients/:id/files', isSuperAdmin, (req, res) => res.redirect(307, `/api/admin/clients/${req.params.id}/files`));
+  app.post('/api/internal/clients/:id/files/upload-binary', isSuperAdmin, (req, res) => res.redirect(307, `/api/admin/clients/${req.params.id}/files/upload-binary${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`));
   app.put('/api/internal/clients/:clientId/files/:fileId', isSuperAdmin, (req, res) => res.redirect(307, `/api/admin/clients/${req.params.clientId}/files/${req.params.fileId}`));
   app.delete('/api/internal/clients/:clientId/files/:fileId', isSuperAdmin, (req, res) => res.redirect(307, `/api/admin/clients/${req.params.clientId}/files/${req.params.fileId}`));
   app.get('/api/internal/clients/:id/logs', isSuperAdmin, (req, res) => res.redirect(307, `/api/admin/clients/${req.params.id}/logs`));

@@ -12,7 +12,9 @@
     "dev:windows": "node ./node_modules/tsx/dist/cli.mjs server.ts",
     "install:windows": "npm install",
     "start:windows": "npm run dev:windows",
-    "lint:strict": "node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.strict.json"
+    "lint:strict": "node ./node_modules/typescript/bin/tsc --noEmit -p tsconfig.strict.json",
+    "worker": "node ./node_modules/tsx/dist/cli.mjs worker.ts",
+    "worker:dev": "node ./node_modules/tsx/dist/cli.mjs worker.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

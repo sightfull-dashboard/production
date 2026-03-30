@@ -57,6 +57,7 @@ import { BrandedState } from './BrandedStates';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
 import { adminService } from '../services/adminService';
+import { fileUploadService } from '../services/fileUploadService';
 import { appService } from '../services/appService';
 import { SupportTicketsPanel } from './SupportTicketsPanel';
 import { ClientNotificationsPanel } from './ClientNotificationsPanel';
@@ -465,19 +466,10 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
           });
           setClientFiles([created, ...clientFiles]);
         } else if (fileInput && fileInput.name) {
-          const fileUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(String(reader.result || ''));
-            reader.onerror = () => reject(new Error('Failed to read file'));
-            reader.readAsDataURL(fileInput);
-          });
-          const created = await adminService.createClientFile(selectedClient.id, {
-            name: fileInput.name,
-            type: 'file',
-            size: `${(fileInput.size / 1024 / 1024).toFixed(2)} MB`,
-            extension: fileInput.name.split('.').pop() || 'file',
-            parent_id: currentFolderId,
-            url: fileUrl,
+          const created = await fileUploadService.uploadAdminClientFile({
+            clientId: selectedClient.id,
+            file: fileInput,
+            parentId: currentFolderId,
           });
           setClientFiles([created, ...clientFiles]);
         }

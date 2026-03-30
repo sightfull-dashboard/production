@@ -1,7 +1,9 @@
+import express, { type Express, type Request } from 'express';
+import path from 'node:path';
 import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
-import type { Express, Request } from 'express';
-import { deleteStoredObjectIfPresent, resolveDownloadUrl, uploadBase64FileToSupabaseStorage } from '../utils/storage';
+import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, resolveDownloadUrl, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
+import { enqueueBackgroundJob, getBackgroundJobById, listRecentBackgroundJobs } from '../utils/backgroundJobs';
 
 type Middleware = (req: any, res: any, next: any) => unknown;
 
@@ -73,6 +75,17 @@ const fetchSupabaseFileById = async (id: string | null | undefined) => {
 };
 
 
+const uploadBinaryLimit = `${env.directUploadLimitMb}mb`;
+
+const getQueryValue = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+
+const normalizeRawBody = (value: any) => {
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Uint8Array) return Buffer.from(value);
+  if (typeof value === 'string') return Buffer.from(value);
+  return Buffer.alloc(0);
+};
+
 export function registerFilesRoutes({
   app,
   db,
@@ -93,6 +106,85 @@ export function registerFilesRoutes({
   setLastMailEvent,
   buildRosterAndTimesheetAttachments,
 }: FilesRoutesDeps) {
+  app.post('/api/files/upload-binary', ensureFileAccess, express.raw({ type: '*/*', limit: uploadBinaryLimit }), async (req, res) => {
+    if (!canMutateVaultItems(req)) {
+      return res.status(403).json({ error: 'Only super admins can make changes in the document vault.' });
+    }
+
+    try {
+      const name = getQueryValue(req.query.name);
+      const parent_id = getQueryValue(req.query.parent_id) || null;
+      const employee_id = getQueryValue(req.query.employee_id) || null;
+      if (!name) return res.status(400).json({ error: 'File name is required' });
+
+      const buffer = normalizeRawBody(req.body);
+      if (!buffer.length) return res.status(400).json({ error: 'File content is required' });
+
+      const sessionEmployeeId = (req.session as any)?.employeeId;
+      const actorClientId = getActorClientId(req);
+      const ownerEmployeeId = employee_id || sessionEmployeeId || null;
+      const ownerClientId = ownerEmployeeId ? null : actorClientId;
+      if (ownerEmployeeId && !canAccessEmployeeFiles(req, ownerEmployeeId)) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      if (parent_id) {
+        if (env.databaseProvider !== 'supabase') {
+          const parent = db.prepare('SELECT id, type FROM files WHERE id = ?').get(parent_id) as any;
+          if (!parent || parent.type !== 'folder') return res.status(400).json({ error: 'Parent folder not found' });
+        } else {
+          const { data: parent } = await supabaseAdmin.from('files').select('id,type').eq('id', parent_id).single();
+          if (!parent || parent.type !== 'folder') return res.status(400).json({ error: 'Parent folder not found' });
+        }
+      }
+
+      const id = Math.random().toString(36).substr(2, 9);
+      const date = new Date().toISOString().split('T')[0];
+      const contentType = String(req.headers['content-type'] || 'application/octet-stream');
+      const extension = path.extname(name).replace(/^\./, '').toLowerCase() || null;
+
+      if (env.databaseProvider !== 'supabase') {
+        const url = encodeBufferAsDataUrl({ buffer, contentType });
+        db.prepare(`INSERT INTO files (id, name, type, parent_id, employee_id, client_id, size, date, extension, url, password)
+          VALUES (?, ?, 'file', ?, ?, ?, ?, ?, ?, ?, NULL)`)
+          .run(id, name, parent_id || null, ownerEmployeeId, ownerClientId, `${(buffer.length / 1024 / 1024).toFixed(2)} MB`, date, extension, url);
+        logActivity(req, 'UPLOAD_FILE', { fileId: id, name, type: 'file', employeeId: ownerEmployeeId, clientId: ownerClientId, transport: 'binary' });
+        const row = db.prepare('SELECT * FROM files WHERE id = ?').get(id) as any;
+        return res.status(201).json(hydrateFileRow(row));
+      }
+
+      const uploadedAsset = await uploadBinaryFileToSupabaseStorage({
+        bucket: env.supabaseBucketVaultFiles,
+        fileName: name,
+        folder: ownerEmployeeId ? `employee/${ownerEmployeeId}/${id}` : `client/${ownerClientId || 'shared'}/${id}`,
+        buffer,
+        contentType,
+      });
+      const payload = {
+        id,
+        client_id: ownerClientId,
+        parent_id: parent_id || null,
+        employee_id: ownerEmployeeId,
+        name,
+        type: 'file',
+        mime_type: uploadedAsset.mimeType || extension || null,
+        size_bytes: uploadedAsset.sizeBytes,
+        storage_bucket: uploadedAsset.storageBucket,
+        storage_path: uploadedAsset.storagePath,
+        public_url: null,
+        password: null,
+        uploaded_by: (req.session as any)?.userId || null,
+      };
+      const { data, error } = await supabaseAdmin.from('files').insert(payload).select('*').single();
+      if (error) throw error;
+      logActivity(req, 'UPLOAD_FILE', { fileId: id, name, type: 'file', employeeId: ownerEmployeeId, clientId: ownerClientId, transport: 'binary' });
+      return res.status(201).json(hydrateFileRow({ ...data, size: data.size_bytes, extension: data.mime_type, url: data.public_url || data.storage_path || null }));
+    } catch (error) {
+      console.error('Failed to upload binary file item:', error);
+      res.status(500).json({ error: 'Failed to upload file item' });
+    }
+  });
+
   app.get('/api/files', ensureFileAccess, async (req, res) => {
     try {
       const parentId = typeof req.query.parent_id === 'string' ? req.query.parent_id : null;
@@ -308,6 +400,27 @@ export function registerFilesRoutes({
     }
   });
 
+  app.get('/api/background-jobs', ensureFileAccess, isSuperAdmin, async (_req, res) => {
+    try {
+      const jobs = await listRecentBackgroundJobs(100);
+      return res.json(jobs);
+    } catch (error) {
+      console.error('Failed to load background jobs:', error);
+      return res.status(500).json({ error: 'Failed to load background jobs' });
+    }
+  });
+
+  app.get('/api/background-jobs/:id', ensureFileAccess, isSuperAdmin, async (req, res) => {
+    try {
+      const job = await getBackgroundJobById(req.params.id);
+      if (!job) return res.status(404).json({ error: 'Background job not found' });
+      return res.json(job);
+    } catch (error) {
+      console.error('Failed to load background job:', error);
+      return res.status(500).json({ error: 'Failed to load background job' });
+    }
+  });
+
   app.get("/api/payroll-submissions", ensureFileAccess, async (req, res) => {
     const sessionUserId = (req.session as any)?.userId;
     const sessionRole = (req.session as any)?.userRole;
@@ -520,7 +633,7 @@ export function registerFilesRoutes({
       }
     }
 
-    let mailResult: { sent: boolean; error?: string } = { sent: false };
+    let mailResult: { sent: boolean; queued?: boolean; jobId?: string; error?: string } = { sent: false };
     const payrollEmail = String(client?.payroll_email || '').trim();
     const payrollCc = String(client?.payroll_cc || '').trim();
     console.log('[PAYROLL MAIL] Evaluating payroll mail send', {
@@ -535,6 +648,7 @@ export function registerFilesRoutes({
       employeeCount,
       totalHours,
       totalPay,
+      asyncMode: env.payrollEmailAsync,
     });
     if (!isSmtpConfigured) {
       console.warn('[PAYROLL MAIL] Skipped because SMTP is not configured');
@@ -542,6 +656,23 @@ export function registerFilesRoutes({
     } else if (!payrollEmail) {
       console.warn('[PAYROLL MAIL] Skipped because client payroll email is blank');
       mailResult = { sent: false, error: 'Client payroll email is blank' };
+    } else if (env.payrollEmailAsync) {
+      try {
+        const queuedJob = await enqueueBackgroundJob({
+          jobType: 'payroll_submission_email',
+          payload: {
+            payrollSubmissionId: id,
+            clientId,
+            clientName,
+            payrollEmail,
+            payrollCc,
+          },
+        });
+        mailResult = { sent: false, queued: true, jobId: queuedJob.id };
+      } catch (error: any) {
+        console.error('[PAYROLL MAIL] Failed to queue payroll submission email:', error);
+        mailResult = { sent: false, error: error?.message || 'Failed to queue payroll email' };
+      }
     } else {
       try {
         console.log('[PAYROLL MAIL] Sending payroll submission email now');
@@ -682,6 +813,8 @@ export function registerFilesRoutes({
       payrollEmail,
       payrollCc,
       payrollMailSent: mailResult.sent,
+      payrollMailQueued: Boolean(mailResult.queued),
+      payrollMailJobId: mailResult.jobId || null,
       payrollEmailError: mailResult.error || null,
     });
     return res.status(201).json({ ...serializePayrollSubmission(row), mail: mailResult });
