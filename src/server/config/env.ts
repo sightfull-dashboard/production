@@ -123,6 +123,7 @@ export const env = {
   supabaseUrl: process.env.SUPABASE_URL ?? '',
   supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? '',
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  supabaseUseRlsForAppData: toBool(process.env.SUPABASE_USE_RLS_FOR_APP_DATA, false),
   supabaseStorageBucket: process.env.SUPABASE_STORAGE_BUCKET ?? 'client-files',
   supabaseBucketClientAssets: process.env.SUPABASE_BUCKET_CLIENT_ASSETS ?? 'client-assets',
   supabaseBucketEmployeeDocuments: process.env.SUPABASE_BUCKET_EMPLOYEE_DOCUMENTS ?? 'employee-documents',

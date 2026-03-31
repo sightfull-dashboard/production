@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import type { Express } from 'express';
-import { supabaseAdmin } from '../integrations/supabase';
+import { createRequestSupabaseClient, supabaseAdmin } from '../integrations/supabase';
 import { linkAppUserToAuthUser, signInWithSupabasePassword, syncSupabaseAuthUser } from '../utils/supabaseAuth';
 import { env } from '../config/env';
 import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../../lib/shifts';
@@ -19,6 +19,22 @@ const getSessionEmployeeId = (req: any) => (req.session as any)?.employeeId || n
 const getSessionClientId = (req: any) => (req.session as any)?.employeeClientId || null;
 
 const getSessionSupabaseAuthUserId = (req: any) => (req.session as any)?.supabaseAuthUserId || null;
+
+const getSessionSupabaseAccessToken = (req: any) => (req.session as any)?.supabaseAccessToken || null;
+
+const getTenantDataClient = (req: any) => {
+  if (env.supabaseUseRlsForAppData) {
+    const accessToken = String(getSessionSupabaseAccessToken(req) || '').trim();
+    if (accessToken) {
+      try {
+        return createRequestSupabaseClient(accessToken);
+      } catch (error) {
+        console.warn('Failed to create request-scoped Supabase client, falling back to admin client:', error);
+      }
+    }
+  }
+  return supabaseAdmin;
+};
 
 const clearSessionAuthState = (req: any) => {
   delete (req.session as any).supabaseAccessToken;
@@ -346,15 +362,15 @@ async function fetchEmployeeByIdentifier(identifier: string) {
   }) || null;
 }
 
-async function listEmployeesForClient(clientId: string | null) {
-  let query = supabaseAdmin.from('employees').select('*').order('emp_id', { ascending: true });
+async function listEmployeesForClient(clientId: string | null, client: any = supabaseAdmin) {
+  let query = client.from('employees').select('*').order('emp_id', { ascending: true });
   if (clientId) query = query.eq('client_id', clientId);
   const { data, error } = await query;
   if (error) throw error;
   const employees = (data || []) as any[];
   if (employees.length === 0) return employees;
   const ids = employees.map((e) => e.id);
-  const { data: rosterRows } = await supabaseAdmin.from('roster').select('employee_id,day_date,shift_id').in('employee_id', ids).not('shift_id', 'is', null);
+  const { data: rosterRows } = await client.from('roster').select('employee_id,day_date,shift_id').in('employee_id', ids).not('shift_id', 'is', null);
   const maxMap = new Map<string, string>();
   for (const row of (rosterRows || []) as any[]) {
     const current = maxMap.get(row.employee_id);
@@ -363,8 +379,8 @@ async function listEmployeesForClient(clientId: string | null) {
   return employees.map((employee) => ({ ...employee, last_worked_date: maxMap.get(employee.id) || null }));
 }
 
-async function nextEmployeeId(clientId: string | null) {
-  let query = supabaseAdmin.from('employees').select('emp_id');
+async function nextEmployeeId(clientId: string | null, client: any = supabaseAdmin) {
+  let query = client.from('employees').select('emp_id');
   if (clientId) query = query.eq('client_id', clientId);
   const { data, error } = await query;
   if (error) throw error;
@@ -439,8 +455,8 @@ async function requireTenantContext(req: any, res: any, options: { superadminMus
   return { ...context, client };
 }
 
-async function fetchEmployeeForClient(employeeId: string, clientId: string) {
-  const { data, error } = await supabaseAdmin
+async function fetchEmployeeForClient(employeeId: string, clientId: string, client: any = supabaseAdmin) {
+  const { data, error } = await client
     .from('employees')
     .select('*')
     .eq('id', employeeId)
@@ -450,8 +466,8 @@ async function fetchEmployeeForClient(employeeId: string, clientId: string) {
   return data as any;
 }
 
-async function listShiftsForClient(clientId: string) {
-  const { data, error } = await supabaseAdmin
+async function listShiftsForClient(clientId: string, client: any = supabaseAdmin) {
+  const { data, error } = await client
     .from('shifts')
     .select('*')
     .eq('client_id', clientId)
@@ -460,8 +476,8 @@ async function listShiftsForClient(clientId: string) {
   return (data || []) as any[];
 }
 
-async function fetchShiftForClient(shiftId: string, clientId: string) {
-  const { data, error } = await supabaseAdmin
+async function fetchShiftForClient(shiftId: string, clientId: string, client: any = supabaseAdmin) {
+  const { data, error } = await client
     .from('shifts')
     .select('*')
     .eq('id', shiftId)
@@ -727,7 +743,8 @@ export function registerSupabaseCoreRoutes({
   app.get('/api/employees', async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
-    const employees = await listEmployeesForClient(tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const employees = await listEmployeesForClient(tenant.clientId, dataClient);
     res.json(employees);
   });
 
@@ -737,17 +754,18 @@ export function registerSupabaseCoreRoutes({
     const actorRole = tenant.role;
     const actorClientId = tenant.clientId;
     const data = normalizeEmployeePayload(req.body);
+    const dataClient = getTenantDataClient(req);
     if (actorRole !== 'superadmin') {
-      data.emp_id = await nextEmployeeId(actorClientId);
+      data.emp_id = await nextEmployeeId(actorClientId, dataClient);
       data.annual_leave = 0; data.sick_leave = 0; data.family_leave = 0;
     }
     const errors = validateEmployeePayload(data);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
     const dupChecks = [
-      data.emp_id ? supabaseAdmin.from('employees').select('id').eq('client_id', actorClientId).ilike('emp_id', data.emp_id).limit(1) : null,
-      data.email ? supabaseAdmin.from('employees').select('id').eq('client_id', actorClientId).ilike('email', data.email).limit(1) : null,
-      data.id_number ? supabaseAdmin.from('employees').select('id').eq('client_id', actorClientId).eq('id_number', data.id_number).limit(1) : null,
-      data.tax_number ? supabaseAdmin.from('employees').select('id').eq('client_id', actorClientId).eq('tax_number', data.tax_number).limit(1) : null,
+      data.emp_id ? dataClient.from('employees').select('id').eq('client_id', actorClientId).ilike('emp_id', data.emp_id).limit(1) : null,
+      data.email ? dataClient.from('employees').select('id').eq('client_id', actorClientId).ilike('email', data.email).limit(1) : null,
+      data.id_number ? dataClient.from('employees').select('id').eq('client_id', actorClientId).eq('id_number', data.id_number).limit(1) : null,
+      data.tax_number ? dataClient.from('employees').select('id').eq('client_id', actorClientId).eq('tax_number', data.tax_number).limit(1) : null,
     ].filter(Boolean) as any[];
     const [empDup, emailDup, idDup, taxDup] = await Promise.all(dupChecks);
     if (empDup?.data?.length) return res.status(400).json({ error: 'Employee ID already exists.' });
@@ -766,7 +784,7 @@ export function registerSupabaseCoreRoutes({
       sick_cycle_start_date: data.start_date,
       family_leave_last_reset_year: null,
     });
-    const { error } = await supabaseAdmin.from('employees').insert(employeePayload);
+    const { error } = await dataClient.from('employees').insert(employeePayload);
     if (error) return res.status(500).json({ error: error.message });
     logActivity(req, 'CREATE_EMPLOYEE', { emp_id: data.emp_id, name: `${data.first_name} ${data.last_name}` });
     res.json(sanitizeEmployeeForResponse({ id, ...employeePayload }));
@@ -775,14 +793,15 @@ export function registerSupabaseCoreRoutes({
   app.put('/api/employees/:id', async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
-    const existing = await fetchEmployeeForClient(req.params.id, tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const existing = await fetchEmployeeForClient(req.params.id, tenant.clientId, dataClient);
     if (!existing) return res.status(404).json({ error: 'Employee not found' });
     const data = normalizeEmployeePayload({ ...existing, ...req.body, emp_id: req.body?.emp_id || existing.emp_id });
     const errors = validateEmployeePayload(data);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
     const { allow_blank_pin: _allowBlankPin, ...persistableData } = data as any;
     const updatePayload = sanitizeEmployeeForSupabase({ ...persistableData, pin: data.pin ? hashSecret(data.pin) : existing.pin || null });
-    const { data: updated, error } = await supabaseAdmin.from('employees').update(updatePayload).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
+    const { data: updated, error } = await dataClient.from('employees').update(updatePayload).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(sanitizeEmployeeForResponse(updated));
   });
@@ -790,7 +809,8 @@ export function registerSupabaseCoreRoutes({
   app.post('/api/employees/:id/offboard', async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
-    const existing = await fetchEmployeeForClient(req.params.id, tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const existing = await fetchEmployeeForClient(req.params.id, tenant.clientId, dataClient);
     if (!existing) return res.status(404).json({ error: 'Employee not found' });
     const payload = {
       status: 'offboarded',
@@ -798,7 +818,7 @@ export function registerSupabaseCoreRoutes({
       last_worked_date: req.body?.last_worked || null,
       delete_reason: req.body?.delete_reason || null,
     };
-    const { data, error } = await supabaseAdmin.from('employees').update(payload).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
+    const { data, error } = await dataClient.from('employees').update(payload).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
   });
@@ -808,7 +828,8 @@ export function registerSupabaseCoreRoutes({
     if (!tenant) return;
     if (tenant.role !== 'superadmin') return res.status(403).json({ error: 'Forbidden: Super Admin access required' });
 
-    const existing = await fetchEmployeeForClient(req.params.id, tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const existing = await fetchEmployeeForClient(req.params.id, tenant.clientId, dataClient);
     if (!existing) return res.status(404).json({ error: 'Employee not found' });
     if (String(existing.status || 'active').toLowerCase() !== 'offboarded') {
       return res.status(400).json({ error: 'Employee is not off-boarded' });
@@ -820,7 +841,7 @@ export function registerSupabaseCoreRoutes({
       last_worked_date: null,
       delete_reason: null,
     };
-    const { data: restored, error } = await supabaseAdmin.from('employees').update(payload).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
+    const { data: restored, error } = await dataClient.from('employees').update(payload).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(sanitizeEmployeeForResponse(restored));
   });
@@ -828,9 +849,10 @@ export function registerSupabaseCoreRoutes({
   app.delete('/api/employees/:id', async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
-    const existing = await fetchEmployeeForClient(req.params.id, tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const existing = await fetchEmployeeForClient(req.params.id, tenant.clientId, dataClient);
     if (!existing) return res.status(404).json({ error: 'Employee not found' });
-    const { error } = await supabaseAdmin.from('employees').delete().eq('id', req.params.id).eq('client_id', tenant.clientId);
+    const { error } = await dataClient.from('employees').delete().eq('id', req.params.id).eq('client_id', tenant.clientId);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
   });
@@ -838,13 +860,15 @@ export function registerSupabaseCoreRoutes({
   app.get('/api/shifts', async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
-    const data = await listShiftsForClient(tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const data = await listShiftsForClient(tenant.clientId, dataClient);
     res.json(sortShiftsBaseFirst(data));
   });
 
   app.post('/api/shifts', async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
+    const dataClient = getTenantDataClient(req);
     const payload = normalizeShiftPayload(req.body);
     const errors = validateShiftPayload(payload);
     if (errors.length) return res.status(400).json({ error: errors.join(' ') });
@@ -852,7 +876,7 @@ export function registerSupabaseCoreRoutes({
       return res.status(403).json({ error: 'Only Super Admin can manage administrative shifts.' });
     }
     const id = payload.id || Math.random().toString(36).slice(2, 11);
-    const { data, error } = await supabaseAdmin.from('shifts').insert({ ...payload, id, client_id: tenant.clientId }).select('*').single();
+    const { data, error } = await dataClient.from('shifts').insert({ ...payload, id, client_id: tenant.clientId }).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
   });
@@ -860,7 +884,8 @@ export function registerSupabaseCoreRoutes({
   app.put('/api/shifts/:id', async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
-    const existing = await fetchShiftForClient(req.params.id, tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const existing = await fetchShiftForClient(req.params.id, tenant.clientId, dataClient);
     if (!existing) return res.status(404).json({ error: 'Shift not found' });
     const payload = normalizeShiftPayload({ ...existing, ...req.body, id: req.params.id });
     const errors = validateShiftPayload(payload);
@@ -868,7 +893,7 @@ export function registerSupabaseCoreRoutes({
     if (tenant.role !== 'superadmin' && (isProtectedAdministrativeShiftLabel(existing.label) || isProtectedAdministrativeShiftLabel(payload.label))) {
       return res.status(403).json({ error: 'Only Super Admin can manage administrative shifts.' });
     }
-    const { data, error } = await supabaseAdmin.from('shifts').update({ ...payload, client_id: tenant.clientId }).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
+    const { data, error } = await dataClient.from('shifts').update({ ...payload, client_id: tenant.clientId }).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
   });
@@ -876,12 +901,13 @@ export function registerSupabaseCoreRoutes({
   app.delete('/api/shifts/:id', async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
-    const existing = await fetchShiftForClient(req.params.id, tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const existing = await fetchShiftForClient(req.params.id, tenant.clientId, dataClient);
     if (!existing) return res.status(404).json({ error: 'Shift not found' });
     if (tenant.role !== 'superadmin' && isProtectedAdministrativeShiftLabel(existing.label)) {
       return res.status(403).json({ error: 'Only Super Admin can manage administrative shifts.' });
     }
-    const { error } = await supabaseAdmin.from('shifts').delete().eq('id', req.params.id).eq('client_id', tenant.clientId);
+    const { error } = await dataClient.from('shifts').delete().eq('id', req.params.id).eq('client_id', tenant.clientId);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
   });
@@ -890,13 +916,14 @@ export function registerSupabaseCoreRoutes({
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const clientId = tenant.clientId;
+    const dataClient = getTenantDataClient(req);
     const weekStart = String(req.query.week_start || '').trim();
     const periodDays = Math.max(1, Number(req.query.period_days || 7));
-    let employeeQuery = supabaseAdmin.from('employees').select('id').eq('client_id', clientId);
+    let employeeQuery = dataClient.from('employees').select('id').eq('client_id', clientId);
     const { data: employeeRows } = await employeeQuery;
     const ids = (employeeRows || []).map((r: any) => r.id);
     if (ids.length === 0) return res.json([]);
-    let rosterQuery = supabaseAdmin.from('roster').select('*').in('employee_id', ids);
+    let rosterQuery = dataClient.from('roster').select('*').in('employee_id', ids);
     if (weekStart) {
       const start = new Date(`${weekStart}T00:00:00`);
       const end = new Date(start);
@@ -919,10 +946,11 @@ export function registerSupabaseCoreRoutes({
     };
     if (!payload.employee_id || !payload.day_date) return res.status(400).json({ error: 'employee_id and day_date are required' });
 
-    const employee = await fetchEmployeeForClient(payload.employee_id, tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const employee = await fetchEmployeeForClient(payload.employee_id, tenant.clientId, dataClient);
     if (!employee) return res.status(403).json({ error: 'Forbidden' });
     if (payload.shift_id) {
-      const shift = await fetchShiftForClient(String(payload.shift_id), tenant.clientId);
+      const shift = await fetchShiftForClient(String(payload.shift_id), tenant.clientId, dataClient);
       if (!shift) return res.status(400).json({ error: 'Selected shift does not belong to the active client.' });
     }
 
@@ -932,7 +960,7 @@ export function registerSupabaseCoreRoutes({
     if (actorRole !== 'superadmin' && payload.shift_id && !isSundayRequest) {
       const previousDayIso = getPreviousDayIso(payload.day_date);
       if (previousDayIso) {
-        const { data: previousRosterRow } = await supabaseAdmin
+        const { data: previousRosterRow } = await dataClient
           .from('roster')
           .select('shift_id')
           .eq('employee_id', payload.employee_id)
@@ -942,7 +970,7 @@ export function registerSupabaseCoreRoutes({
         const previousShiftId = previousRosterRow?.shift_id ? String(previousRosterRow.shift_id) : null;
         if (previousShiftId) {
           const shiftIds = [previousShiftId, String(payload.shift_id)];
-          const { data: shiftRows, error: shiftError } = await supabaseAdmin
+          const { data: shiftRows, error: shiftError } = await dataClient
             .from('shifts')
             .select('id,label,start,end,client_id')
             .eq('client_id', tenant.clientId)
@@ -960,7 +988,7 @@ export function registerSupabaseCoreRoutes({
       }
     }
 
-    const { data, error } = await supabaseAdmin.from('roster').upsert(payload, { onConflict: 'employee_id,day_date' }).select('*').single();
+    const { data, error } = await dataClient.from('roster').upsert(payload, { onConflict: 'employee_id,day_date' }).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
   });
@@ -969,12 +997,13 @@ export function registerSupabaseCoreRoutes({
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const clientId = tenant.clientId;
+    const dataClient = getTenantDataClient(req);
     const weekStart = String(req.query.week_start || '').trim();
-    let employeeQuery = supabaseAdmin.from('employees').select('id').eq('client_id', clientId);
+    let employeeQuery = dataClient.from('employees').select('id').eq('client_id', clientId);
     const { data: employeeRows } = await employeeQuery;
     const ids = (employeeRows || []).map((r: any) => r.id);
     if (ids.length === 0) return res.json([]);
-    let query = supabaseAdmin.from('roster_meta').select('*').in('employee_id', ids);
+    let query = dataClient.from('roster_meta').select('*').in('employee_id', ids);
     if (weekStart) query = query.eq('week_start', weekStart);
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
@@ -991,11 +1020,12 @@ export function registerSupabaseCoreRoutes({
     if (!employeeId || !weekStart || !field) return res.status(400).json({ error: 'employee_id, week_start and field are required' });
     const allowedFields = new Set(['salary_advance','shortages','unpaid_hours','loan_amount','staff_loan','uniform','overthrows','oil_spill','stock_shortage','annual_bonus','incentive_bonus','data_allowance','night_shift_allowance','medical_allowance','mibco_health_insurance','health_insurance','garnishee','cell_phone_payment','income_tax_registration','performance_incentive','commission','sales_commission','notes']);
     if (!allowedFields.has(field)) return res.status(400).json({ error: 'Unsupported roster meta field' });
-    const employee = await fetchEmployeeForClient(employeeId, tenant.clientId);
+    const dataClient = getTenantDataClient(req);
+    const employee = await fetchEmployeeForClient(employeeId, tenant.clientId, dataClient);
     if (!employee) return res.status(403).json({ error: 'Forbidden' });
     const base: any = { employee_id: employeeId, week_start: weekStart, updated_at: new Date().toISOString() };
     base[field] = String(value);
-    const { data, error } = await supabaseAdmin.from('roster_meta').upsert(base, { onConflict: 'employee_id,week_start' }).select('*').single();
+    const { data, error } = await dataClient.from('roster_meta').upsert(base, { onConflict: 'employee_id,week_start' }).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
   });
@@ -1005,6 +1035,7 @@ export function registerSupabaseCoreRoutes({
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     try {
+      const dataClient = getTenantDataClient(req);
       const month = String(req.query.month || new Date().toISOString().slice(0, 7));
       const selectedMonthDate = new Date(`${month}-01T00:00:00`);
       if (Number.isNaN(selectedMonthDate.getTime())) {
@@ -1040,19 +1071,19 @@ export function registerSupabaseCoreRoutes({
 
       const clientId = tenant.clientId;
 
-      let employeesQuery = supabaseAdmin.from('employees').select('*').eq('client_id', clientId);
+      let employeesQuery = dataClient.from('employees').select('*').eq('client_id', clientId);
       const { data: employeesData, error: employeesError } = await employeesQuery;
       if (employeesError) return res.status(500).json({ error: employeesError.message });
       const employees = (employeesData || []) as any[];
       const employeeIds = employees.map((e) => e.id).filter(Boolean);
 
-      const { data: shiftsData, error: shiftsError } = await supabaseAdmin.from('shifts').select('*').eq('client_id', clientId);
+      const { data: shiftsData, error: shiftsError } = await dataClient.from('shifts').select('*').eq('client_id', clientId);
       if (shiftsError) return res.status(500).json({ error: shiftsError.message });
       const shifts = (shiftsData || []) as any[];
 
       let roster: any[] = [];
       if (employeeIds.length) {
-        const { data: rosterData, error: rosterError } = await supabaseAdmin
+        const { data: rosterData, error: rosterError } = await dataClient
           .from('roster')
           .select('*')
           .in('employee_id', employeeIds)
@@ -1064,7 +1095,7 @@ export function registerSupabaseCoreRoutes({
 
       let leaveRequests: any[] = [];
       if (employeeIds.length) {
-        const { data: leaveData, error: leaveError } = await supabaseAdmin
+        const { data: leaveData, error: leaveError } = await dataClient
           .from('leave_requests')
           .select('*')
           .in('employee_id', employeeIds)
@@ -1075,7 +1106,7 @@ export function registerSupabaseCoreRoutes({
       }
 
       let payrollSubmissions: any[] = [];
-      let payrollSubmissionsQuery = supabaseAdmin
+      let payrollSubmissionsQuery = dataClient
         .from('payroll_submissions')
         .select('id, client_id, client_name, submitted_at, period_start, period_end, period, employee_count, status, total_hours, total_pay');
       if (clientId) {
@@ -1321,13 +1352,14 @@ export function registerSupabaseCoreRoutes({
       if (employeeId) {
         await reconcileEmployeeLeaveAccrualSupabase(employeeId);
       }
-      let query = supabaseAdmin.from('leave_requests').select('*').order('created_at', { ascending: false });
+      const dataClient = getTenantDataClient(req);
+      let query = dataClient.from('leave_requests').select('*').order('created_at', { ascending: false });
       if (employeeId) {
         query = query.eq('employee_id', employeeId);
       } else {
         const clientId = tenant.clientId;
         if (clientId) {
-          const { data: employeeRows } = await supabaseAdmin.from('employees').select('id').eq('client_id', clientId);
+          const { data: employeeRows } = await dataClient.from('employees').select('id').eq('client_id', clientId);
           const ids = (employeeRows || []).map((row: any) => row.id);
           if (!ids.length) return res.json([]);
           query = query.in('employee_id', ids);
@@ -1338,7 +1370,7 @@ export function registerSupabaseCoreRoutes({
       const ids = Array.from(new Set((data || []).map((row: any) => row.employee_id).filter(Boolean)));
       let nameMap = new Map<string, string>();
       if (ids.length) {
-        const { data: emps } = await supabaseAdmin.from('employees').select('id,first_name,last_name').in('id', ids);
+        const { data: emps } = await dataClient.from('employees').select('id,first_name,last_name').in('id', ids);
         nameMap = new Map((emps || []).map((e: any) => [e.id, `${e.first_name || ''} ${e.last_name || ''}`.trim()]));
       }
       res.json((data || []).map((row: any) => ({ ...row, employee_name: nameMap.get(row.employee_id) || '' })));
@@ -1384,6 +1416,7 @@ export function registerSupabaseCoreRoutes({
       }
 
       const id = `leave_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const dataClient = getTenantDataClient(req);
       const payload = {
         id,
         employee_id,
@@ -1399,7 +1432,7 @@ export function registerSupabaseCoreRoutes({
         attachment_url: '',
         updated_at: new Date().toISOString(),
       };
-      const { data, error } = await supabaseAdmin.from('leave_requests').insert(payload).select('*').single();
+      const { data, error } = await dataClient.from('leave_requests').insert(payload).select('*').single();
       if (error) return res.status(500).json({ error: error.message });
       if (status === 'approved') await adjustEmployeeLeaveBalanceSupabase(employee_id, type, -days);
       await reconcileEmployeeLeaveAccrualSupabase(employee_id);
@@ -1415,7 +1448,8 @@ export function registerSupabaseCoreRoutes({
     if (!status || !['approved','declined'].includes(status)) return res.status(400).json({ error: 'Valid status is required' });
 
     try {
-      const { data: existing, error: existingError } = await supabaseAdmin.from('leave_requests').select('*').eq('id', req.params.id).single();
+      const dataClient = getTenantDataClient(req);
+      const { data: existing, error: existingError } = await dataClient.from('leave_requests').select('*').eq('id', req.params.id).single();
       if (existingError || !existing) return res.status(404).json({ error: 'Leave request not found' });
       await reconcileEmployeeLeaveAccrualSupabase(existing.employee_id);
       const employee = await fetchEmployeeById(existing.employee_id);
@@ -1439,7 +1473,7 @@ export function registerSupabaseCoreRoutes({
         }
       }
 
-      const { data, error } = await supabaseAdmin.from('leave_requests').update({ status, admin_notes: String(req.body?.admin_notes || ''), updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+      const { data, error } = await dataClient.from('leave_requests').update({ status, admin_notes: String(req.body?.admin_notes || ''), updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
       if (error) return res.status(500).json({ error: error.message });
       if (type) {
         if (existing.status === 'approved' && status !== 'approved') await adjustEmployeeLeaveBalanceSupabase(existing.employee_id, type, days);
@@ -1455,9 +1489,10 @@ export function registerSupabaseCoreRoutes({
   app.post('/api/leave-requests/:id/cancel', async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
     try {
-      const { data: existing, error: existingError } = await supabaseAdmin.from('leave_requests').select('*').eq('id', req.params.id).single();
+      const dataClient = getTenantDataClient(req);
+      const { data: existing, error: existingError } = await dataClient.from('leave_requests').select('*').eq('id', req.params.id).single();
       if (existingError || !existing) return res.status(404).json({ error: 'Leave request not found' });
-      const { data, error } = await supabaseAdmin.from('leave_requests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+      const { data, error } = await dataClient.from('leave_requests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
       if (error) return res.status(500).json({ error: error.message });
       const type = normalizeLeaveType(existing.type);
       if (type && existing.status === 'approved') await adjustEmployeeLeaveBalanceSupabase(existing.employee_id, type, Number(existing.days || 0));
