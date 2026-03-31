@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import type { Express } from 'express';
 import { supabaseAdmin } from '../integrations/supabase';
+import { linkAppUserToAuthUser, signInWithSupabasePassword, syncSupabaseAuthUser } from '../utils/supabaseAuth';
 import { env } from '../config/env';
 import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../../lib/shifts';
 import { hashSecret, sanitizeEmployeeForResponse, sanitizeEmployeesForResponse, shouldUpgradeLegacySecret, verifySecret } from '../utils/security';
@@ -16,6 +17,40 @@ const getSessionRole = (req: any) => (req.session as any)?.userRole || null;
 const getSessionUserId = (req: any) => (req.session as any)?.userId || null;
 const getSessionEmployeeId = (req: any) => (req.session as any)?.employeeId || null;
 const getSessionClientId = (req: any) => (req.session as any)?.employeeClientId || null;
+
+const getSessionSupabaseAuthUserId = (req: any) => (req.session as any)?.supabaseAuthUserId || null;
+
+const clearSessionAuthState = (req: any) => {
+  delete (req.session as any).supabaseAccessToken;
+  delete (req.session as any).supabaseRefreshToken;
+  delete (req.session as any).supabaseAuthUserId;
+  delete (req.session as any).authLoginSource;
+};
+
+const applyUserSession = (req: any, user: any, allowedSuperAdminEmails: Set<string>, authSession?: { access_token?: string | null; refresh_token?: string | null; user?: { id?: string | null } | null } | null, authSource: 'supabase' | 'legacy' = 'legacy') => {
+  const normalizedEmail = String(user?.email || '').trim().toLowerCase();
+  const effectiveRole = allowedSuperAdminEmails.has(normalizedEmail) ? 'superadmin' : user?.role;
+  (req.session as any).userId = user.id;
+  (req.session as any).userRole = effectiveRole;
+  (req.session as any).userClientId = user.client_id || null;
+  if (authSession?.access_token) {
+    (req.session as any).supabaseAccessToken = authSession.access_token;
+  }
+  if (authSession?.refresh_token) {
+    (req.session as any).supabaseRefreshToken = authSession.refresh_token;
+  }
+  const authUserId = authSession?.user?.id || user?.auth_user_id || null;
+  if (authUserId) {
+    (req.session as any).supabaseAuthUserId = authUserId;
+  }
+  (req.session as any).authLoginSource = authSource;
+  if (user?.mfa_required || user?.mfa_enabled) {
+    (req.session as any).mfaPending = true;
+  } else {
+    delete (req.session as any).mfaPending;
+  }
+  return effectiveRole;
+};
 
 const getRequestedClientId = (req: any) => {
   const header = String(req.headers['x-active-client-id'] || '').trim();
@@ -273,6 +308,11 @@ async function getExistingLeaveOverlap(employeeId: string, startDate: string, en
 
 async function fetchUserById(id: string) {
   const { data } = await supabaseAdmin.from('users').select('*').eq('id', id).single();
+  return data as any;
+}
+
+async function fetchUserByAuthUserId(authUserId: string) {
+  const { data } = await supabaseAdmin.from('users').select('*').eq('auth_user_id', authUserId).maybeSingle();
   return data as any;
 }
 
@@ -544,26 +584,72 @@ export function registerSupabaseCoreRoutes({
     try {
       const email = String(req.body?.email || '').trim();
       const password = String(req.body?.password || '').trim();
-      const user = await fetchUserByEmail(email);
-      if (!user || !bcrypt.compareSync(password, user.password)) {
+      if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
+
+      let user = await fetchUserByEmail(email);
+      let authSession: any = null;
+      let authSource: 'supabase' | 'legacy' = 'legacy';
+
+      const supabaseLogin = await signInWithSupabasePassword(email, password).catch((error) => ({ session: null, user: null, error }));
+      if (supabaseLogin?.session && supabaseLogin?.user) {
+        authSession = supabaseLogin.session;
+        authSource = 'supabase';
+        user = user || await fetchUserByAuthUserId(String(supabaseLogin.user.id));
+        user = user || await fetchUserByEmail(String(supabaseLogin.user.email || email));
+        if (user && !user.auth_user_id) {
+          try {
+            await linkAppUserToAuthUser(String(user.id), String(supabaseLogin.user.id));
+            user = { ...user, auth_user_id: String(supabaseLogin.user.id) };
+          } catch (linkError) {
+            console.warn('Failed to link app user to Supabase Auth user during login:', linkError);
+          }
+        }
+      }
+
+      if (!user) {
         logActivity(req, 'LOGIN_FAILED', { email });
         return res.status(401).json({ error: 'Invalid credentials' });
       }
+
+      if (!authSession) {
+        if (!bcrypt.compareSync(password, user.password)) {
+          logActivity(req, 'LOGIN_FAILED', { email });
+          return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        try {
+          const syncResult = await syncSupabaseAuthUser(user, { password, email: user.email, name: user.name, emailConfirm: true });
+          if (syncResult.authUserId && syncResult.authUserId !== user.auth_user_id) {
+            user = { ...user, auth_user_id: syncResult.authUserId };
+          }
+          const migratedLogin = await signInWithSupabasePassword(String(user.email || email), password);
+          if (migratedLogin?.session) {
+            authSession = migratedLogin.session;
+            authSource = 'supabase';
+          }
+        } catch (migrationError) {
+          console.warn('Supabase Auth migration fallback failed during legacy login:', migrationError);
+        }
+      }
+
       if (!user.is_verified && !allowedSuperAdminEmails.has(String(user.email || '').trim().toLowerCase())) {
         return res.status(403).json({ error: 'Account not verified yet.' });
       }
-      (req.session as any).userId = user.id;
-      (req.session as any).userRole = allowedSuperAdminEmails.has(String(user.email || '').trim().toLowerCase()) ? 'superadmin' : user.role;
-      (req.session as any).userClientId = user.client_id || null;
-      if (user.mfa_required || user.mfa_enabled) {
-        (req.session as any).mfaPending = true;
-      }
-      await supabaseAdmin.from('users').update({ last_login: new Date().toISOString(), role: (req.session as any).userRole, is_verified: true }).eq('id', user.id);
-      const payload = await buildAuthResponse({ ...user, role: (req.session as any).userRole, is_verified: true }, allowedSuperAdminEmails, mergeDefinitions, baseRosterDefinitions);
+
+      const effectiveRole = applyUserSession(req, user, allowedSuperAdminEmails, authSession ? { ...authSession, user: authSession.user || { id: user.auth_user_id || null } } : null, authSession ? authSource : 'legacy');
+      await supabaseAdmin
+        .from('users')
+        .update({
+          last_login: new Date().toISOString(),
+          role: effectiveRole,
+          is_verified: true,
+          ...(user.auth_user_id || getSessionSupabaseAuthUserId(req) ? { auth_user_id: user.auth_user_id || getSessionSupabaseAuthUserId(req) } : {}),
+        })
+        .eq('id', user.id);
+      const payload = await buildAuthResponse({ ...user, role: effectiveRole, is_verified: true, auth_user_id: user.auth_user_id || getSessionSupabaseAuthUserId(req) }, allowedSuperAdminEmails, mergeDefinitions, baseRosterDefinitions);
       if (payload?.role !== 'superadmin' && payload?.client_id && payload?.clientStatus === 'deactivated') {
         return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: payload.client_id }));
       }
-      logActivity(req, 'LOGIN_SUCCESS', { email: user.email, role: payload?.role, client_id: payload?.client_id || null });
+      logActivity(req, 'LOGIN_SUCCESS', { email: user.email, role: payload?.role, client_id: payload?.client_id || null, authSource: (req.session as any).authLoginSource || 'legacy' });
       return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending });
     } catch (error: any) {
       return res.status(500).json({ error: error?.message || 'Login failed' });
@@ -571,18 +657,26 @@ export function registerSupabaseCoreRoutes({
   });
 
   app.get('/api/auth/me', async (req, res) => {
-    const userId = getSessionUserId(req);
-    if (!userId) return res.status(401).json({ error: 'Not authenticated' });
-    const user = await fetchUserById(userId);
+    let user = getSessionUserId(req) ? await fetchUserById(getSessionUserId(req)) : null;
+    if (!user && getSessionSupabaseAuthUserId(req)) {
+      user = await fetchUserByAuthUserId(String(getSessionSupabaseAuthUserId(req)));
+      if (user?.id) {
+        (req.session as any).userId = user.id;
+        (req.session as any).userRole = allowedSuperAdminEmails.has(String(user.email || '').trim().toLowerCase()) ? 'superadmin' : user.role;
+        (req.session as any).userClientId = user.client_id || null;
+      }
+    }
+    if (!user) return res.status(401).json({ error: 'Not authenticated' });
     const payload = await buildAuthResponse(user, allowedSuperAdminEmails, mergeDefinitions, baseRosterDefinitions);
     if (payload?.role !== 'superadmin' && payload?.client_id && payload?.clientStatus === 'deactivated') {
       return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: payload.client_id }));
     }
-    return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending });
+    return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending, authSource: (req.session as any).authLoginSource || 'legacy' });
   });
 
   app.post('/api/auth/logout', (req, res) => {
     logActivity(req, 'LOGOUT');
+    clearSessionAuthState(req);
     req.session.destroy(() => res.json({ success: true }));
   });
 

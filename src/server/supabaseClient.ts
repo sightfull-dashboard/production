@@ -1,1 +1,1 @@
-export { supabaseAdmin, getSupabaseReadiness } from './integrations/supabase';
+export { supabaseAdmin, createRequestSupabaseClient, getSupabaseReadiness } from './integrations/supabase';

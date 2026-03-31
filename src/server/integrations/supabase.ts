@@ -7,6 +7,19 @@ export const supabaseAdmin = isSupabaseConfigured
     })
   : null;
 
+export const createRequestSupabaseClient = (accessToken?: string | null) => {
+  if (!isSupabaseConfigured || !env.supabaseAnonKey) {
+    throw new Error('Supabase anon key is not configured.');
+  }
+
+  return createClient(env.supabaseUrl, env.supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: accessToken
+      ? { headers: { Authorization: `Bearer ${accessToken}` } }
+      : undefined,
+  });
+};
+
 export const getSupabaseReadiness = () => ({
   configured: isSupabaseConfigured,
   urlPresent: Boolean(env.supabaseUrl),

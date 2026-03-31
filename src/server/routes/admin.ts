@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import bcrypt from 'bcryptjs';
 import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
+import { deleteSupabaseAuthUser, syncSupabaseAuthUser } from '../utils/supabaseAuth';
 
 type Middleware = (req: any, res: any, next: any) => unknown;
 
@@ -579,14 +580,21 @@ export function registerAdminRoutes({
         return res.status(201).json(mapAdminUserRow(row));
       }
 
+      const hashedPassword = bcrypt.hashSync(password, 10);
       const { data, error } = await supabaseAdmin
         .from('users')
-        .insert({ id, email, password: bcrypt.hashSync(password, 10), role, is_verified: true, client_id: req.params.id, name: name || null, image: image || null, last_login: null })
-        .select('id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status')
+        .insert({ id, email, password: hashedPassword, role, is_verified: true, client_id: req.params.id, name: name || null, image: image || null, last_login: null })
+        .select('*')
         .single();
       if (error) {
         if (String(error.message || '').toLowerCase().includes('duplicate')) return res.status(400).json({ error: 'User already exists' });
         throw error;
+      }
+      try {
+        const syncResult = await syncSupabaseAuthUser({ ...data, auth_user_id: data?.auth_user_id || null }, { password, email, name: name || null, emailConfirm: true });
+        if (syncResult.authUserId && syncResult.authUserId !== data?.auth_user_id) data.auth_user_id = syncResult.authUserId;
+      } catch (syncError) {
+        console.warn('Failed to sync client user to Supabase Auth:', syncError);
       }
       logActivity(req, 'CREATE_CLIENT_USER', { clientId: req.params.id, userId: id, email, role });
       return res.status(201).json(mapAdminUserRow(data));
@@ -607,7 +615,8 @@ export function registerAdminRoutes({
     const nextRole = existing.role;
     const nextName = req.body.name ?? existing.name;
     const nextImage = req.body.image ?? existing.image ?? null;
-    const nextPassword = req.body.password ? bcrypt.hashSync(req.body.password, 10) : existing.password;
+    const providedPassword = typeof req.body.password === 'string' && req.body.password ? String(req.body.password) : '';
+    const nextPassword = providedPassword ? bcrypt.hashSync(providedPassword, 10) : existing.password;
     const nextVerified = typeof req.body.is_verified === 'undefined' ? existing.is_verified : !!req.body.is_verified;
     const nextMfaRequired = typeof req.body.mfa_required === 'undefined' ? existing.mfa_required : !!req.body.mfa_required;
     const clearMfaPayload = !nextMfaRequired ? { mfa_enabled: false, mfa_secret: null, mfa_backup_codes: [] } : {};
@@ -626,11 +635,17 @@ export function registerAdminRoutes({
         .update({ email: nextEmail, password: nextPassword, role: nextRole, name: nextName, image: nextImage, is_verified: nextVerified, mfa_required: nextMfaRequired, ...clearMfaPayload })
         .eq('id', req.params.userId)
         .eq('client_id', req.params.clientId)
-        .select('id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status')
+        .select('*')
         .single();
       if (error) {
         if (String(error.message || '').toLowerCase().includes('duplicate')) return res.status(400).json({ error: 'Email already exists' });
         throw error;
+      }
+      try {
+        const syncResult = await syncSupabaseAuthUser({ ...data, auth_user_id: data?.auth_user_id || existing?.auth_user_id || null }, { email: nextEmail, password: providedPassword || undefined, name: nextName ?? null, emailConfirm: nextVerified });
+        if (syncResult.authUserId && syncResult.authUserId !== data?.auth_user_id) data.auth_user_id = syncResult.authUserId;
+      } catch (syncError) {
+        console.warn('Failed to sync updated client user to Supabase Auth:', syncError);
       }
       logActivity(req, 'UPDATE_CLIENT_USER', { clientId: req.params.clientId, userId: req.params.userId, email: nextEmail, role: nextRole });
       return res.json(mapAdminUserRow(data));
@@ -649,8 +664,17 @@ export function registerAdminRoutes({
       return res.json({ success: true });
     }
 
+    const existing = await fetchSupabaseUserById(req.params.userId);
+    if (!existing || existing.client_id !== req.params.clientId) return res.status(404).json({ error: 'User not found' });
     const { data, error } = await supabaseAdmin.from('users').delete().eq('id', req.params.userId).eq('client_id', req.params.clientId).select('id').single();
     if (error || !data) return res.status(404).json({ error: 'User not found' });
+    if (existing.auth_user_id) {
+      try {
+        await deleteSupabaseAuthUser(existing.auth_user_id);
+      } catch (authDeleteError) {
+        console.warn('Failed to delete Supabase Auth user for deleted client user:', authDeleteError);
+      }
+    }
     logActivity(req, 'DELETE_CLIENT_USER', { clientId: req.params.clientId, userId: req.params.userId });
     return res.json({ success: true });
   });
@@ -1007,7 +1031,7 @@ export function registerAdminRoutes({
         db.prepare("INSERT INTO users (id, email, password, role, is_verified, client_id, name, image, last_login, permissions, assigned_clients, status) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)")
           .run(id, email, hashedPassword, role, 1, submittedName, image || null, null, JSON.stringify(permissions), JSON.stringify(assignedClients), status);
       } else {
-        const { error } = await supabaseAdmin.from('users').insert({
+        const { data, error } = await supabaseAdmin.from('users').insert({
           id,
           email,
           password: hashedPassword,
@@ -1020,10 +1044,15 @@ export function registerAdminRoutes({
           permissions,
           assigned_clients: assignedClients,
           status,
-        });
+        }).select('*').single();
         if (error) {
           if (String(error.message || '').toLowerCase().includes('duplicate')) return res.status(400).json({ error: 'User already exists' });
           throw error;
+        }
+        try {
+          await syncSupabaseAuthUser({ ...data, auth_user_id: data?.auth_user_id || null }, { password, email, name: submittedName, emailConfirm: true });
+        } catch (syncError) {
+          console.warn('Failed to sync internal user to Supabase Auth:', syncError);
         }
       }
 
@@ -1063,8 +1092,17 @@ export function registerAdminRoutes({
       return res.json({ success: true });
     }
 
+    const existing = await fetchSupabaseUserById(req.params.id);
+    if (!existing || existing.client_id !== null) return res.status(404).json({ error: 'User not found' });
     const { data, error } = await supabaseAdmin.from('users').delete().eq('id', req.params.id).is('client_id', null).select('id').single();
     if (error || !data) return res.status(404).json({ error: 'User not found' });
+    if (existing.auth_user_id) {
+      try {
+        await deleteSupabaseAuthUser(existing.auth_user_id);
+      } catch (authDeleteError) {
+        console.warn('Failed to delete Supabase Auth user for deleted internal user:', authDeleteError);
+      }
+    }
     logActivity(req, 'DELETE_USER', { userId: req.params.id, scope: 'super_panel' });
     return res.json({ success: true });
   });
@@ -1081,7 +1119,8 @@ export function registerAdminRoutes({
     const nextRole = requestedRole === 'superadmin' ? 'superadmin' : 'staff';
     const nextEmail = email ?? existing.email;
     const nextVerified = typeof is_verified === 'undefined' ? existing.is_verified : !!is_verified;
-    const nextPassword = password ? bcrypt.hashSync(password, 10) : existing.password;
+    const providedPassword = typeof password === 'string' && password ? String(password) : '';
+    const nextPassword = providedPassword ? bcrypt.hashSync(providedPassword, 10) : existing.password;
     const nextPermissions = nextRole === 'superadmin' ? [] : getPermissions({ permissions: typeof req.body.permissions === 'undefined' ? existing.permissions : req.body.permissions });
     const nextAssignedClients = nextRole === 'superadmin' ? [] : getAssignedClients({ assigned_clients: typeof req.body.assigned_clients === 'undefined' ? existing.assigned_clients : req.body.assigned_clients });
     const nextStatus = typeof req.body.status === 'undefined'
@@ -1107,10 +1146,15 @@ export function registerAdminRoutes({
         permissions: nextPermissions,
         assigned_clients: nextAssignedClients,
         status: nextStatus,
-      }).eq('id', req.params.id).is('client_id', null).select('id, email, role, is_verified, client_id, name, image, last_login, mfa_required, mfa_enabled, permissions, assigned_clients, status').single();
+      }).eq('id', req.params.id).is('client_id', null).select('*').single();
       if (error) {
         if (String(error.message || '').toLowerCase().includes('duplicate')) return res.status(400).json({ error: 'Email already exists' });
         throw error;
+      }
+      try {
+        await syncSupabaseAuthUser({ ...data, auth_user_id: data?.auth_user_id || existing?.auth_user_id || null }, { email: nextEmail, password: providedPassword || undefined, name: submittedName ?? existing.name ?? null, emailConfirm: nextVerified });
+      } catch (syncError) {
+        console.warn('Failed to sync updated internal user to Supabase Auth:', syncError);
       }
       logActivity(req, 'UPDATE_USER', { userId: req.params.id, email: nextEmail, role: nextRole, scope: 'super_panel', permissions: nextPermissions, assignedClientsCount: nextAssignedClients.length });
       return res.json(mapAdminUserRow(data));
@@ -1147,8 +1191,15 @@ export function registerAdminRoutes({
         const result = db.prepare("UPDATE users SET password = ? WHERE id = ? AND client_id IS NULL").run(hashedPassword, req.params.id);
         if (!result.changes) return res.status(404).json({ error: 'User not found' });
       } else {
-        const { data, error } = await supabaseAdmin.from('users').update({ password: hashedPassword }).eq('id', req.params.id).is('client_id', null).select('id').single();
+        const existing = await fetchSupabaseUserById(req.params.id);
+        if (!existing || existing.client_id !== null) return res.status(404).json({ error: 'User not found' });
+        const { data, error } = await supabaseAdmin.from('users').update({ password: hashedPassword }).eq('id', req.params.id).is('client_id', null).select('*').single();
         if (error || !data) return res.status(404).json({ error: 'User not found' });
+        try {
+          await syncSupabaseAuthUser({ ...data, auth_user_id: data?.auth_user_id || existing?.auth_user_id || null }, { email: data.email, password: temporaryPassword, name: data.name ?? null, emailConfirm: true });
+        } catch (syncError) {
+          console.warn('Failed to sync internal password reset to Supabase Auth:', syncError);
+        }
       }
       logActivity(req, 'RESET_USER_PASSWORD', { userId: req.params.id, scope: 'super_panel' });
       return res.json({ success: true, temporaryPassword });
