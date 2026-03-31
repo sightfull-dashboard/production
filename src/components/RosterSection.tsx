@@ -6,7 +6,7 @@ import { isSAPublicHoliday } from '../constants';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { downloadCSV, exportToPDF } from '../utils/exportUtils';
-import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../lib/shifts';
+import { sortRosterDropdownShifts, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../lib/shifts';
 
 import { Tooltip } from './Tooltip';
 
@@ -49,7 +49,7 @@ const sanitizeDefinitionValue = (definitionId: RosterDefinition, value: string) 
   return fractional ? `${whole}.${fractional}` : whole;
 };
 
-const getOrderedShiftOptions = (shifts: Shift[]) => sortShiftsBaseFirst(shifts);
+const getGroupedShiftOptions = (shifts: Shift[]) => sortRosterDropdownShifts(shifts);
 
 interface RosterSectionProps {
   employees: Employee[];
@@ -114,7 +114,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
   const lockReason = isPayrollSubmittedPeriod
     ? 'This roster period has already been submitted to payroll and is locked. Contact admin through Support for changes.'
     : 'Previous roster periods are locked for clients. Contact admin through Support for changes.';
-  const orderedShifts = useMemo(() => getOrderedShiftOptions(shifts), [shifts]);
+  const groupedShiftOptions = useMemo(() => getGroupedShiftOptions(shifts), [shifts]);
 
   // Close export options when clicking outside
   React.useEffect(() => {
@@ -185,7 +185,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
   const isLeaveShiftId = (shiftId: string) => {
     const shift = shifts.find(s => s.id === shiftId);
     const label = String(shift?.label || '').toLowerCase();
-    return label.includes('leave');
+    return label.includes('leave') || label.includes('half day');
   };
 
   const getGeneratedRosterValue = (employee: Employee, dayDate: string) => {
@@ -565,19 +565,57 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                                 )}
                               >
                                 <option value="" className="font-sans">To Be Rostered</option>
-                                {orderedShifts.map(s => {
-                                  const blocked = isShiftBlockedForCell(emp, dayIso, s.id);
-                                  return (
-                                    <option
-                                      key={s.id}
-                                      value={s.id}
-                                      className={cn('font-sans', blocked ? 'text-slate-400' : 'text-slate-900')}
-                                      aria-disabled={blocked}
-                                    >
-                                      {blocked ? `${s.label} (Overlaps previous shift)` : s.label}
-                                    </option>
-                                  );
-                                })}
+                                {groupedShiftOptions.working.length > 0 && (
+                                  <optgroup label="Working Shifts">
+                                    {groupedShiftOptions.working.map(s => {
+                                      const blocked = isShiftBlockedForCell(emp, dayIso, s.id);
+                                      return (
+                                        <option
+                                          key={s.id}
+                                          value={s.id}
+                                          className={cn('font-sans', blocked ? 'text-slate-400' : 'text-slate-900')}
+                                          aria-disabled={blocked}
+                                        >
+                                          {blocked ? `${s.label} (Overlaps previous shift)` : s.label}
+                                        </option>
+                                      );
+                                    })}
+                                  </optgroup>
+                                )}
+                                {groupedShiftOptions.leave.length > 0 && (
+                                  <optgroup label="Leave">
+                                    {groupedShiftOptions.leave.map(s => {
+                                      const blocked = isShiftBlockedForCell(emp, dayIso, s.id);
+                                      return (
+                                        <option
+                                          key={s.id}
+                                          value={s.id}
+                                          className={cn('font-sans', blocked ? 'text-slate-400' : 'text-slate-900')}
+                                          aria-disabled={blocked}
+                                        >
+                                          {blocked ? `${s.label} (Overlaps previous shift)` : s.label}
+                                        </option>
+                                      );
+                                    })}
+                                  </optgroup>
+                                )}
+                                {groupedShiftOptions.non_working.length > 0 && (
+                                  <optgroup label="Non-Working Shifts">
+                                    {groupedShiftOptions.non_working.map(s => {
+                                      const blocked = isShiftBlockedForCell(emp, dayIso, s.id);
+                                      return (
+                                        <option
+                                          key={s.id}
+                                          value={s.id}
+                                          className={cn('font-sans', blocked ? 'text-slate-400' : 'text-slate-900')}
+                                          aria-disabled={blocked}
+                                        >
+                                          {blocked ? `${s.label} (Overlaps previous shift)` : s.label}
+                                        </option>
+                                      );
+                                    })}
+                                  </optgroup>
+                                )}
                               </select>
                               <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-0 group-hover/select:opacity-100 transition-opacity">
                                 <ChevronRight className="w-3 h-3 text-indigo-400 rotate-90" />

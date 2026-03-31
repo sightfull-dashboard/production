@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import { Loader2, TrendingUp, TrendingDown, Users, CalendarDays, Search, ChevronRight, Banknote, Activity, Wallet, History } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { buildActiveClientHeaders } from '../lib/activeClient';
+import { apiFetch } from '../lib/api';
 import { format, subMonths } from 'date-fns';
 
 const Card = ({ children, className }: { children: React.ReactNode, className?: string }) => (
@@ -61,17 +61,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
   const fetchAnalytics = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/analytics?month=${month}`, {
-        headers: buildActiveClientHeaders(),
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (!res.ok) {
-        throw new Error(`Analytics request failed with status ${res.status}`);
-      }
-      if (!contentType.includes('application/json')) {
-        throw new Error('Analytics endpoint did not return JSON.');
-      }
-      const json = await res.json();
+      const json = await apiFetch<any>(`/api/analytics?month=${month}`);
       setData(json);
     } catch (error) {
       console.error("Failed to fetch analytics", error);
@@ -289,12 +279,12 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
       </div>
 
       {/* Tables Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="p-0 overflow-hidden flex flex-col">
+      <div className="grid grid-cols-1 gap-6">
+        <Card className="p-0 overflow-hidden flex flex-col h-[420px]">
           <div className="p-6 pb-4 border-b border-slate-100">
             <h4 className="font-bold text-slate-800">Employees & Salary Share</h4>
           </div>
-          <div className="overflow-x-auto flex-1">
+          <div className="overflow-auto flex-1">
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-50/50">
                 <tr>
@@ -329,7 +319,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
           </div>
         </Card>
 
-        <Card className="p-0 overflow-hidden flex flex-col">
+        <Card className="p-0 overflow-hidden flex flex-col h-[420px]">
           <div className="p-6 pb-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <h4 className="font-bold text-slate-800">Leave Analytics</h4>
             <div className="relative">
@@ -343,7 +333,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectio
               />
             </div>
           </div>
-          <div className="overflow-x-auto flex-1">
+          <div className="overflow-auto flex-1">
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-50/50">
                 <tr>

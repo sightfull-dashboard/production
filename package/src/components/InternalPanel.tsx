@@ -1,0 +1,2743 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { 
+  Building2, 
+  Plus, 
+  Users, 
+  Files, 
+  BarChart3, 
+  Settings, 
+  MoreVertical,
+  Search,
+  Upload,
+  Trash2,
+  Edit2,
+  Folder,
+  FileText,
+  ChevronRight,
+  ArrowLeft,
+  Activity,
+  History,
+  Clock,
+  User as UserIcon,
+  ShieldCheck,
+  Calendar,
+  ToggleLeft,
+  ToggleRight,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  Lock,
+  Unlock,
+  LayoutDashboard,
+  AlertCircle,
+  CheckCircle2,
+  TrendingUp,
+  ArrowUpRight,
+  Zap,
+  Shield,
+  HardDrive,
+  MessageSquare,
+  Bell,
+  ArrowRight,
+  Home,
+  MessageCircle,
+  Send,
+  UploadCloud,
+  AlertTriangle,
+  CheckCircle,
+  Download,
+  FileArchive,
+  X,
+  Filter
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { cn } from '../lib/utils';
+import type { FileItem, PayrollSubmission, SupportTicket, RosterDefinition, User } from '../types';
+import { BrandedState } from './BrandedStates';
+import { Tooltip } from './Tooltip';
+import { toast } from 'sonner';
+import { adminService } from '../services/adminService';
+import { fileUploadService } from '../services/fileUploadService';
+import { appService } from '../services/appService';
+import { SupportTicketsPanel } from './SupportTicketsPanel';
+import { ClientNotificationsPanel } from './ClientNotificationsPanel';
+import { INTERNAL_PANEL_ROSTER_DEFINITIONS as ROSTER_DEFINITIONS, PRESET_CLIENT_LOGOS } from './internal-panel/config';
+
+
+const WhatsAppIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+  </svg>
+);
+
+
+const formatHarareLastAction = (dateString?: string | null) => {
+  if (!dateString) return '—';
+  if (String(dateString).trim().toLowerCase() === 'never') return 'Never';
+
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return String(dateString);
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Harare',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+
+  const getPart = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  const hour = Number(getPart('hour'));
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+
+  return `${getPart('year')}-${getPart('month')}-${getPart('day')} - ${String(hour).padStart(2, '0')}:${getPart('minute')}${ampm}`;
+};
+
+const mockWaRows = [
+  { id: 1, file: 'EMP001.pdf', empId: 'EMP001', name: 'John Daniels', mobile: '27821234567', waStatus: 'Ready', matchStatus: 'Matched', ready: true },
+  { id: 2, file: 'EMP002.pdf', empId: 'EMP002', name: 'Aisha Khan', mobile: '27837654321', waStatus: 'Ready', matchStatus: 'Matched', ready: true },
+  { id: 3, file: 'EMP003.pdf', empId: 'EMP003', name: '—', mobile: '—', waStatus: '—', matchStatus: 'No employee found', ready: false },
+  { id: 4, file: 'EMP004.pdf', empId: 'EMP004', name: 'Kabelo Mokoena', mobile: '—', waStatus: 'Missing', matchStatus: 'Missing number', ready: false },
+  { id: 5, file: 'EMP005.pdf', empId: 'EMP005', name: 'Sarah Smith', mobile: '27811111111', waStatus: 'Ready', matchStatus: 'Duplicate EMP ID', ready: false },
+];
+
+interface InternalPanelProps {
+  onLoginAsSuperAdmin?: (client: any) => void;
+  currentUser?: User;
+}
+
+export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmin, currentUser }) => {
+  const [clients, setClients] = useState<any[]>([]);
+  const [selectedClient, setSelectedClient] = useState<any | null>(null);
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'files' | 'logs' | 'settings' | 'activity' | 'payroll_logs' | 'support_tickets' | 'payroll_notifications' | 'whatsapp'>('overview');
+  
+  const [clientUsers, setClientUsers] = useState<any[]>([]);
+  const [clientFiles, setClientFiles] = useState<any[]>([]);
+  const [clientLogs, setClientLogs] = useState<any[]>([]);
+  const [payrollLogs, setPayrollLogs] = useState<any[]>([]);
+  const [clientSupportTickets, setClientSupportTickets] = useState<SupportTicket[]>([]);
+  const [clientPayrollNotifications, setClientPayrollNotifications] = useState<PayrollSubmission[]>([]);
+  const [loadingClientData, setLoadingClientData] = useState(false);
+  const loadedClientSectionsRef = useRef<Record<string, Set<string>>>({});
+  const [logSearchTerm, setLogSearchTerm] = useState('');
+  const [payrollLogSearchTerm, setPayrollLogSearchTerm] = useState('');
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [fileBackHistory, setFileBackHistory] = useState<(string | null)[]>([]);
+  const [fileForwardHistory, setFileForwardHistory] = useState<(string | null)[]>([]);
+
+  // Client Settings State
+  const [rosterStartDay, setRosterStartDay] = useState<number>(1); // Monday
+  const [rosterDuration, setRosterDuration] = useState<'1_week' | '2_weeks' | '1_month'>('1_week');
+  const [enabledDefinitions, setEnabledDefinitions] = useState<RosterDefinition[]>(['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+  const [dashboardType, setDashboardType] = useState<'rostering' | 'non-rostering'>('rostering');
+  const [lockedFeatures, setLockedFeatures] = useState<string[]>([]);
+  const [settingsTab, setSettingsTab] = useState<'general' | 'rostering' | 'features'>('general');
+  const [isTrial, setIsTrial] = useState<boolean>(false);
+  const [trialDuration, setTrialDuration] = useState<3 | 5 | 7>(7);
+  const [payrollEmail, setPayrollEmail] = useState<string>('');
+  const [payrollCc, setPayrollCc] = useState<string>('');
+  const [payrollSubmissionDay, setPayrollSubmissionDay] = useState<number>(1); // Default to Monday or 1st
+
+  // WhatsApp State
+  const [waStep, setWaStep] = useState<'upload' | 'review'>('upload');
+  const [waFilter, setWaFilter] = useState('all');
+  const [waSelected, setWaSelected] = useState<number[]>([1, 2]);
+  const [isWaConfirmOpen, setIsWaConfirmOpen] = useState(false);
+
+  const filteredPayrollLogs = payrollLogs.filter((submission: any) => {
+    const query = payrollLogSearchTerm.trim().toLowerCase();
+    if (!query) return true;
+    return [
+      submission?.id,
+      submission?.clientName,
+      submission?.client_name,
+      submission?.submittedBy,
+      submission?.submitted_by,
+      submission?.period,
+      submission?.status,
+      submission?.processedBy,
+      submission?.processed_by,
+    ]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query));
+  });
+
+
+  const fetchClients = async () => {
+    try {
+      const data = await adminService.getClients();
+      setClients(data);
+    } catch (error) {
+      console.error('Failed to fetch clients:', error);
+      toast.error('Failed to load client dashboards');
+      setClients([]);
+    }
+  };
+
+  useEffect(() => {
+    void fetchClients();
+  }, []);
+
+  React.useEffect(() => {
+    if (selectedClient) {
+      setLockedFeatures(selectedClient.lockedFeatures || []);
+      setDashboardType(selectedClient.dashboardType || 'rostering');
+      setIsTrial(selectedClient.isTrial || false);
+      setTrialDuration(selectedClient.trialDuration || 7);
+      setPayrollEmail(selectedClient.payrollEmail || '');
+      setPayrollCc(selectedClient.payrollCc || '');
+      setPayrollSubmissionDay(selectedClient.payrollSubmissionDay || 1);
+      setRosterStartDay(selectedClient.rosterStartDay ?? 1);
+      setRosterDuration(selectedClient.rosterDuration || '1_week');
+      setEnabledDefinitions(selectedClient.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+      setClientFallbackImage(selectedClient.fallbackImage || null);
+    }
+  }, [selectedClient]);
+
+  useEffect(() => {
+    if (!selectedClient?.id) {
+      return;
+    }
+
+    setClientUsers([]);
+    setClientFiles([]);
+    setClientLogs([]);
+    setPayrollLogs([]);
+    setClientSupportTickets([]);
+    setClientPayrollNotifications([]);
+    setCurrentFolderId(null);
+    setFileBackHistory([]);
+    setFileForwardHistory([]);
+  }, [selectedClient?.id]);
+
+  useEffect(() => {
+    const loadClientData = async () => {
+      if (!selectedClient?.id) {
+        setClientUsers([]);
+        setClientFiles([]);
+        setClientLogs([]);
+        setPayrollLogs([]);
+        setClientSupportTickets([]);
+        setClientPayrollNotifications([]);
+        navigateClientFolder(null, { pushHistory: false });
+        return;
+      }
+
+      const canManageClientUsers = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('manage_client_users');
+      const canViewFiles = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_files');
+      const canViewClientLogs = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_client_logs') || currentUser?.permissions?.includes('view_logs');
+      const canViewPayroll = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll');
+      const canViewTickets = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_tickets');
+
+      const desiredSections = new Set<string>();
+      if (activeTab === 'overview') {
+        if (canManageClientUsers) desiredSections.add('users');
+        if (canViewFiles) desiredSections.add('files');
+        if (canViewClientLogs) desiredSections.add('logs');
+      }
+      if (activeTab === 'users' && canManageClientUsers) desiredSections.add('users');
+      if (activeTab === 'files' && canViewFiles) desiredSections.add('files');
+      if (activeTab === 'activity' && canViewClientLogs) desiredSections.add('logs');
+      if (activeTab === 'payroll_logs' && canViewPayroll) desiredSections.add('payroll_logs');
+      if (activeTab === 'support_tickets' && canViewTickets) desiredSections.add('support_tickets');
+      if (activeTab === 'payroll_notifications' && canViewPayroll) desiredSections.add('payroll_notifications');
+
+      if (desiredSections.size === 0) {
+        setLoadingClientData(false);
+        return;
+      }
+
+      const loadedSections = loadedClientSectionsRef.current[selectedClient.id] || new Set<string>();
+      const sectionsToLoad = Array.from(desiredSections).filter((section) => !loadedSections.has(section));
+
+      if (sectionsToLoad.length === 0) {
+        return;
+      }
+
+      if (!loadedClientSectionsRef.current[selectedClient.id]) {
+        loadedClientSectionsRef.current[selectedClient.id] = new Set<string>();
+      }
+
+      setLoadingClientData(true);
+      try {
+        const requests = sectionsToLoad.map((section) => {
+          switch (section) {
+            case 'users':
+              return adminService.getClientUsers(selectedClient.id).then((value) => ({ section, value }));
+            case 'files':
+              return adminService.getClientFiles(selectedClient.id).then((value) => ({ section, value }));
+            case 'logs':
+              return adminService.getClientLogs(selectedClient.id).then((value) => ({ section, value }));
+            case 'payroll_logs':
+              return adminService.getClientPayrollLogs(selectedClient.id).then((value) => ({ section, value }));
+            case 'support_tickets':
+              return appService.getSupportTickets().then((value) => ({ section, value }));
+            case 'payroll_notifications':
+              return appService.getPayrollSubmissions().then((value) => ({ section, value }));
+            default:
+              return Promise.resolve({ section, value: [] });
+          }
+        });
+
+        const results = await Promise.allSettled(requests);
+        const failures = results.filter((result) => result.status === 'rejected');
+
+        results.forEach((result) => {
+          if (result.status !== 'fulfilled') return;
+          const { section, value } = result.value as { section: string; value: any };
+          loadedClientSectionsRef.current[selectedClient.id].add(section);
+          switch (section) {
+            case 'users':
+              setClientUsers(Array.isArray(value) ? value : []);
+              break;
+            case 'files':
+              setClientFiles(Array.isArray(value) ? value : []);
+              navigateClientFolder(null, { pushHistory: false });
+              break;
+            case 'logs':
+              setClientLogs(Array.isArray(value) ? value : []);
+              break;
+            case 'payroll_logs':
+              setPayrollLogs(Array.isArray(value) ? value : []);
+              break;
+            case 'support_tickets':
+              setClientSupportTickets(
+                Array.isArray(value)
+                  ? value.filter((ticket: SupportTicket) => ticket.client_id === selectedClient.id || ticket.client_name === selectedClient.name)
+                  : []
+              );
+              break;
+            case 'payroll_notifications':
+              setClientPayrollNotifications(
+                Array.isArray(value)
+                  ? value.filter((submission: PayrollSubmission) => submission.clientName === selectedClient.name)
+                  : []
+              );
+              break;
+          }
+        });
+
+        if (failures.length > 0) {
+          console.error('Failed to load some selected client data:', failures);
+          toast.error('Some client details could not be loaded');
+        }
+      } catch (error) {
+        console.error('Failed to load selected client data:', error);
+        toast.error('Failed to load selected client details');
+      } finally {
+        setLoadingClientData(false);
+      }
+    };
+
+    void loadClientData();
+  }, [
+    selectedClient?.id,
+    selectedClient?.name,
+    activeTab,
+    currentUser?.role,
+    JSON.stringify(currentUser?.permissions || []),
+  ]);
+
+
+  useEffect(() => {
+    if (!selectedClient && (activeTab === 'support_tickets' || activeTab === 'payroll_notifications')) {
+      setActiveTab('overview');
+    }
+  }, [selectedClient, activeTab]);
+
+
+  const navigateClientFolder = (folderId: string | null, options: { pushHistory?: boolean } = {}) => {
+    const { pushHistory = true } = options;
+    if (!pushHistory) {
+      setFileBackHistory([]);
+      setFileForwardHistory([]);
+      setCurrentFolderId(folderId);
+      return;
+    }
+    setCurrentFolderId(prev => {
+      if (prev === folderId) return prev;
+      setFileBackHistory(history => [...history, prev]);
+      setFileForwardHistory([]);
+      return folderId;
+    });
+  };
+
+  const handleClientFilesBack = () => {
+    setFileBackHistory(history => {
+      if (history.length === 0) return history;
+      const previous = history[history.length - 1];
+      setFileForwardHistory(forward => [currentFolderId, ...forward]);
+      setCurrentFolderId(previous);
+      return history.slice(0, -1);
+    });
+  };
+
+  const handleClientFilesForward = () => {
+    setFileForwardHistory(history => {
+      if (history.length === 0) return history;
+      const [next, ...rest] = history;
+      setFileBackHistory(back => [...back, currentFolderId]);
+      setCurrentFolderId(next);
+      return rest;
+    });
+  };
+
+  const getClientFolderPath = () => {
+    if (!currentFolderId) return [] as FileItem[];
+    const byId = new Map<string, FileItem>(clientFiles.map((file) => [file.id, file]));
+    const path: FileItem[] = [];
+    let cursor: string | null = currentFolderId;
+    const visited = new Set<string>();
+    while (cursor && byId.has(cursor) && !visited.has(cursor)) {
+      visited.add(cursor);
+      const current = byId.get(cursor);
+      if (!current) break;
+      path.unshift(current);
+      cursor = current.parent_id || null;
+    }
+    return path;
+  };
+
+  const toggleFeatureLock = (feature: string) => {
+    setLockedFeatures(prev => 
+      prev.includes(feature) ? prev.filter(f => f !== feature) : [...prev, feature]
+    );
+  };
+
+  const toggleDefinition = (id: RosterDefinition) => {
+    setEnabledDefinitions(prev => 
+      prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]
+    );
+  };
+
+  const formatDetails = (detailsStr: any) => {
+    try {
+      const details = typeof detailsStr === 'string' ? JSON.parse(detailsStr) : detailsStr;
+      if (!details || typeof details !== 'object') return <span className="text-slate-600">{String(detailsStr || '-')}</span>;
+      if (Object.keys(details).length === 0) return <span className="text-slate-400 italic">No additional details</span>;
+      return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-xs">
+          {Object.entries(details).map(([k, v]) => (
+            <div key={k} className="flex flex-col gap-1">
+              <span className="font-black text-slate-400 uppercase tracking-widest text-[9px]">{k.replace(/_/g, ' ')}</span>
+              <span className="text-slate-800 font-medium break-all" title={String(v)}>{String(v)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    } catch {
+      return <span className="text-slate-600">{typeof detailsStr === 'string' ? detailsStr : JSON.stringify(detailsStr ?? '-')}</span>;
+    }
+  };
+
+  // Modals
+  const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false);
+  const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+  const [isUploadFileModalOpen, setIsUploadFileModalOpen] = useState(false);
+  const [editingFile, setEditingFile] = useState<any | null>(null);
+  const [clientFallbackImage, setClientFallbackImage] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [generatedPassword, setGeneratedPassword] = useState('');
+  const [is2FAModalOpen, setIs2FAModalOpen] = useState(false);
+  const [userToToggle2FA, setUserToToggle2FA] = useState<any | null>(null);
+
+  const handleToggle2FA = async () => {
+    if (!userToToggle2FA || !selectedClient) return;
+    
+    const newStatus = !userToToggle2FA.mfa_required;
+    
+    try {
+      await adminService.updateClientUser(selectedClient.id, userToToggle2FA.id, {
+        mfa_required: newStatus
+      });
+      
+      setClientUsers(prev => prev.map(u => 
+        u.id === userToToggle2FA.id ? { ...u, mfa_required: newStatus } : u
+      ));
+      
+      toast.success(`2FA ${newStatus ? 'required' : 'disabled'} for ${userToToggle2FA.name}`);
+    } catch (error) {
+      toast.error('Failed to update 2FA status');
+    } finally {
+      setIs2FAModalOpen(false);
+      setUserToToggle2FA(null);
+    }
+  };
+
+  const generatePassword = () => {
+    const length = 12;
+    const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+";
+    let retVal = "";
+    for (let i = 0, n = charset.length; i < length; ++i) {
+      retVal += charset.charAt(Math.floor(Math.random() * n));
+    }
+    setGeneratedPassword(retVal);
+    return retVal;
+  };
+
+  const selectPresetClientLogo = (src: string) => {
+    setClientFallbackImage(src);
+  };
+
+  const clearClientFallbackImage = () => {
+    setClientFallbackImage(null);
+  };
+
+  const handleCreateClient = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const newClient = {
+      name: formData.get('name') as string,
+      fallbackImage: clientFallbackImage,
+      status: 'active',
+      dashboardType: 'rostering',
+      lockedFeatures: [],
+      enabledDefinitions,
+      rosterStartDay,
+      rosterDuration,
+      isTrial,
+      trialDuration,
+      payrollEmail,
+      payrollCc,
+      payrollSubmissionDay,
+    };
+
+    try {
+      await adminService.createClient(newClient);
+      await fetchClients();
+      setIsNewClientModalOpen(false);
+      setClientFallbackImage(null);
+      toast.success('Client created successfully');
+    } catch (error) {
+      console.error('Failed to create client:', error);
+      toast.error('Failed to create client');
+    }
+  };
+
+  const handleAddUser = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedClient) return;
+    const formData = new FormData(e.currentTarget);
+    const payload = {
+      name: formData.get('name') as string,
+      email: formData.get('email') as string,
+      password: formData.get('password') as string,
+    };
+
+    try {
+      if (editingUser) {
+        const updated = await adminService.updateClientUser(selectedClient.id, editingUser.id, payload);
+        setClientUsers(clientUsers.map(u => u.id === editingUser.id ? updated : u));
+        toast.success('User updated successfully');
+      } else {
+        const created = await adminService.createClientUser(selectedClient.id, payload);
+        setClientUsers([created, ...clientUsers]);
+        toast.success('User added successfully');
+      }
+      setIsNewUserModalOpen(false);
+      setEditingUser(null);
+      setShowPassword(false);
+      setGeneratedPassword('');
+    } catch (error: any) {
+      console.error('Failed to save user:', error);
+      toast.error(error?.message || 'Failed to save user');
+    }
+  };
+
+  const handleUploadFile = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedClient) return;
+    const formData = new FormData(e.currentTarget);
+    const password = formData.get('password') as string;
+
+    try {
+      if (editingFile) {
+        const updated = await adminService.updateClientFile(selectedClient.id, editingFile.id, {
+          name: formData.get('name') as string,
+          password: editingFile.type === 'folder' ? password : editingFile.password,
+        });
+        setClientFiles(clientFiles.map(f => f.id === editingFile.id ? updated : f));
+        toast.success('File updated successfully');
+      } else {
+        const fileInput = formData.get('file') as File;
+        const isFolder = formData.get('type') === 'folder';
+        if (isFolder) {
+          const created = await adminService.createClientFile(selectedClient.id, {
+            name: formData.get('name') as string,
+            type: 'folder',
+            parent_id: currentFolderId,
+            password: password || null,
+          });
+          setClientFiles([created, ...clientFiles]);
+        } else if (fileInput && fileInput.name) {
+          const created = await fileUploadService.uploadAdminClientFile({
+            clientId: selectedClient.id,
+            file: fileInput,
+            parentId: currentFolderId,
+          });
+          setClientFiles([created, ...clientFiles]);
+        }
+        toast.success('File saved successfully');
+      }
+      setIsUploadFileModalOpen(false);
+      setEditingFile(null);
+    } catch (error: any) {
+      console.error('Failed to save file:', error);
+      toast.error(error?.message || 'Failed to save file');
+    }
+  };
+
+  const handleDeleteUser = async (id: string) => {
+    if (!selectedClient) return;
+    try {
+      await adminService.deleteClientUser(selectedClient.id, id);
+      setClientUsers(clientUsers.filter(u => u.id !== id));
+      toast.success('User deleted successfully');
+    } catch (error: any) {
+      console.error('Failed to delete user:', error);
+      toast.error(error?.message || 'Failed to delete user');
+    }
+  };
+
+  const handleDeleteFile = async (id: string) => {
+    if (!selectedClient) return;
+    try {
+      await adminService.deleteClientFile(selectedClient.id, id);
+      setClientFiles(clientFiles.filter(f => f.id !== id));
+      toast.success('File deleted successfully');
+    } catch (error: any) {
+      console.error('Failed to delete file:', error);
+      toast.error(error?.message || 'Failed to delete file');
+    }
+  };
+
+  const handleDeleteClientDashboard = async () => {
+    if (!selectedClient) return;
+
+    const confirmed = window.confirm(`Are you sure you want to permanently remove the ${selectedClient.name} dashboard? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    const passphrase = window.prompt('Type DELETE to permanently remove this dashboard.');
+    if (passphrase === null) return;
+
+    try {
+      await adminService.deleteClient(selectedClient.id, passphrase);
+      toast.success('Client dashboard removed successfully');
+      setSelectedClient(null);
+      setClientUsers([]);
+      setClientFiles([]);
+      setClientLogs([]);
+      setPayrollLogs([]);
+      await fetchClients();
+    } catch (error: any) {
+      console.error('Failed to delete client dashboard:', error);
+      toast.error(error?.message || 'Failed to delete client dashboard');
+    }
+  };
+
+  const handleFallbackImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setClientFallbackImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const renderClientList = () => (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="space-y-1">
+          <h2 className="text-4xl font-black text-slate-800 tracking-tight">{currentUser?.role === 'staff' ? 'Staff Access' : 'Super Admin'}</h2>
+          <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">{currentUser?.role === 'staff' ? 'Assigned Client Management' : 'System Management'}</p>
+        </div>
+      </div>
+
+      <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+          <div className="p-6 border-b border-slate-100 flex items-center justify-between gap-4">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input 
+                type="text" 
+                placeholder="Search clients..." 
+                className="w-full pl-11 pr-4 py-3 rounded-2xl bg-slate-50 border-none focus:ring-2 focus:ring-indigo-600/20 outline-none font-bold text-sm text-slate-700 placeholder:text-slate-400"
+              />
+            </div>
+            <Tooltip content="Create a new client dashboard">
+              <button 
+                onClick={() => { setClientFallbackImage(null); setIsNewClientModalOpen(true); }}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-sm bg-indigo-600 text-white hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+                New Dashboard
+              </button>
+            </Tooltip>
+          </div>
+          <div className="overflow-x-auto">
+            {clients.length === 0 ? (
+              <BrandedState 
+                type="empty" 
+                portal="superadmin" 
+                title="No Clients Found" 
+                message="No client dashboards have been created yet." 
+                action={{ label: 'New Dashboard', onClick: () => setIsNewClientModalOpen(true) }}
+              />
+            ) : (
+              <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
+                  <th className="px-8 py-6">Client Name</th>
+                  <th className="px-8 py-6">Status</th>
+                  <th className="px-8 py-6">Users</th>
+                  <th className="px-8 py-6">Files</th>
+                  <th className="px-8 py-6">Last Active</th>
+                  <th className="px-8 py-6 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {clients.map(client => (
+                  <tr 
+                    key={client.id} 
+                    className="hover:bg-indigo-50/30 transition-colors group cursor-pointer"
+                  >
+                    <td className="px-8 py-6" onClick={() => { setSelectedClient(client); }}>
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-indigo-600 font-black text-xs overflow-hidden p-1">
+                          {client.fallbackImage ? (
+                            <img src={client.fallbackImage} alt="" className="w-full h-full object-contain bg-white p-1" />
+                          ) : (
+                            client.name.substring(0, 2).toUpperCase()
+                          )}
+                        </div>
+                        <span className="text-sm font-bold text-slate-800">{client.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6" onClick={() => setSelectedClient(client)}>
+                      <span className={cn(
+                        "inline-flex items-center px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                        client.status === 'active' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'
+                      )}>
+                        {client.status}
+                      </span>
+                    </td>
+                    <td className="px-8 py-6 text-sm font-bold text-slate-600" onClick={() => setSelectedClient(client)}>{client.users}</td>
+                    <td className="px-8 py-6 text-sm font-bold text-slate-600" onClick={() => setSelectedClient(client)}>{client.files}</td>
+                    <td className="px-8 py-6 text-sm font-bold text-slate-500" onClick={() => setSelectedClient(client)}>{formatHarareLastAction(client.lastActive)}</td>
+                    <td className="px-8 py-6 text-right">
+                      <Tooltip content="View Client Details">
+                        <button 
+                          onClick={() => setSelectedClient(client)}
+                          className="p-2 hover:bg-white rounded-xl text-slate-400 hover:text-indigo-600 transition-colors shadow-sm"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </Tooltip>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderWhatsAppTab = () => {
+    if (waStep === 'upload') {
+      return (
+        <div className="max-w-3xl mx-auto mt-8">
+          <div className="bg-white rounded-[32px] p-10 shadow-xl shadow-slate-200/50 border border-slate-100 text-center">
+            <div className="w-24 h-24 bg-[#25D366]/10 rounded-full flex items-center justify-center mx-auto mb-6">
+              <FileArchive className="w-12 h-12 text-[#25D366]" />
+            </div>
+            <h3 className="text-3xl font-black text-slate-800 mb-4">Upload Batch ZIP</h3>
+            <p className="text-slate-500 font-medium mb-8 max-w-md mx-auto">
+              Super Admin uploads one ZIP file containing all payslips.
+            </p>
+            
+            <div className="bg-slate-50 rounded-2xl p-6 text-left mb-8 border border-slate-100">
+              <h4 className="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                Rules & Requirements
+              </h4>
+              <ul className="space-y-2 text-sm text-slate-600 list-disc list-inside">
+                <li>Each PDF filename must match the employee's EMP ID</li>
+                <li>Example: <code className="bg-white px-2 py-1 rounded border border-slate-200 text-indigo-600 font-bold">EMP001.pdf</code></li>
+                <li>The system will automatically unzip, read filenames, and match to employees.</li>
+              </ul>
+            </div>
+
+            <div className="border-2 border-dashed border-slate-200 rounded-3xl p-12 hover:bg-slate-50 hover:border-[#25D366]/50 transition-colors cursor-pointer group" onClick={() => setWaStep('review')}>
+              <UploadCloud className="w-10 h-10 text-slate-400 group-hover:text-[#25D366] mx-auto mb-4 transition-colors" />
+              <p className="font-bold text-slate-700 text-lg">Click to browse or drag ZIP file here</p>
+              <p className="text-sm text-slate-500 mt-2">Supports .zip up to 50MB</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setWaStep('upload')} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
+              <ArrowLeft className="w-5 h-5 text-slate-500" />
+            </button>
+            <div>
+              <h3 className="text-2xl font-black text-slate-800 tracking-tight">Review WhatsApp Payslip Batch</h3>
+              <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">Verify matches before sending</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {[
+            { label: 'Total Files', value: '120', color: 'text-slate-800' },
+            { label: 'Matched', value: '114', color: 'text-emerald-600' },
+            { label: 'Unmatched', value: '5', color: 'text-rose-600' },
+            { label: 'Missing Numbers', value: '3', color: 'text-amber-600' },
+            { label: 'Duplicates', value: '1', color: 'text-purple-600' },
+            { label: 'Ready to Send', value: '109', color: 'text-[#25D366]' },
+          ].map((stat, i) => (
+            <div key={i} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{stat.label}</p>
+              <p className={`text-2xl font-black ${stat.color}`}>{stat.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-col lg:flex-row gap-6">
+          {/* Main Table Area */}
+          <div className="flex-1 bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <button onClick={() => setWaSelected([1, 2])} className="text-xs font-bold text-slate-600 hover:text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors">Select all ready</button>
+                <button onClick={() => setWaSelected([])} className="text-xs font-bold text-slate-600 hover:text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors">Deselect all</button>
+                <div className="w-px h-4 bg-slate-200 mx-2" />
+                <button className="text-xs font-bold text-slate-600 hover:text-indigo-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors flex items-center gap-1">
+                  <Download className="w-3 h-3" /> Export problems
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Filter className="w-4 h-4 text-slate-400" />
+                <select 
+                  value={waFilter}
+                  onChange={(e) => setWaFilter(e.target.value)}
+                  className="text-sm font-bold text-slate-700 bg-slate-50 border-none rounded-xl py-1.5 pl-3 pr-8 focus:ring-2 focus:ring-indigo-600/20 outline-none"
+                >
+                  <option value="all">All Files</option>
+                  <option value="ready">Ready to Send</option>
+                  <option value="problems">Problems Only</option>
+                  <option value="missing">Missing Numbers</option>
+                  <option value="unmatched">Unmatched Files</option>
+                </select>
+              </div>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
+                    <th className="px-4 py-4 w-12 text-center">
+                      <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-600/20" />
+                    </th>
+                    <th className="px-4 py-4">Payslip File</th>
+                    <th className="px-4 py-4">EMP ID</th>
+                    <th className="px-4 py-4">Employee</th>
+                    <th className="px-4 py-4">Mobile</th>
+                    <th className="px-4 py-4">WhatsApp</th>
+                    <th className="px-4 py-4">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {mockWaRows.map(row => (
+                    <tr key={row.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-4 text-center">
+                        <input 
+                          type="checkbox" 
+                          checked={waSelected.includes(row.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) setWaSelected([...waSelected, row.id]);
+                            else setWaSelected(waSelected.filter(id => id !== row.id));
+                          }}
+                          disabled={!row.ready}
+                          className="rounded text-indigo-600 focus:ring-indigo-600/20 disabled:opacity-50" 
+                        />
+                      </td>
+                      <td className="px-4 py-4 text-sm font-bold text-slate-700">{row.file}</td>
+                      <td className="px-4 py-4 text-sm font-medium text-slate-500">{row.empId}</td>
+                      <td className="px-4 py-4 text-sm font-bold text-slate-800">{row.name}</td>
+                      <td className="px-4 py-4 text-sm font-medium text-slate-500">{row.mobile}</td>
+                      <td className="px-4 py-4">
+                        <span className={cn(
+                          "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest",
+                          row.waStatus === 'Ready' ? 'bg-emerald-100 text-emerald-700' : 
+                          row.waStatus === 'Missing' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'
+                        )}>
+                          {row.waStatus}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <span className={cn(
+                          "inline-flex items-center gap-1 text-xs font-bold",
+                          row.matchStatus === 'Matched' ? 'text-emerald-600' : 'text-rose-600'
+                        )}>
+                          {row.matchStatus === 'Matched' ? <CheckCircle className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                          {row.matchStatus}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Confirmation Panel */}
+          <div className="w-full lg:w-80 shrink-0 space-y-6">
+            <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
+              <h4 className="font-black text-slate-800 mb-4">Send Summary</h4>
+              <div className="space-y-3 mb-6">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Files uploaded</span>
+                  <span className="font-bold text-slate-800">120</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Matched</span>
+                  <span className="font-bold text-slate-800">114</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Ready to send</span>
+                  <span className="font-bold text-[#25D366]">109</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Missing numbers</span>
+                  <span className="font-bold text-amber-600">3</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500 font-medium">Unmatched files</span>
+                  <span className="font-bold text-rose-600">5</span>
+                </div>
+                <div className="flex justify-between text-sm pt-3 border-t border-slate-100">
+                  <span className="text-slate-500 font-medium">Skipped</span>
+                  <span className="font-bold text-slate-800">11</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-4 mb-6 border border-slate-100">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Message Preview</p>
+                <p className="text-sm text-slate-700 font-medium italic">
+                  "Hello {'{employee_name}'}, please find your payslip attached. I still recommend a secure link rather than direct document send."
+                </p>
+              </div>
+
+              <button 
+                onClick={() => setIsWaConfirmOpen(true)}
+                className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-2xl font-black text-sm bg-[#25D366] text-white hover:bg-[#20bd5a] shadow-xl shadow-[#25D366]/20 transition-all active:scale-95"
+              >
+                <WhatsAppIcon className="w-5 h-5" />
+                Confirm & Send Payslips
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Confirm Modal */}
+        <AnimatePresence>
+          {isWaConfirmOpen && (
+            <>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsWaConfirmOpen(false)}
+                className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-[40px] shadow-2xl z-[101] overflow-hidden"
+              >
+                <div className="p-10 text-center">
+                  <div className="w-20 h-20 bg-[#25D366]/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <WhatsAppIcon className="w-10 h-10 text-[#25D366]" />
+                  </div>
+                  <h3 className="text-2xl font-black text-slate-800 tracking-tight mb-4">Confirm Send</h3>
+                  <p className="text-slate-600 font-medium mb-2">
+                    You are about to send <strong className="text-slate-800">109</strong> payslips via WhatsApp.
+                  </p>
+                  <p className="text-rose-600 font-bold mb-8">
+                    11 files will be skipped due to matching issues.
+                  </p>
+                  <p className="text-sm text-slate-500 font-bold uppercase tracking-widest mb-8">Do you want to continue?</p>
+
+                  <div className="flex gap-3">
+                    <button 
+                      onClick={() => setIsWaConfirmOpen(false)}
+                      className="flex-1 px-6 py-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setIsWaConfirmOpen(false);
+                        toast.success('Batch sending started successfully!');
+                        setWaStep('upload');
+                      }}
+                      className="flex-1 px-6 py-4 rounded-2xl font-black text-white bg-[#25D366] hover:bg-[#20bd5a] shadow-xl shadow-[#25D366]/20 transition-all"
+                    >
+                      Confirm Send
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  const renderClientDetail = () => (
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Tooltip content="Back to Client List">
+            <button 
+              onClick={() => setSelectedClient(null)}
+              className="p-3 bg-white rounded-2xl hover:bg-slate-50 transition-colors shadow-sm border border-slate-100 text-slate-400 hover:text-slate-600 group shrink-0"
+            >
+              <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
+            </button>
+          </Tooltip>
+          <div className="space-y-0.5 min-w-0">
+            <h2 className="text-3xl font-black text-slate-800 tracking-tight truncate">{selectedClient.name}</h2>
+            <div className="flex items-center gap-3">
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Dashboard Management</p>
+              {loadingClientData && <p className="text-[10px] text-indigo-600 font-bold animate-pulse">Loading live data…</p>}
+            </div>
+          </div>
+        </div>
+        
+        {currentUser?.role === 'superadmin' && (
+          <Tooltip content="Access this client's dashboard with full admin privileges">
+            <button 
+              onClick={() => onLoginAsSuperAdmin?.({ ...selectedClient, lockedFeatures, dashboardType })}
+              className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-black text-sm bg-slate-800 text-white hover:bg-slate-900 shadow-xl shadow-slate-200 transition-all active:scale-95 group shrink-0"
+            >
+              <ShieldCheck className="w-5 h-5 group-hover:scale-110 transition-transform" />
+              Login as Super Admin
+            </button>
+          </Tooltip>
+        )}
+      </div>
+
+      {/* Top Navigation */}
+      <div className="border-b border-slate-200 mb-8">
+        <div className="flex overflow-x-auto no-scrollbar gap-6">
+          {([
+            { id: 'overview', icon: BarChart3, label: 'Overview', visible: true },
+            { id: 'users', icon: Users, label: 'Users', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('manage_client_users') },
+            { id: 'files', icon: Files, label: 'Files', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_files') },
+            { id: 'activity', icon: Activity, label: 'Activity Logs', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_client_logs') || currentUser?.permissions?.includes('view_logs') },
+            { id: 'support_tickets', icon: MessageSquare, label: 'Support Tickets', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_tickets') },
+            { id: 'payroll_notifications', icon: Bell, label: 'Payroll Notifications', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll') },
+            { id: 'payroll_logs', icon: History, label: 'Payroll Logs', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll') },
+            { id: 'whatsapp', icon: WhatsAppIcon, label: 'WhatsApp', visible: currentUser?.role === 'superadmin' },
+            { id: 'settings', icon: Settings, label: 'Settings', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('edit_client_details') }
+          ].filter(tab => tab.visible)).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={cn(
+                "flex items-center gap-2 py-4 font-bold text-sm transition-all whitespace-nowrap border-b-2 relative group",
+                activeTab === tab.id 
+                  ? "border-indigo-600 text-indigo-600" 
+                  : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+              )}
+            >
+              <tab.icon className={cn("w-4 h-4 transition-transform", activeTab === tab.id ? "scale-110" : "group-hover:scale-110")} />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="min-w-0">
+        <motion.div
+          key={activeTab}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+        {activeTab === 'overview' && (
+          <div className="space-y-8">
+            {/* Top Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
+                  <Users className="w-32 h-32 text-indigo-600 -mt-6 -mr-6" />
+                </div>
+                <div className="relative z-10">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center">
+                      <Users className="w-6 h-6 text-indigo-600" />
+                    </div>
+                    <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-600 text-[11px] font-black uppercase tracking-widest">
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                      +12%
+                    </div>
+                  </div>
+                  <h3 className="text-5xl font-black text-slate-800 mb-2 tracking-tight">{selectedClient.data.employees}</h3>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Employees</p>
+                </div>
+              </div>
+              <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
+                  <BarChart3 className="w-32 h-32 text-emerald-600 -mt-6 -mr-6" />
+                </div>
+                <div className="relative z-10">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center">
+                      <BarChart3 className="w-6 h-6 text-emerald-600" />
+                    </div>
+                    <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-600 text-[11px] font-black uppercase tracking-widest">
+                      <TrendingUp className="w-3.5 h-3.5" />
+                      Active
+                    </div>
+                  </div>
+                  <h3 className="text-5xl font-black text-slate-800 mb-2 tracking-tight">{selectedClient.data.shiftsThisWeek}</h3>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Shifts This Week</p>
+                </div>
+              </div>
+              <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-100 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.08] transition-opacity">
+                  <FileText className="w-32 h-32 text-amber-600 -mt-6 -mr-6" />
+                </div>
+                <div className="relative z-10">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center">
+                      <FileText className="w-6 h-6 text-amber-600" />
+                    </div>
+                  </div>
+                  <h3 className="text-5xl font-black text-slate-800 mb-2 tracking-tight">{selectedClient.data.totalHours}</h3>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Hours Logged</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Dashboard Pulse Section */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between px-2">
+                <div className="flex items-center gap-3">
+                  <div className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                  </div>
+                  <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest">Dashboard Pulse</h4>
+                </div>
+                <div className="flex items-center gap-4 bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Live Status</span>
+                  <div className="h-4 w-px bg-slate-200" />
+                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    System Secure
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                  <div className="absolute -right-4 -bottom-4 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity">
+                    <Users className="w-32 h-32 text-indigo-600" />
+                  </div>
+                  <div className="flex items-center gap-4 mb-6 relative z-10">
+                    <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Users className="w-6 h-6 text-indigo-600" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Users</p>
+                      <p className="text-2xl font-black text-slate-800">{clientUsers.length}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 relative z-10">
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-slate-400 uppercase tracking-wider">Last 24h</span>
+                      <span className="text-indigo-600">85% Activity</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <motion.div initial={{ width: 0 }} animate={{ width: '85%' }} className="h-full bg-indigo-500 rounded-full" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                  <div className="absolute -right-4 -bottom-4 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity">
+                    <ShieldCheck className="w-32 h-32 text-emerald-600" />
+                  </div>
+                  <div className="flex items-center gap-4 mb-6 relative z-10">
+                    <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <ShieldCheck className="w-6 h-6 text-emerald-600" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Compliance</p>
+                      <p className="text-2xl font-black text-slate-800">100%</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 relative z-10">
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-slate-400 uppercase tracking-wider">Status</span>
+                      <span className="text-emerald-600">Verified</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <motion.div initial={{ width: 0 }} animate={{ width: '100%' }} className="h-full bg-emerald-500 rounded-full" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                  <div className="absolute -right-4 -bottom-4 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity">
+                    <HardDrive className="w-32 h-32 text-amber-600" />
+                  </div>
+                  <div className="flex items-center gap-4 mb-6 relative z-10">
+                    <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <HardDrive className="w-6 h-6 text-amber-600" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Storage</p>
+                      <p className="text-2xl font-black text-slate-800">{clientFiles.length} Files</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 relative z-10">
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-slate-400 uppercase tracking-wider">Quota</span>
+                      <span className="text-amber-600">12% Used</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <motion.div initial={{ width: 0 }} animate={{ width: '12%' }} className="h-full bg-amber-500 rounded-full" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                  <div className="absolute -right-4 -bottom-4 opacity-[0.02] group-hover:opacity-[0.05] transition-opacity">
+                    <Bell className="w-32 h-32 text-rose-600" />
+                  </div>
+                  <div className="flex items-center gap-4 mb-6 relative z-10">
+                    <div className="w-12 h-12 bg-rose-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Bell className="w-6 h-6 text-rose-600" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Alerts</p>
+                      <p className="text-2xl font-black text-slate-800">2</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 relative z-10">
+                    <div className="flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-slate-400 uppercase tracking-wider">Priority</span>
+                      <span className="text-rose-600">Action Req</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <motion.div initial={{ width: 0 }} animate={{ width: '40%' }} className="h-full bg-rose-500 rounded-full" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Detailed Dashboard Information */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 bg-white rounded-[32px] border border-slate-100 shadow-sm flex flex-col overflow-hidden">
+                <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                  <div>
+                    <h4 className="text-xl font-black text-slate-800 tracking-tight">Live Activity Feed</h4>
+                    <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mt-1">Real-time stream of events</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex -space-x-3">
+                      {clientUsers.slice(0, 3).map((user, i) => (
+                        <div key={i} className="w-10 h-10 rounded-full border-2 border-white bg-indigo-100 flex items-center justify-center text-sm font-black text-indigo-600 shadow-sm">
+                          {user.email[0].toUpperCase()}
+                        </div>
+                      ))}
+                    </div>
+                    <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest bg-white px-3 py-1.5 rounded-xl border border-slate-100 shadow-sm">
+                      +{clientUsers.length > 3 ? clientUsers.length - 3 : 0} active
+                    </span>
+                  </div>
+                </div>
+                <div className="p-8 flex-1">
+                  <div className="space-y-6">
+                    {clientLogs.slice(0, 5).map((log, i, arr) => (
+                      <motion.div 
+                        key={log.id} 
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.05 }}
+                        className="relative flex items-start gap-4 group"
+                      >
+                        {i !== arr.length - 1 && (
+                          <div className="absolute left-5 top-10 bottom-[-24px] w-px bg-slate-100 group-hover:bg-indigo-100 transition-colors" />
+                        )}
+                        <div className={cn(
+                          "relative z-10 w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 mt-0.5 transition-transform group-hover:scale-110 border-2 border-white shadow-sm",
+                          log.action.includes('LOGIN') ? "bg-indigo-50 text-indigo-600" : 
+                          log.action.includes('PAYROLL') ? "bg-emerald-50 text-emerald-600" :
+                          log.action.includes('FILE') ? "bg-amber-50 text-amber-600" : "bg-slate-50 text-slate-400"
+                        )}>
+                          {log.action.includes('LOGIN') ? <Lock className="w-5 h-5" /> : 
+                           log.action.includes('PAYROLL') ? <ShieldCheck className="w-5 h-5" /> :
+                           log.action.includes('FILE') ? <Files className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="text-sm font-black text-slate-800">{log.action.replace(/_/g, ' ')}</p>
+                            {i === 0 && (
+                              <span className="px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest">New</span>
+                            )}
+                          </div>
+                          <p className="text-xs font-bold text-slate-500 truncate mb-2">{log.user_email}</p>
+                          <div className="bg-slate-50/50 rounded-xl p-3 border border-slate-100 mt-1">
+                            {formatDetails(log.details)}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-black text-slate-800">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{new Date(log.created_at).toLocaleDateString()}</p>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+                <div className="p-4 border-t border-slate-100 bg-slate-50/50">
+                  <button 
+                    onClick={() => setActiveTab('activity')}
+                    className="w-full text-xs font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-700 transition-colors py-2"
+                  >
+                    View all activity &rarr;
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm p-8">
+                  <h4 className="text-xl font-black text-slate-800 tracking-tight mb-8">System Health</h4>
+                  <div className="space-y-8">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center shrink-0">
+                        <Shield className="w-6 h-6 text-emerald-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-slate-800">Security Status</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">All Systems Operational</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-50 flex items-center justify-center shrink-0">
+                        <RefreshCw className="w-6 h-6 text-indigo-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-slate-800">Last Backup</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Today, 04:00 AM</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center shrink-0">
+                        <MessageSquare className="w-6 h-6 text-amber-600" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-slate-800">Support Tickets</p>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">0 Open Tickets</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 rounded-[32px] p-8 text-white relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <Zap className="w-32 h-32 -mt-6 -mr-6" />
+                  </div>
+                  <div className="relative z-10">
+                    <h4 className="text-xl font-black tracking-tight mb-2">Quick Actions</h4>
+                    <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-8">Need to assist this client directly?</p>
+                    <button 
+                      onClick={() => onLoginAsSuperAdmin?.(selectedClient)}
+                      className="w-full py-4 bg-white text-slate-900 text-sm font-black uppercase tracking-widest rounded-2xl hover:bg-slate-50 transition-colors shadow-lg shadow-white/10"
+                    >
+                      Login as Admin
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Status Bar */}
+            <div className="flex flex-wrap gap-4">
+              <div className="flex items-center gap-4 px-6 py-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center">
+                  <LayoutDashboard className="w-5 h-5 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Dashboard Type</p>
+                  <p className="text-sm font-black text-slate-800">{selectedClient.dashboardType === 'rostering' ? 'Rostering Enabled' : 'Basic Mode'}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4 px-6 py-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
+                  <Calendar className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client Since</p>
+                  <p className="text-sm font-black text-slate-800">{new Date(selectedClient.created_at).toLocaleDateString()}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'users' && (
+          <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-black text-slate-800">Dashboard Users</h3>
+              <Tooltip content="Add a new user to this client dashboard">
+                <button 
+                  onClick={() => { setEditingUser(null); setIsNewUserModalOpen(true); }}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add User
+                </button>
+              </Tooltip>
+            </div>
+            {clientUsers.length === 0 ? (
+              <BrandedState 
+                type="empty" 
+                portal="superadmin" 
+                title="No Users" 
+                message="No users have been added to this client dashboard." 
+                action={{ label: 'Add User', onClick: () => { setEditingUser(null); setIsNewUserModalOpen(true); } }}
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <div className="pl-8 pr-8 pb-4">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
+                        <th className="px-8 py-4">Name</th>
+                        <th className="px-8 py-4">Role</th>
+                        <th className="px-8 py-4">Last Login</th>
+                        <th className="px-8 py-4">2FA Status</th>
+                        <th className="px-8 py-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {clientUsers.map(user => (
+                        <tr key={user.id} className="hover:bg-slate-50/50 transition-colors group">
+                          <td className="px-8 py-4">
+                            <div className="flex flex-col">
+                              <span className="text-sm font-bold text-slate-800">{user.name}</span>
+                              <span className="text-xs font-medium text-slate-500">{user.email}</span>
+                            </div>
+                          </td>
+                          <td className="px-8 py-4">
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest">
+                              {user.role}
+                            </span>
+                          </td>
+                          <td className="px-8 py-4 text-sm font-bold text-slate-500">{formatHarareLastAction(user.lastLogin)}</td>
+                          <td className="px-8 py-4">
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  setUserToToggle2FA(user);
+                                  setIs2FAModalOpen(true);
+                                }}
+                                className={cn(
+                                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2",
+                                  user.mfa_required ? "bg-indigo-600" : "bg-slate-200"
+                                )}
+                              >
+                                <span
+                                  className={cn(
+                                    "inline-block h-3 w-3 transform rounded-full bg-white transition-transform",
+                                    user.mfa_required ? "translate-x-5" : "translate-x-1"
+                                  )}
+                                />
+                              </button>
+                              <span className={cn(
+                                "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider",
+                                !user.mfa_required ? "bg-slate-100 text-slate-500" :
+                                !user.mfa_enabled ? "bg-amber-100 text-amber-600" :
+                                "bg-emerald-100 text-emerald-600"
+                              )}>
+                                {!user.mfa_required ? "Not required" :
+                                 !user.mfa_enabled ? "Setup pending" :
+                                 "Enabled"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-8 py-4 text-right">
+                            <div className="flex items-center justify-end gap-2 transition-opacity">
+                              <Tooltip content="Edit User">
+                                <button 
+                                  onClick={() => { setEditingUser(user); setIsNewUserModalOpen(true); }} 
+                                  className="p-2 hover:bg-white rounded-xl text-slate-400 hover:text-indigo-600 transition-colors shadow-sm"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                              </Tooltip>
+                              <Tooltip content="Delete User">
+                                <button 
+                                  onClick={() => handleDeleteUser(user.id)} 
+                                  className="p-2 hover:bg-rose-50 rounded-xl text-slate-400 hover:text-rose-600 transition-colors shadow-sm"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </Tooltip>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'files' && (
+          <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between gap-4">
+              <div className="min-w-0 space-y-3">
+                <div className="flex items-center gap-3">
+                  <h3 className="font-black text-slate-800">Client Files</h3>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleClientFilesBack}
+                      disabled={fileBackHistory.length === 0}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-indigo-200 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={handleClientFilesForward}
+                      disabled={fileForwardHistory.length === 0}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 transition hover:border-indigo-200 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar text-xs font-black uppercase tracking-widest text-slate-400">
+                  <button type="button" onClick={() => navigateClientFolder(null)} className="inline-flex items-center gap-1 rounded-lg border border-transparent px-2 py-1 text-slate-500 transition hover:border-indigo-100 hover:bg-white hover:text-indigo-600">
+                    <Home className="w-3.5 h-3.5" />
+                    Vault
+                  </button>
+                  {getClientFolderPath().map((folder) => (
+                    <React.Fragment key={folder.id}>
+                      <ChevronRight className="w-3 h-3 shrink-0 text-slate-300" />
+                      <button
+                        type="button"
+                        onClick={() => navigateClientFolder(folder.id)}
+                        className={cn("max-w-[180px] truncate rounded-lg border border-transparent px-2 py-1 transition hover:border-indigo-100 hover:bg-white", folder.id === currentFolderId ? "bg-white text-indigo-600 shadow-sm" : "text-slate-500 hover:text-indigo-600")}
+                        title={folder.name}
+                      >
+                        {folder.name}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Tooltip content="Create a new folder">
+                  <button 
+                    onClick={() => { setEditingFile(null); setIsUploadFileModalOpen(true); }}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
+                  >
+                    <Folder className="w-3.5 h-3.5" />
+                    New Folder
+                  </button>
+                </Tooltip>
+                <Tooltip content="Upload a file to this folder">
+                  <button 
+                    onClick={() => { setEditingFile(null); setIsUploadFileModalOpen(true); }}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-xs bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    Upload File
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+            {clientFiles.filter(f => f.parent_id === currentFolderId).length === 0 ? (
+              <BrandedState 
+                type="empty" 
+                portal="superadmin" 
+                title="No Files" 
+                message="No files have been uploaded for this client." 
+                action={{ label: 'Upload File', onClick: () => { setEditingFile(null); setIsUploadFileModalOpen(true); } }}
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <div className="pl-8 pr-8 pb-4">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
+                        <th className="px-8 py-4">File Name</th>
+                        <th className="px-8 py-4">Size</th>
+                        <th className="px-8 py-4">Uploaded</th>
+                        <th className="px-8 py-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {clientFiles
+                        .filter(f => f.parent_id === currentFolderId)
+                        .map(file => (
+                        <tr key={file.id} className="hover:bg-slate-50/50 transition-colors group">
+                          <td className="px-8 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center">
+                                {file.type === 'folder' ? (
+                                  <Folder className="w-4 h-4 text-indigo-600" />
+                                ) : (
+                                  <FileText className="w-4 h-4 text-indigo-600" />
+                                )}
+                              </div>
+                              <button 
+                                onClick={() => file.type === 'folder' && navigateClientFolder(file.id)}
+                                className={cn(
+                                  "text-sm font-bold text-slate-800 flex items-center gap-2",
+                                  file.type === 'folder' && "hover:text-indigo-600"
+                                )}
+                              >
+                                {file.name}
+                                {file.password && (
+                                  <Tooltip content={`Locked with password: ${file.password}`}>
+                                    <Lock className="w-3 h-3 text-amber-500" />
+                                  </Tooltip>
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                          <td className="px-8 py-4 text-sm font-bold text-slate-500">{file.size}</td>
+                          <td className="px-8 py-4 text-sm font-bold text-slate-500">{file.date}</td>
+                          <td className="px-8 py-4 text-right">
+                            <div className="flex items-center justify-end gap-2 transition-opacity">
+                              <Tooltip content="Edit File">
+                                <button 
+                                  onClick={() => { setEditingFile(file); setIsUploadFileModalOpen(true); }} 
+                                  className="p-2 hover:bg-white rounded-xl text-slate-400 hover:text-indigo-600 transition-colors shadow-sm"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                              </Tooltip>
+                              <Tooltip content="Delete File">
+                                <button 
+                                  onClick={() => handleDeleteFile(file.id)} 
+                                  className="p-2 hover:bg-rose-50 rounded-xl text-slate-400 hover:text-rose-600 transition-colors shadow-sm"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </Tooltip>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'activity' && (
+          <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-black text-slate-800">Activity Logs</h3>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                <input 
+                  type="text" 
+                  placeholder="Search logs..." 
+                  value={logSearchTerm}
+                  onChange={(e) => setLogSearchTerm(e.target.value)}
+                  className="pl-9 pr-4 py-2 bg-slate-50 border-none rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20 w-48 shadow-sm"
+                />
+              </div>
+            </div>
+            <div className="p-8 max-h-[600px] overflow-y-auto no-scrollbar">
+              {clientLogs.length === 0 ? (
+                <BrandedState
+                  type="empty"
+                  portal="superadmin"
+                  title="No Activity"
+                  message="No activity has been logged for this client yet."
+                />
+              ) : (
+                <div className="space-y-6">
+                  {clientLogs
+                    .filter(log => 
+                      log.user_email.toLowerCase().includes(logSearchTerm.toLowerCase()) ||
+                      log.action.toLowerCase().includes(logSearchTerm.toLowerCase()) ||
+                      log.details.toLowerCase().includes(logSearchTerm.toLowerCase())
+                    )
+                    .map((log, index, arr) => (
+                      <div key={log.id} className="flex gap-6 relative group">
+                        {index !== arr.length - 1 && (
+                          <div className="absolute left-6 top-12 bottom-[-24px] w-px bg-slate-100 group-hover:bg-indigo-100 transition-colors" />
+                        )}
+                        <div className="flex flex-col items-center shrink-0 relative z-10">
+                          <div className={cn(
+                            "w-12 h-12 rounded-2xl flex items-center justify-center border-4 border-white shadow-sm transition-transform group-hover:scale-110",
+                            log.action.includes('LOGIN') ? "bg-indigo-50 text-indigo-600" : 
+                            log.action.includes('PAYROLL') ? "bg-emerald-50 text-emerald-600" :
+                            log.action.includes('FILE') ? "bg-amber-50 text-amber-600" : "bg-slate-50 text-slate-500"
+                          )}>
+                            {log.action.includes('LOGIN') ? <Lock className="w-5 h-5" /> : 
+                             log.action.includes('PAYROLL') ? <ShieldCheck className="w-5 h-5" /> :
+                             log.action.includes('FILE') ? <Files className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
+                          </div>
+                        </div>
+                        <div className="flex-1 bg-white rounded-3xl p-6 shadow-sm border border-slate-100 hover:shadow-md transition-shadow">
+                          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-4">
+                            <div>
+                              <div className="flex items-center gap-3 mb-1.5">
+                                <span className="text-base font-black text-slate-800">{log.action.replace(/_/g, ' ')}</span>
+                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">
+                                  {log.ip_address}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
+                                <UserIcon className="w-4 h-4 text-slate-400" />
+                                {log.user_email}
+                              </div>
+                            </div>
+                            <div className="text-left sm:text-right shrink-0">
+                              <p className="text-sm font-black text-slate-800">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{new Date(log.created_at).toLocaleDateString()}</p>
+                            </div>
+                          </div>
+                          <div className="bg-slate-50/50 rounded-2xl p-4 border border-slate-100">
+                            {formatDetails(log.details)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+
+        {activeTab === 'support_tickets' && (
+          <SupportTicketsPanel
+            tickets={clientSupportTickets}
+            clientScoped={true}
+            currentUser={currentUser}
+            onUpdateTicket={async (updatedTicket) => {
+              try {
+                const saved = await appService.updateSupportTicket(updatedTicket.id, {
+                  status: updatedTicket.status,
+                  priority: updatedTicket.priority,
+                  admin_notes: updatedTicket.admin_notes || '',
+                });
+                setClientSupportTickets((prev) => prev.map((ticket) => ticket.id === saved.id ? saved : ticket));
+                toast.success('Support ticket updated');
+              } catch (error) {
+                console.error('Failed to update support ticket:', error);
+                toast.error('Failed to update support ticket');
+              }
+            }}
+          />
+        )}
+
+        {activeTab === 'payroll_notifications' && (
+          <ClientNotificationsPanel
+            notifications={clientPayrollNotifications}
+            clientScoped={true}
+            onProcess={async (id) => {
+              try {
+                const saved = await appService.updatePayrollSubmissionStatus(id, 'processed');
+                setClientPayrollNotifications((prev) => prev.map((submission) => submission.id === saved.id ? saved : submission));
+                toast.success('Payroll submission marked as processed');
+              } catch (error) {
+                console.error('Failed to process payroll submission:', error);
+                toast.error('Failed to process payroll submission');
+              }
+            }}
+            onRevert={async (id) => {
+              try {
+                const saved = await appService.updatePayrollSubmissionStatus(id, 'pending');
+                setClientPayrollNotifications((prev) => prev.map((submission) => submission.id === saved.id ? saved : submission));
+                toast.success('Payroll submission reverted to pending');
+              } catch (error) {
+                console.error('Failed to revert payroll submission:', error);
+                toast.error('Failed to revert payroll submission');
+              }
+            }}
+          />
+        )}
+
+        
+        {activeTab === 'payroll_logs' && (
+          <div className="space-y-6">
+            {/* Summary Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Submissions</p>
+                <div className="flex items-end gap-2">
+                  <h4 className="text-2xl font-black text-slate-800">{filteredPayrollLogs.length}</h4>
+                  <span className="text-[10px] text-slate-400 font-bold mb-1.5 uppercase tracking-tighter">Logs</span>
+                </div>
+              </div>
+              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
+                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Processed</p>
+                <div className="flex items-end gap-2">
+                  <h4 className="text-2xl font-black text-emerald-600">{filteredPayrollLogs.filter(l => l.status === 'processed').length}</h4>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 mb-2" />
+                </div>
+              </div>
+              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
+                <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest mb-1">Pending Review</p>
+                <div className="flex items-end gap-2">
+                  <h4 className="text-2xl font-black text-amber-600">{filteredPayrollLogs.filter(l => l.status !== 'processed' && l.status !== 'archived').length}</h4>
+                  <AlertCircle className="w-4 h-4 text-amber-400 mb-2" />
+                </div>
+              </div>
+              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
+                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Total Value</p>
+                <div className="flex items-end gap-2">
+                  <h4 className="text-2xl font-black text-indigo-600">
+                    R {filteredPayrollLogs.reduce((acc, curr) => acc + (Number(curr.totalPay) || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </h4>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+              <div className="p-8 border-b border-slate-100 flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h3 className="text-xl font-black text-slate-800 tracking-tight">Payroll Submission History</h3>
+                  <p className="text-sm text-slate-500 font-medium">Detailed log of all payroll data submitted for processing.</p>
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input 
+                    type="text" 
+                    value={payrollLogSearchTerm}
+                    onChange={(e) => setPayrollLogSearchTerm(e.target.value)}
+                    placeholder="Search logs..." 
+                    className="pl-11 pr-6 py-3 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:outline-none focus:ring-4 focus:ring-indigo-500/10 w-80 transition-all"
+                  />
+                </div>
+              </div>
+
+              {filteredPayrollLogs.length === 0 ? (
+                <BrandedState
+                  type="empty"
+                  portal="superadmin"
+                  title="No Payroll Logs"
+                  message="No payroll submissions have been logged for this client yet."
+                />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
+                        <th className="px-8 py-6">Submission Details</th>
+                        <th className="px-8 py-6">Period</th>
+                        <th className="px-8 py-6">Metrics</th>
+                        <th className="px-8 py-6">Financials</th>
+                        <th className="px-8 py-6">Status & Processing</th>
+                        <th className="px-8 py-6 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredPayrollLogs.map((submission) => (
+                        <tr key={submission.id} className="hover:bg-indigo-50/30 transition-colors group">
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400">
+                                <FileText className="w-5 h-5" />
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="text-sm font-black text-slate-800">{submission.submittedBy || 'System'}</p>
+                                <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                                  <Clock className="w-3 h-3" />
+                                  {submission.submittedAt ? new Date(submission.submittedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="space-y-1">
+                              <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest">
+                                {submission.period || 'N/A'}
+                              </span>
+                              <p className="text-[10px] text-slate-400 font-black uppercase tracking-tighter">ID: {submission.id.substring(0, 8)}...</p>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-2">
+                                <Users className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-sm font-bold text-slate-700">{submission.employeeCount ?? 0} Employees</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-medium text-slate-500">{Number(submission.totalHours || 0).toFixed(1)} Hours</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="space-y-0.5">
+                              <p className="text-sm font-black text-indigo-600">
+                                R {Number(submission.totalPay || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </p>
+                              <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Gross Total</p>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex flex-col gap-3">
+                              <div className={cn(
+                                "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest w-fit",
+                                submission.status === 'processed'
+                                  ? "bg-emerald-100 text-emerald-600"
+                                  : submission.status === 'archived'
+                                    ? "bg-slate-100 text-slate-600"
+                                    : "bg-amber-100 text-amber-600"
+                              )}>
+                                {submission.status === 'processed' ? (
+                                  <CheckCircle2 className="w-3 h-3" />
+                                ) : submission.status === 'archived' ? (
+                                  <History className="w-3 h-3" />
+                                ) : (
+                                  <AlertCircle className="w-3 h-3" />
+                                )}
+                                {submission.status}
+                              </div>
+                              {submission.processedBy && (
+                                <div className="flex items-center gap-2">
+                                  <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center text-[8px] font-black text-slate-500">
+                                    {submission.processedBy.substring(0, 2).toUpperCase()}
+                                  </div>
+                                  <div className="space-y-0">
+                                    <p className="text-[10px] font-bold text-slate-600 leading-none">{submission.processedBy}</p>
+                                    <p className="text-[9px] text-slate-400 font-medium">
+                                      {submission.processedAt ? new Date(submission.processedAt).toLocaleDateString() : ''}
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-8 py-6 text-right">
+                            <button className="p-2.5 hover:bg-white rounded-xl text-slate-400 hover:text-indigo-600 transition-colors shadow-sm">
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'whatsapp' && renderWhatsAppTab()}
+
+        {activeTab === 'settings' && (
+          <div className="flex gap-8 min-h-[600px]">
+            {/* Settings Navigation Rail */}
+            <div className="w-64 flex flex-col gap-1">
+              {[
+                { id: 'general', label: 'General', desc: 'Basic info & appearance', icon: Building2 },
+                { id: 'rostering', label: 'Rostering', desc: 'Schedules & definitions', icon: Calendar },
+                { id: 'features', label: 'Features', desc: 'Access & trial control', icon: ShieldCheck }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setSettingsTab(tab.id as any)}
+                  className={cn(
+                    "flex items-start gap-4 p-4 rounded-2xl transition-all text-left group",
+                    settingsTab === tab.id
+                      ? "bg-white shadow-sm border border-slate-200"
+                      : "hover:bg-white/50"
+                  )}
+                >
+                  <div className={cn(
+                    "p-2 rounded-xl transition-colors",
+                    settingsTab === tab.id ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-400 group-hover:text-slate-600"
+                  )}>
+                    <tab.icon className="w-4 h-4" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className={cn(
+                      "text-sm font-bold",
+                      settingsTab === tab.id ? "text-slate-900" : "text-slate-500"
+                    )}>{tab.label}</span>
+                    <span className="text-[10px] font-medium text-slate-400">{tab.desc}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Settings Content Area */}
+            <div className="flex-1 space-y-6">
+              {settingsTab === 'general' && (
+                <div className="space-y-6">
+                  <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-200 space-y-8">
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-black text-slate-800">Client Appearance</h3>
+                      <p className="text-xs text-slate-500 font-medium">Customize how this client's dashboard looks.</p>
+                    </div>
+                    
+                    <div className="space-y-5">
+                      <div className="flex items-center gap-8 p-6 bg-slate-50 rounded-2xl border border-slate-100">
+                        <div className="relative group">
+                          <div className="w-24 h-24 rounded-[32px] bg-white border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden transition-all group-hover:border-indigo-400">
+                            {clientFallbackImage ? (
+                              <img src={clientFallbackImage} alt="Fallback" className="w-full h-full object-contain bg-white p-2" />
+                            ) : (
+                              <Building2 className="w-8 h-8 text-slate-300" />
+                            )}
+                          </div>
+                          <label className="absolute inset-0 flex items-center justify-center bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer rounded-[32px]">
+                            <Upload className="w-5 h-5 text-white" />
+                            <input type="file" accept="image/*" onChange={handleFallbackImageUpload} className="hidden" />
+                          </label>
+                        </div>
+                        <div className="space-y-2">
+                          <h4 className="text-sm font-bold text-slate-800">Fallback Logo</h4>
+                          <p className="text-xs text-slate-500 leading-relaxed max-w-xs">
+                            Choose one of the preset fuel brand logos below or upload a custom fallback image.
+                          </p>
+                          <div className="flex flex-wrap gap-3">
+                            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500 cursor-pointer hover:border-indigo-300">
+                              <Upload className="w-3.5 h-3.5" />
+                              Upload Custom
+                              <input type="file" accept="image/*" onChange={handleFallbackImageUpload} className="hidden" />
+                            </label>
+                            <button 
+                              type="button"
+                              onClick={clearClientFallbackImage}
+                              className="px-3 py-2 rounded-xl border border-rose-200 text-[10px] font-black text-rose-600 uppercase tracking-widest hover:bg-rose-50"
+                            >
+                              Remove Image
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="text-sm font-bold text-slate-800">Preset Logos</h4>
+                            <p className="text-xs text-slate-500">Quick-select a branded fallback for this client.</p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          {PRESET_CLIENT_LOGOS.map((logo) => {
+                            const isSelected = clientFallbackImage === logo.src;
+                            return (
+                              <button
+                                key={logo.id}
+                                type="button"
+                                onClick={() => selectPresetClientLogo(logo.src)}
+                                className={cn(
+                                  "group rounded-2xl border p-3 bg-white transition-all text-left",
+                                  isSelected
+                                    ? "border-indigo-500 ring-2 ring-indigo-100 shadow-sm"
+                                    : "border-slate-200 hover:border-indigo-300 hover:shadow-sm"
+                                )}
+                              >
+                                <div className="h-16 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden">
+                                  <img src={logo.src} alt={logo.label} className="max-h-full max-w-full object-contain p-2" />
+                                </div>
+                                <div className="mt-2 flex items-center justify-between gap-2">
+                                  <span className="text-[11px] font-bold text-slate-700 truncate">{logo.label}</span>
+                                  {isSelected && <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-8 border-t border-slate-100 flex items-center justify-between">
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-slate-800">Dashboard Mode</h4>
+                        <p className="text-xs text-slate-500">Choose the primary focus of this workspace.</p>
+                      </div>
+                      <div className="flex p-1 bg-slate-100 rounded-xl border border-slate-200">
+                        <button
+                          onClick={() => setDashboardType('rostering')}
+                          className={cn(
+                            "px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                            dashboardType === 'rostering' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                          )}
+                        >
+                          Rostering
+                        </button>
+                        <button
+                          onClick={() => setDashboardType('non-rostering')}
+                          className={cn(
+                            "px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                            dashboardType === 'non-rostering' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                          )}
+                        >
+                          Standard
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="pt-8 border-t border-slate-100 space-y-6">
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-slate-800">Automatic Payroll Submission</h4>
+                        <p className="text-xs text-slate-500">Configure when payroll is automatically submitted for processing.</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">
+                            {rosterDuration === '1_month' ? 'Day of the Month' : 'Day of the Week'}
+                          </label>
+                          <select 
+                            value={payrollSubmissionDay}
+                            onChange={(e) => setPayrollSubmissionDay(Number(e.target.value))}
+                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm bg-slate-50 appearance-none"
+                          >
+                            {rosterDuration === '1_month' ? (
+                              Array.from({ length: 31 }, (_, i) => (
+                                <option key={i + 1} value={i + 1}>{i + 1}{[1, 21, 31].includes(i + 1) ? 'st' : [2, 22].includes(i + 1) ? 'nd' : [3, 23].includes(i + 1) ? 'rd' : 'th'}</option>
+                              ))
+                            ) : (
+                              <>
+                                <option value={0}>Sunday</option>
+                                <option value={1}>Monday</option>
+                                <option value={2}>Tuesday</option>
+                                <option value={3}>Wednesday</option>
+                                <option value={4}>Thursday</option>
+                                <option value={5}>Friday</option>
+                                <option value={6}>Saturday</option>
+                              </>
+                            )}
+                          </select>
+                          <p className="text-[10px] text-slate-400 font-medium px-1 italic">
+                            {rosterDuration === '1_week' && "Submitted every week on this day."}
+                            {rosterDuration === '2_weeks' && "Submitted on this day in the second week of the cycle."}
+                            {rosterDuration === '1_month' && "Submitted on this day in the last week of the month."}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-8 border-t border-slate-100 space-y-6">
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-slate-800">Payroll Submission Notifications</h4>
+                        <p className="text-xs text-slate-500">Configure who receives payroll reports via email.</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Recipient Email</label>
+                          <input 
+                            type="email"
+                            value={payrollEmail}
+                            onChange={(e) => setPayrollEmail(e.target.value)}
+                            placeholder="payroll@example.com"
+                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm bg-slate-50"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">CC Email(s)</label>
+                          <input 
+                            type="text"
+                            value={payrollCc}
+                            onChange={(e) => setPayrollCc(e.target.value)}
+                            placeholder="manager@example.com, hr@example.com"
+                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm bg-slate-50"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-8 border-t border-rose-100 space-y-4">
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-rose-700">Danger Zone</h4>
+                        <p className="text-xs text-slate-500">Permanently remove this client dashboard and all of its data. This action cannot be undone.</p>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4">
+                        <div className="space-y-1">
+                          <p className="text-sm font-bold text-slate-800">Kill Switch</p>
+                          <p className="text-xs text-slate-500">This requires a confirmation prompt and the passphrase <span className="font-black text-rose-700">DELETE</span>.</p>
+                        </div>
+                        <Tooltip content="Permanently remove this client dashboard">
+                          <button
+                            onClick={handleDeleteClientDashboard}
+                            className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl font-black text-sm bg-red-600 text-white hover:bg-red-700 shadow-xl shadow-red-200 transition-all active:scale-95"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            Kill Switch
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === 'rostering' && (
+                <div className="space-y-6">
+                  <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-200 space-y-8">
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-black text-slate-800">Roster Configuration</h3>
+                      <p className="text-xs text-slate-500 font-medium">Define how schedules are generated and displayed.</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Week Start Day</label>
+                        <select 
+                          value={rosterStartDay}
+                          onChange={(e) => setRosterStartDay(Number(e.target.value))}
+                          className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm bg-slate-50 appearance-none"
+                        >
+                          <option value={0}>Sunday</option>
+                          <option value={1}>Monday</option>
+                          <option value={2}>Tuesday</option>
+                          <option value={3}>Wednesday</option>
+                          <option value={4}>Thursday</option>
+                          <option value={5}>Friday</option>
+                          <option value={6}>Saturday</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Default Duration</label>
+                        <select 
+                          value={rosterDuration}
+                          onChange={(e) => setRosterDuration(e.target.value as any)}
+                          className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm bg-slate-50 appearance-none"
+                        >
+                          <option value="1_week">1 Week</option>
+                          <option value="2_weeks">2 Weeks</option>
+                          <option value="1_month">1 Month</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="pt-8 border-t border-slate-100 space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-1">
+                          <h4 className="text-sm font-bold text-slate-800">Enabled Definitions</h4>
+                          <p className="text-xs text-slate-500">Select which data points are tracked in the roster.</p>
+                        </div>
+                        <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full uppercase tracking-widest">
+                          {enabledDefinitions.length} Active
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-3">
+                        {ROSTER_DEFINITIONS.map(def => (
+                          <button
+                            key={def.id}
+                            onClick={() => toggleDefinition(def.id)}
+                            className={cn(
+                              "flex items-center justify-between p-4 rounded-2xl border transition-all text-left",
+                              enabledDefinitions.includes(def.id)
+                                ? "bg-white border-indigo-200 text-indigo-700 shadow-sm ring-1 ring-indigo-100"
+                                : "bg-slate-50/50 border-slate-100 text-slate-400 hover:border-slate-200"
+                            )}
+                          >
+                            <span className="text-[11px] font-bold truncate pr-2">{def.label}</span>
+                            <div className={cn(
+                              "w-8 h-4 rounded-full relative transition-colors",
+                              enabledDefinitions.includes(def.id) ? "bg-indigo-600" : "bg-slate-200"
+                            )}>
+                              <div className={cn(
+                                "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform shadow-sm",
+                                enabledDefinitions.includes(def.id) ? "left-4.5" : "left-0.5"
+                              )} />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === 'features' && (
+                <div className="space-y-6">
+                  <div className="bg-white rounded-[32px] p-8 shadow-sm border border-slate-200 space-y-8">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <h3 className="text-lg font-black text-slate-800">Trial Management</h3>
+                        <p className="text-xs text-slate-500 font-medium">Control trial access and duration for this client.</p>
+                      </div>
+                      <button
+                        onClick={() => setIsTrial(!isTrial)}
+                        className={cn(
+                          "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border",
+                          isTrial 
+                            ? "bg-amber-50 border-amber-200 text-amber-700" 
+                            : "bg-slate-50 border-slate-200 text-slate-400"
+                        )}
+                      >
+                        {isTrial ? 'Trial Active' : 'Enable Trial'}
+                      </button>
+                    </div>
+
+                    {isTrial && (
+                      <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100 space-y-4">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Trial Duration (Days)</p>
+                        <div className="flex gap-3">
+                          {[3, 5, 7].map(days => (
+                            <button
+                              key={days}
+                              onClick={() => setTrialDuration(days as any)}
+                              className={cn(
+                                "flex-1 py-3 rounded-xl font-black text-xs transition-all border",
+                                trialDuration === days
+                                  ? "bg-white border-indigo-600 text-indigo-600 shadow-sm"
+                                  : "bg-transparent border-slate-200 text-slate-400 hover:bg-white"
+                              )}
+                            >
+                              {days} Days
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-8 border-t border-slate-100 space-y-6">
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-slate-800">Feature Access Control</h4>
+                        <p className="text-xs text-slate-500">Lock specific modules to restrict access for this client.</p>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-3">
+                        {[
+                          { id: 'analytics', label: 'Analytics' },
+                          { id: 'employee_records', label: 'Employee Records' },
+                          { id: 'leave_management', label: 'Leave Management' },
+                          { id: 'rostering', label: 'Rostering' },
+                          { id: 'timesheets', label: 'Timesheets' },
+                          { id: 'file_vault', label: 'File Vault' }
+                        ].map(feature => (
+                          <button
+                            key={feature.id}
+                            onClick={() => toggleFeatureLock(feature.id)}
+                            className={cn(
+                              "flex items-center justify-between p-4 rounded-2xl border transition-all text-left group",
+                              lockedFeatures.includes(feature.id)
+                                ? "bg-rose-50 border-rose-200 text-rose-700 shadow-sm"
+                                : "bg-white border-slate-100 text-slate-500 hover:border-slate-200"
+                            )}
+                          >
+                            <span className="text-[11px] font-bold">{feature.label}</span>
+                            {lockedFeatures.includes(feature.id) ? (
+                              <Lock className="w-3.5 h-3.5 text-rose-600" />
+                            ) : (
+                              <Unlock className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-400" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-4">
+                <button 
+                  onClick={async () => {
+                    if (!selectedClient) return;
+                    try {
+                      await adminService.updateClient(selectedClient.id, {
+                        name: selectedClient.name,
+                        status: selectedClient.status,
+                        fallbackImage: clientFallbackImage,
+                        lockedFeatures,
+                        enabledDefinitions,
+                        rosterStartDay,
+                        rosterDuration,
+                        dashboardType,
+                        isTrial,
+                        trialDuration,
+                        payrollEmail,
+                        payrollCc,
+                        payrollSubmissionDay,
+                      });
+                      await fetchClients();
+                      setSelectedClient({
+                        ...selectedClient,
+                        fallbackImage: clientFallbackImage,
+                        lockedFeatures,
+                        enabledDefinitions,
+                        rosterStartDay,
+                        rosterDuration,
+                        dashboardType,
+                        isTrial,
+                        trialDuration,
+                        payrollEmail,
+                        payrollCc,
+                        payrollSubmissionDay,
+                      });
+                      toast.success('Client settings updated successfully');
+                    } catch (error) {
+                      console.error('Failed to update client settings:', error);
+                      toast.error('Failed to update client settings');
+                    }
+                  }}
+                  className="px-10 py-4 rounded-2xl bg-indigo-600 text-white font-black text-sm hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all active:scale-95"
+                >
+                  Save All Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </motion.div>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {selectedClient ? renderClientDetail() : renderClientList()}
+
+      {/* New Client Modal */}
+      <AnimatePresence>
+        {isNewClientModalOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsNewClientModalOpen(false)}
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-[40px] shadow-2xl z-[101] overflow-hidden"
+            >
+              <div className="p-10 space-y-8">
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-black text-slate-800 tracking-tight">New Dashboard</h3>
+                  <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">Create a new client workspace</p>
+                </div>
+
+                <form onSubmit={handleCreateClient} className="space-y-6">
+                  <div className="space-y-4 py-2">
+                    <div className="flex flex-col items-center gap-4">
+                      <div className="relative group">
+                        <div className="w-24 h-24 rounded-[32px] bg-white border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden transition-all group-hover:border-indigo-400">
+                          {clientFallbackImage ? (
+                            <img src={clientFallbackImage} alt="Preview" className="w-full h-full object-contain bg-white p-2" />
+                          ) : (
+                            <Building2 className="w-8 h-8 text-slate-300" />
+                          )}
+                        </div>
+                        <Tooltip content="Upload Fallback Image" className="absolute inset-0">
+                          <label className="absolute inset-0 flex items-center justify-center bg-slate-900/40 transition-opacity cursor-pointer rounded-[32px]">
+                            <Plus className="w-6 h-6 text-white" />
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              onChange={handleFallbackImageUpload} 
+                              className="hidden" 
+                            />
+                          </label>
+                        </Tooltip>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-center gap-3">
+                        <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500 cursor-pointer hover:border-indigo-300">
+                          <Upload className="w-3.5 h-3.5" />
+                          Upload Custom
+                          <input type="file" accept="image/*" onChange={handleFallbackImageUpload} className="hidden" />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={clearClientFallbackImage}
+                          className="px-3 py-2 rounded-xl border border-rose-200 text-[10px] font-black text-rose-600 uppercase tracking-widest hover:bg-rose-50"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Client Fallback Image</p>
+                    </div>
+
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Client Name</label>
+                    <input name="name" required className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm" />
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button 
+                      type="button" 
+                      onClick={() => setIsNewClientModalOpen(false)}
+                      className="flex-1 px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="flex-1 px-6 py-3 rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all"
+                    >
+                      Create
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+      {/* 2FA Confirmation Modal */}
+      <AnimatePresence>
+        {is2FAModalOpen && userToToggle2FA && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIs2FAModalOpen(false)}
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-[40px] shadow-2xl z-[101] overflow-hidden"
+            >
+              <div className="p-10 space-y-8">
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-black text-slate-800 tracking-tight">
+                    {userToToggle2FA.mfa_required ? 'Disable 2FA?' : 'Require 2FA?'}
+                  </h3>
+                  <p className="text-sm text-slate-500 font-bold">
+                    {userToToggle2FA.mfa_required 
+                      ? `Are you sure you want to disable 2FA for ${userToToggle2FA.name}? They will no longer be required to use Google Authenticator.`
+                      : `The user will be asked to set up Google Authenticator the next time they log in. They will not be able to access the dashboard until setup is complete.`}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIs2FAModalOpen(false)}
+                    className="px-6 py-3 text-slate-500 hover:bg-slate-100 rounded-2xl font-bold text-sm transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggle2FA}
+                    className="px-6 py-3 bg-indigo-600 text-white hover:bg-indigo-700 rounded-2xl font-black text-sm transition-colors shadow-lg shadow-indigo-200"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* New User Modal */}
+      <AnimatePresence>
+        {isNewUserModalOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsNewUserModalOpen(false)}
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-[40px] shadow-2xl z-[101] overflow-hidden"
+            >
+              <div className="p-10 space-y-8">
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-black text-slate-800 tracking-tight">{editingUser ? 'Edit User' : 'Add User'}</h3>
+                  <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">{editingUser ? 'Update user details' : 'Add a new user to this dashboard'}</p>
+                </div>
+
+                <form onSubmit={handleAddUser} className="space-y-6">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Full Name</label>
+                    <input name="name" defaultValue={editingUser?.name} required className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Email Address</label>
+                    <input name="email" type="email" defaultValue={editingUser?.email} required className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Password</label>
+                    <div className="relative">
+                      <input 
+                        name="password" 
+                        type={showPassword ? "text" : "password"} 
+                        defaultValue={generatedPassword || editingUser?.password} 
+                        required={!editingUser}
+                        placeholder={editingUser ? "Leave blank to keep current" : "Enter password"}
+                        className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm" 
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                        <Tooltip content="Generate Password">
+                          <button
+                            type="button"
+                            onClick={generatePassword}
+                            className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-indigo-600 transition-colors"
+                          >
+                            <RefreshCw className="w-4 h-4" />
+                          </button>
+                        </Tooltip>
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-indigo-600 transition-colors"
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Access Level</label>
+                    <input
+                      value="Client Admin"
+                      readOnly
+                      tabIndex={-1}
+                      className="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-slate-500 outline-none font-bold text-sm cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-4">
+                    <button 
+                      type="button" 
+                      onClick={() => setIsNewUserModalOpen(false)}
+                      className="flex-1 px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="flex-1 px-6 py-3 rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all"
+                    >
+                      {editingUser ? 'Save Changes' : 'Add User'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Upload File Modal */}
+      <AnimatePresence>
+        {isUploadFileModalOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsUploadFileModalOpen(false)}
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100]"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-[40px] shadow-2xl z-[101] overflow-hidden"
+            >
+              <div className="p-10 space-y-8">
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-black text-slate-800 tracking-tight">{editingFile ? 'Edit File' : 'Upload File'}</h3>
+                  <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">{editingFile ? 'Rename this file' : 'Add a new file to this dashboard'}</p>
+                </div>
+
+                <form onSubmit={handleUploadFile} className="space-y-6">
+                  {editingFile ? (
+                    <div className="space-y-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">File Name</label>
+                        <input name="name" defaultValue={editingFile.name} required className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm" />
+                      </div>
+                      {editingFile.type === 'folder' && (
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Folder Password (Optional)</label>
+                          <input name="password" defaultValue={editingFile.password} placeholder="Set a password to lock this folder" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm" />
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Type</label>
+                        <select name="type" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm appearance-none bg-white">
+                          <option value="file">File</option>
+                          <option value="folder">Folder</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Name / Select File</label>
+                        <input name="name" placeholder="Folder name (if folder selected)" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm mb-2" />
+                        <input name="file" type="file" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Folder Password (Optional)</label>
+                        <input name="password" placeholder="Set a password to lock this folder" className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm" />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3 pt-4">
+                    <button 
+                      type="button" 
+                      onClick={() => setIsUploadFileModalOpen(false)}
+                      className="flex-1 px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="flex-1 px-6 py-3 rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-200 transition-all"
+                    >
+                      {editingFile ? 'Save Changes' : 'Upload'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </>
+  );
+};

@@ -91,6 +91,10 @@ export function calculateEmployeePayroll(
       if (isAssignmentInsidePeriod) leaveHours += 9;
       return;
     }
+    if (label.includes('half day')) {
+      if (isAssignmentInsidePeriod) leaveHours += 4.5;
+      return;
+    }
     if (label.includes('sick leave')) {
       if (isAssignmentInsidePeriod) sickHours += 9;
       return;

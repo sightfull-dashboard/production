@@ -1,0 +1,310 @@
+import React, { useState } from 'react';
+import { 
+  Bell, 
+  CheckCircle2, 
+  Clock, 
+  Search, 
+  Building2,
+  Calendar,
+  User,
+  Download,
+  RotateCcw
+} from 'lucide-react';
+import { cn } from '../lib/utils';
+import { motion } from 'motion/react';
+import { Tooltip } from './Tooltip';
+import { toast } from 'sonner';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+interface EmployeePayrollBreakdown {
+  employeeName: string;
+  regularHours: number;
+  overtimeHours: number;
+  leaveHours: number;
+  grossPay: number;
+}
+
+interface PayrollSubmission {
+  id: string;
+  clientName: string;
+  submittedBy: string;
+  submittedAt: string;
+  period: string;
+  employeeCount: number;
+  status: 'pending' | 'processed' | 'archived';
+  totalHours: number;
+  totalPay: number;
+  processedBy?: string;
+  processedAt?: string;
+  employeeBreakdown?: EmployeePayrollBreakdown[];
+}
+
+export const ClientNotificationsPanel = ({ 
+  notifications = [], 
+  onProcess,
+  onRevert,
+  clientScoped = false
+}: { 
+  notifications?: PayrollSubmission[],
+  onProcess?: (id: string) => void;
+  onRevert?: (id: string) => void;
+  clientScoped?: boolean;
+}) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'processed'>('all');
+
+  const normalizedNotifications: PayrollSubmission[] = (Array.isArray(notifications) ? notifications : []).map((sub) => ({
+    ...sub,
+    clientName: sub?.clientName || 'Unknown Client',
+    submittedBy: sub?.submittedBy || 'Unknown User',
+    submittedAt: sub?.submittedAt || new Date().toISOString(),
+    period: sub?.period || 'Unknown Period',
+    employeeCount: Number(sub?.employeeCount || 0),
+    totalHours: Number(sub?.totalHours || 0),
+    totalPay: Number(sub?.totalPay || 0),
+    status: sub?.status === 'processed' || sub?.status === 'archived' ? sub.status : 'pending',
+    employeeBreakdown: Array.isArray(sub?.employeeBreakdown) ? sub.employeeBreakdown : [],
+  }));
+
+  const filteredSubmissions = normalizedNotifications.filter(sub => {
+    const query = searchTerm.toLowerCase();
+    const matchesSearch = clientScoped
+      ? sub.submittedBy.toLowerCase().includes(query) || sub.period.toLowerCase().includes(query)
+      : sub.clientName.toLowerCase().includes(query) || sub.submittedBy.toLowerCase().includes(query);
+    const matchesStatus = filterStatus === 'all' || sub.status === filterStatus;
+    return matchesSearch && matchesStatus;
+  });
+
+  const handleDownload = (sub: PayrollSubmission) => {
+    try {
+      const doc = new jsPDF();
+      
+      // Header
+      doc.setFontSize(20);
+      doc.text('Payroll Submission Report', 14, 22);
+      
+      doc.setFontSize(11);
+      doc.setTextColor(100);
+      
+      // Basic Info
+      doc.text(`Client: ${sub.clientName}`, 14, 35);
+      doc.text(`Period: ${sub.period}`, 14, 42);
+      doc.text(`Status: ${sub.status.toUpperCase()}`, 14, 49);
+      doc.text(`Submitted By: ${sub.submittedBy}`, 14, 56);
+      doc.text(`Submitted At: ${new Date(sub.submittedAt).toLocaleString()}`, 14, 63);
+      
+      if (sub.status === 'processed' && sub.processedBy) {
+        doc.text(`Approved By: ${sub.processedBy}`, 14, 70);
+        doc.text(`Approved At: ${sub.processedAt ? new Date(sub.processedAt).toLocaleString() : 'N/A'}`, 14, 77);
+      }
+
+      // Summary Table
+      autoTable(doc, {
+        startY: 85,
+        head: [['Metric', 'Value']],
+        body: [
+          ['Total Employees', sub.employeeCount.toString()],
+          ['Total Hours', sub.totalHours.toFixed(2)],
+          ['Total Payroll Amount', `R ${sub.totalPay.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`],
+        ],
+        theme: 'striped',
+        headStyles: { fillColor: [79, 70, 229] } // indigo-600
+      });
+
+      // Employee Breakdown Table
+      if (sub.employeeBreakdown && sub.employeeBreakdown.length > 0) {
+        doc.setFontSize(14);
+        doc.text('Employee Breakdown', 14, (doc as any).lastAutoTable.finalY + 15);
+
+        autoTable(doc, {
+          startY: (doc as any).lastAutoTable.finalY + 20,
+          head: [['Employee Name', 'Reg Hours', 'OT Hours', 'Leave Hours', 'Gross Pay']],
+          body: sub.employeeBreakdown.map(emp => [
+            emp.employeeName,
+            emp.regularHours.toString(),
+            emp.overtimeHours.toString(),
+            emp.leaveHours.toString(),
+            `R ${emp.grossPay.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          ]),
+          theme: 'grid',
+          headStyles: { fillColor: [51, 65, 85] }, // slate-700
+          styles: { fontSize: 9 }
+        });
+      }
+
+      // Footer
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(10);
+        doc.text(`Generated by Sightfull Pro - Page ${i} of ${pageCount}`, 14, doc.internal.pageSize.height - 10);
+      }
+
+      doc.save(`Payroll_Report_${sub.clientName.replace(/\s+/g, '_')}_${sub.period.replace(/\s+/g, '_')}.pdf`);
+      toast.success('PDF report generated successfully!');
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      toast.error('Failed to generate PDF report');
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div className="space-y-1">
+          <h2 className="text-4xl font-black text-slate-800 tracking-tight">{clientScoped ? 'Payroll Notifications' : 'Client Notifications'}</h2>
+          <p className="text-sm text-slate-500 font-bold uppercase tracking-widest">{clientScoped ? 'Monitor this client\'s payroll submissions only' : 'Monitor Payroll Submissions & Activity'}</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="bg-white px-4 py-2 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-2">
+            <Bell className="w-4 h-4 text-indigo-600" />
+            <span className="text-xs font-black text-slate-700">{normalizedNotifications.filter(s => s.status === 'pending').length} New Submissions</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Filters & Search */}
+      <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-white p-4 rounded-[24px] border border-slate-200 shadow-sm">
+        <div className="relative w-full md:w-96">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search clients or submitters..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-100 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all text-sm font-medium"
+          />
+        </div>
+        <div className="flex items-center gap-2 p-1 bg-slate-50 rounded-xl border border-slate-100">
+          {(['all', 'pending', 'processed'] as const).map((status) => (
+            <button
+              key={status}
+              onClick={() => setFilterStatus(status)}
+              className={cn(
+                "px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                filterStatus === status 
+                  ? "bg-white text-indigo-600 shadow-sm border border-slate-200" 
+                  : "text-slate-400 hover:text-slate-600"
+              )}
+            >
+              {status}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Submissions List */}
+      <div className="grid grid-cols-1 gap-4">
+        {filteredSubmissions.map((sub, index) => (
+          <motion.div
+            key={sub.id}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: index * 0.05 }}
+            className="group bg-white rounded-[32px] p-6 border border-slate-200 hover:border-indigo-200 hover:shadow-xl hover:shadow-indigo-100/20 transition-all"
+          >
+            <div className="flex flex-col lg:flex-row lg:items-center gap-6">
+              {/* Status Icon */}
+              <div className={cn(
+                "w-14 h-14 rounded-2xl flex items-center justify-center shrink-0",
+                sub.status === 'pending' ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600"
+              )}>
+                {sub.status === 'pending' ? <Clock className="w-7 h-7" /> : <CheckCircle2 className="w-7 h-7" />}
+              </div>
+
+              {/* Client Info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="text-lg font-black text-slate-800 truncate">{clientScoped ? sub.period : sub.clientName}</h3>
+                  <span className={cn(
+                    "px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest",
+                    sub.status === 'pending' ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                  )}>
+                    {sub.status}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                    <User className="w-3.5 h-3.5" />
+                    {sub.submittedBy}
+                  </div>
+                  {!clientScoped && (
+                    <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                      <Calendar className="w-3.5 h-3.5" />
+                      {sub.period}
+                    </div>
+                  )}
+                  {clientScoped && (
+                    <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                      <Building2 className="w-3.5 h-3.5" />
+                      {sub.clientName}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                    <Clock className="w-3.5 h-3.5" />
+                    {new Date(sub.submittedAt).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              {/* Stats */}
+              <div className="grid grid-cols-2 lg:flex lg:items-center gap-8 px-6 lg:border-x border-slate-100 lg:w-72 shrink-0">
+                <div className="space-y-0.5">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Employees</p>
+                  <p className="text-sm font-black text-slate-800">{sub.employeeCount}</p>
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Pay</p>
+                  <p className="text-sm font-black text-indigo-600">R {sub.totalPay.toLocaleString()}</p>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 lg:w-40 justify-end shrink-0">
+                <Tooltip content="Download PDF Report">
+                  <button 
+                    onClick={() => handleDownload(sub)}
+                    className="p-3 rounded-xl bg-slate-50 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 transition-all"
+                  >
+                    <Download className="w-5 h-5" />
+                  </button>
+                </Tooltip>
+                {!clientScoped && sub.status === 'pending' && (
+                  <Tooltip content="Mark as Processed">
+                    <button 
+                      onClick={() => onProcess?.(sub.id)}
+                      className="px-6 py-3 rounded-xl bg-indigo-600 text-white font-black text-xs hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 whitespace-nowrap"
+                    >
+                      Process
+                    </button>
+                  </Tooltip>
+                )}
+                {!clientScoped && sub.status === 'processed' && (
+                  <Tooltip content="Revert to Pending">
+                    <button 
+                      onClick={() => onRevert?.(sub.id)}
+                      className="p-3 rounded-xl bg-amber-50 text-amber-600 hover:bg-amber-100 transition-all"
+                    >
+                      <RotateCcw className="w-5 h-5" />
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        ))}
+
+        {filteredSubmissions.length === 0 && (
+          <div className="py-20 text-center">
+            <div className="w-20 h-20 bg-slate-50 rounded-[32px] flex items-center justify-center mx-auto mb-6 border border-slate-100">
+              <Bell className="w-10 h-10 text-slate-200" />
+            </div>
+            <h3 className="text-xl font-black text-slate-800 mb-2">No notifications found</h3>
+            <p className="text-slate-500 font-medium">Try adjusting your search or filter criteria.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

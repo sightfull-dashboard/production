@@ -33,7 +33,7 @@ import { format, startOfWeek, addDays, differenceInDays, subDays } from 'date-fn
 import type { RosterDefinition, Shift, Employee, RosterAssignment, RosterMeta, OffboardReason, User, AuthStatus, LeaveRequest, SupportTicket, PayrollSubmission } from './types';
 import { cn } from './lib/utils';
 import { ApiError } from './lib/api';
-import { buildActiveClientHeaders, clearStoredActiveClientId, setStoredActiveClientId } from './lib/activeClient';
+import { buildActiveClientHeaders, clearStoredActiveClientId, getStoredActiveClientId, setStoredActiveClientId } from './lib/activeClient';
 import { isEmployeePath, isSuperAdminPath, isInternalRole, isSuperAdminRole, normalizeUserRole } from './lib/auth';
 import { COUNTRY_OF_ISSUE_OPTIONS, BANK_NAME_OPTIONS, SIDEBAR_LOGO as sidebarLogo } from './app/shared/formOptions';
 import {
@@ -82,6 +82,7 @@ import { Tooltip } from './components/Tooltip';
 import { Toaster, toast } from 'sonner';
 import { calculateEmployeePayroll } from './services/PayrollService';
 import { appService } from './services/appService';
+import { adminService } from './services/adminService';
 
 export default function App() {
   const [isSuperAdminRoute, setIsSuperAdminRoute] = useState(isSuperAdminPath(window.location.pathname));
@@ -153,6 +154,27 @@ export default function App() {
   const [supportMessage, setSupportMessage] = useState('');
   const [supportPriority, setSupportPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
   const [isSubmittingSupport, setIsSubmittingSupport] = useState(false);
+
+  const resetDashboardState = useCallback(() => {
+    clearStoredActiveClientId();
+    setImpersonatedClient(null);
+    setLockedFeatures([]);
+    setEnabledDefinitions(['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+    setRosterStartDay(1);
+    setRosterDuration('1_week');
+    setRosterMode('Manual');
+    setRosterSeedWeekStart(null);
+    setEmployees([]);
+    setShifts([]);
+    setRoster([]);
+    setRosterMeta([]);
+    setRequests([]);
+    setNotifications([]);
+    setClientTickets([]);
+    setLeaveManagementEmployeeId(null);
+    setEditingEmployee(null);
+  }, []);
+
 
   const filteredCountryOfIssueOptions = useMemo(() => {
     const query = countryOfIssueInput.trim().toLowerCase();
@@ -252,6 +274,15 @@ export default function App() {
 
   const currentClientName = impersonatedClient?.name || auth.user?.client_name || auth.user?.clientName || null;
   const currentClientId = impersonatedClient?.id || auth.user?.client_id || null;
+  const activeTrialSource = (() => {
+    if (impersonatedClient?.isTrial) return impersonatedClient;
+    if (auth.user?.isTrial) return auth.user as any;
+    return null;
+  })();
+  const activeTrialEndDate = activeTrialSource?.trialEndDate ? new Date(activeTrialSource.trialEndDate) : null;
+  const activeTrialDaysRemaining = activeTrialEndDate && !Number.isNaN(activeTrialEndDate.getTime())
+    ? Math.max(0, differenceInDays(activeTrialEndDate, new Date()))
+    : null;
   const currentClientNotifications = React.useMemo(() => {
     if (!currentClientName) {
       return notifications;
@@ -302,6 +333,74 @@ export default function App() {
     }
   };
 
+  const applyUserDashboardContext = (user: any) => {
+    setLockedFeatures(user?.lockedFeatures || []);
+    setEnabledDefinitions(user?.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+    setRosterStartDay(user?.roster_start_day ?? 1);
+    setRosterDuration(user?.roster_duration || '1_week');
+    const apiRosterMode = user?.rosterMode || user?.roster_mode || 'Manual';
+    const apiRosterSeed = user?.rosterSeedWeekStart || user?.roster_seed_week_start || null;
+    let localRosterMode = apiRosterMode;
+    let localRosterSeed = apiRosterSeed;
+    try {
+      const key = getRosterPrefsStorageKey(user?.client_id || null);
+      const saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if (saved?.rosterMode) localRosterMode = saved.rosterMode;
+      if (Object.prototype.hasOwnProperty.call(saved || {}, 'rosterSeedWeekStart')) localRosterSeed = saved.rosterSeedWeekStart;
+    } catch {}
+    setRosterMode(localRosterMode);
+    setRosterSeedWeekStart(localRosterSeed);
+    setCurrentWeekStart(getAlignedRosterStart(new Date(), user?.roster_start_day ?? 1));
+  };
+
+  const applyImpersonatedClientContext = (client: any) => {
+    if (!client?.id) return false;
+    const clientStatus = String(client?.status || 'active').trim().toLowerCase();
+    if (clientStatus === 'deactivated') {
+      clearStoredActiveClientId();
+      setImpersonatedClient(null);
+      setActiveSection('internal');
+      return false;
+    }
+    setImpersonatedClient(client);
+    setStoredActiveClientId(client.id);
+    setLockedFeatures(client.lockedFeatures || []);
+    setEnabledDefinitions(client.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
+    setRosterStartDay(client.rosterStartDay ?? 1);
+    setRosterDuration(client.rosterDuration || '1_week');
+    setRosterMode(client.rosterMode || client.roster_mode || 'Manual');
+    setRosterSeedWeekStart(client.rosterSeedWeekStart || client.roster_seed_week_start || null);
+    setCurrentWeekStart(getAlignedRosterStart(new Date(), client.rosterStartDay ?? 1));
+    setActiveSection('analytics');
+    return true;
+  };
+
+  const restoreStoredSuperAdminClient = async () => {
+    const storedClientId = getStoredActiveClientId();
+    if (!storedClientId) return null;
+    try {
+      const clients = await adminService.getClients();
+      const matched = (clients || []).find((client: any) => String(client?.id || '') === storedClientId) || null;
+      if (!matched || String(matched?.status || 'active').trim().toLowerCase() === 'deactivated') {
+        clearStoredActiveClientId();
+        return null;
+      }
+      return matched;
+    } catch (error) {
+      console.error('Failed to restore stored super admin client context:', error);
+      return null;
+    }
+  };
+
+  const exitImpersonation = () => {
+    clearStoredActiveClientId();
+    setImpersonatedClient(null);
+    setActiveSection('internal');
+    if (auth.user) {
+      applyUserDashboardContext(auth.user);
+    }
+  };
+
   const checkAuth = async () => {
     if (isEmployeeRoute) {
       setAuth({ user: null, loading: false });
@@ -318,29 +417,24 @@ export default function App() {
     try {
       const user = await appService.getAuthUser();
       const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
+      const restoredClient = isInternalRole(normalizedUser.role) ? await restoreStoredSuperAdminClient() : null;
       setAuth({ user: normalizedUser, loading: false });
-      if (isInternalRole(normalizedUser.role)) {
-        setImpersonatedClient(null);
-        setActiveSection('internal');
+      if (restoredClient) {
+        const restored = applyImpersonatedClientContext(restoredClient);
+        if (!restored) {
+          toast.error('That client dashboard is deactivated.');
+        }
+      } else {
+        if (isInternalRole(normalizedUser.role)) {
+          setImpersonatedClient(null);
+          setActiveSection('internal');
+        } else {
+          clearStoredActiveClientId();
+        }
+        applyUserDashboardContext(normalizedUser);
       }
-      setLockedFeatures(normalizedUser.lockedFeatures || []);
-      setEnabledDefinitions(normalizedUser.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
-      setRosterStartDay(normalizedUser.roster_start_day ?? 1);
-      setRosterDuration(normalizedUser.roster_duration || '1_week');
-      const apiRosterMode = normalizedUser.rosterMode || normalizedUser.roster_mode || 'Manual';
-      const apiRosterSeed = normalizedUser.rosterSeedWeekStart || normalizedUser.roster_seed_week_start || null;
-      let localRosterMode = apiRosterMode;
-      let localRosterSeed = apiRosterSeed;
-      try {
-        const key = getRosterPrefsStorageKey(normalizedUser.client_id || null);
-        const saved = JSON.parse(localStorage.getItem(key) || 'null');
-        if (saved?.rosterMode) localRosterMode = saved.rosterMode;
-        if (Object.prototype.hasOwnProperty.call(saved || {}, 'rosterSeedWeekStart')) localRosterSeed = saved.rosterSeedWeekStart;
-      } catch {}
-      setRosterMode(localRosterMode);
-      setRosterSeedWeekStart(localRosterSeed);
-      setCurrentWeekStart(getAlignedRosterStart(new Date(), normalizedUser.roster_start_day ?? 1));
     } catch (err) {
+      resetDashboardState();
       setAuth({ user: null, loading: false });
     }
   };
@@ -374,6 +468,39 @@ export default function App() {
     } catch {}
   }, [impersonatedClient?.id, auth.user?.role]);
 
+  useEffect(() => {
+    if (!impersonatedClient?.id) return;
+    if (String(impersonatedClient?.status || 'active').trim().toLowerCase() !== 'deactivated') return;
+    clearStoredActiveClientId();
+    setImpersonatedClient(null);
+    setActiveSection('internal');
+    toast.error('That client dashboard is deactivated.');
+  }, [impersonatedClient?.id, impersonatedClient?.status]);
+
+  useEffect(() => {
+    const handleClientDeactivated = (event: Event) => {
+      const detail = event instanceof CustomEvent ? event.detail : null;
+      const message = typeof detail === 'object' && detail && 'error' in detail
+        ? String((detail as { error?: unknown }).error || 'This client dashboard has been deactivated.')
+        : 'This client dashboard has been deactivated.';
+
+      if (isSuperAdminRole(auth.user?.role)) {
+        resetDashboardState();
+        setActiveSection('internal');
+        setSuperAdminSection('internal');
+      } else {
+        resetDashboardState();
+        setAuth({ user: null, loading: false });
+      }
+
+      clearEmployeeAuth();
+      toast.error(message);
+    };
+
+    window.addEventListener('sightfull:client-deactivated', handleClientDeactivated as EventListener);
+    return () => window.removeEventListener('sightfull:client-deactivated', handleClientDeactivated as EventListener);
+  }, [auth.user?.role, resetDashboardState]);
+
 
   useEffect(() => {
     if (isEmployeeRoute) {
@@ -406,27 +533,12 @@ export default function App() {
       const user = await appService.login(email, password);
       const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
       setAuth({ user: normalizedUser, loading: false });
-      if (!isSuperAdminRole(normalizedUser.role)) {
-        setImpersonatedClient(null);
-        clearStoredActiveClientId();
+      setImpersonatedClient(null);
+      clearStoredActiveClientId();
+      applyUserDashboardContext(normalizedUser);
+      if (isInternalRole(normalizedUser.role)) {
+        setActiveSection('internal');
       }
-      setLockedFeatures(normalizedUser.lockedFeatures || []);
-      setEnabledDefinitions(normalizedUser.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
-      setRosterStartDay(normalizedUser.roster_start_day ?? 1);
-      setRosterDuration(normalizedUser.roster_duration || '1_week');
-      const apiRosterMode = normalizedUser.rosterMode || normalizedUser.roster_mode || 'Manual';
-      const apiRosterSeed = normalizedUser.rosterSeedWeekStart || normalizedUser.roster_seed_week_start || null;
-      let localRosterMode = apiRosterMode;
-      let localRosterSeed = apiRosterSeed;
-      try {
-        const key = getRosterPrefsStorageKey(normalizedUser.client_id || null);
-        const saved = JSON.parse(localStorage.getItem(key) || 'null');
-        if (saved?.rosterMode) localRosterMode = saved.rosterMode;
-        if (Object.prototype.hasOwnProperty.call(saved || {}, 'rosterSeedWeekStart')) localRosterSeed = saved.rosterSeedWeekStart;
-      } catch {}
-      setRosterMode(localRosterMode);
-      setRosterSeedWeekStart(localRosterSeed);
-      setCurrentWeekStart(getAlignedRosterStart(new Date(), normalizedUser.roster_start_day ?? 1));
       toast.success('Welcome back!');
     } catch (err) {
       if (err instanceof ApiError) {
@@ -460,7 +572,7 @@ export default function App() {
 
   const getVisibleClientId = () => {
     if (isSuperAdminRole(auth.user?.role)) {
-      return impersonatedClient?.id || null;
+      return impersonatedClient?.id || getStoredActiveClientId() || null;
     }
     return auth.user?.client_id || null;
   };
@@ -863,7 +975,7 @@ export default function App() {
     return null;
   };
 
-  const ADMINISTRATIVE_SHIFT_LABELS = ['absent', 'annual leave', 'sick leave', 'family leave', 'unshifted'];
+  const ADMINISTRATIVE_SHIFT_LABELS = ['absent', 'annual leave', 'sick leave', 'family leave', 'half day', 'unshifted'];
   const rosterTitle = rosterDuration === '2_weeks' ? 'Fortnightly Roster' : rosterDuration === '1_month' ? 'Monthly Roster' : 'Weekly Roster';
 
   const isAdministrativeShiftLabel = (label: string) => ADMINISTRATIVE_SHIFT_LABELS.includes(String(label || '').trim().toLowerCase());
@@ -928,15 +1040,7 @@ export default function App() {
       await appService.logout();
       setAuth({ user: null, loading: false });
       clearEmployeeAuth();
-      setImpersonatedClient(null);
-      setLockedFeatures([]);
-      setEnabledDefinitions(['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
-      setRosterStartDay(1);
-      setRosterDuration('1_week');
-      setEmployees([]);
-      setRoster([]);
-      setRosterMeta([]);
-      setRequests([]);
+      resetDashboardState();
       toast.success('Signed out successfully');
     } catch (error) {
       console.error('Logout failed:', error);
@@ -1024,13 +1128,31 @@ export default function App() {
     const failures: string[] = [];
     const toastId = toast.loading('Importing employees...');
 
+    const parseImportedLeaveAmount = (value: unknown) => {
+      const raw = String(value ?? '').trim();
+      if (!raw) return 0;
+      const parsed = Number.parseFloat(raw.replace(/,/g, ''));
+      if (!Number.isFinite(parsed) || parsed < 0) return 0;
+      return Number(parsed.toFixed(4));
+    };
+
+    const parseOptionalImportYear = (...values: unknown[]) => {
+      for (const value of values) {
+        const raw = String(value ?? '').trim();
+        if (!raw) continue;
+        const parsed = Number.parseInt(raw, 10);
+        if (Number.isInteger(parsed) && parsed >= 1900 && parsed <= 3000) return parsed;
+      }
+      return undefined;
+    };
+
     for (const row of data) {
       const employeeData = {
         emp_id: String(row.emp_id || row['Employee ID'] || '').trim(),
         first_name: String(row.first_name || row['First Name'] || '').trim(),
         last_name: String(row.last_name || row['Last Name'] || '').trim(),
         email: String(row.email || row['Email'] || '').trim(),
-        cell: String(row.cell || row['Cell'] || '').trim(),
+        cell: normalizeSouthAfricanCell(String(row.cell || row['Cell'] || '').trim()),
         department: String(row.department || row['Department'] || 'Unassigned').trim(),
         job_title: String(row.job_title || row['Job Title'] || 'Unassigned').trim(),
         pay_rate: parseFloat(row.pay_rate || row['Pay Rate'] || '0') || 0,
@@ -1044,7 +1166,7 @@ export default function App() {
         bank_name: String(row.bank_name || row['Bank Name'] || '').trim(),
         account_no: String(row.account_no || row['Account Number'] || '').trim(),
         account_holder: String(row.account_holder || row['Account Holder'] || '').trim(),
-        account_type: String(row.account_type || row['Account Type'] || '').trim(),
+        account_type: String(row.account_type || row['Account Type'] || '').trim().toLowerCase(),
         tax_number: String(row.tax_number || row['Tax Number'] || '').trim(),
         paye_credit: String(row.paye_credit || row['PAYE Credit'] || '').trim(),
         classification: String(row.classification || row['Classification'] || '').trim(),
@@ -1058,9 +1180,10 @@ export default function App() {
         ismibco: String(row.ismibco || row['MIBCO'] || '').trim().toLowerCase() === 'yes' ? 'yes' : 'no',
         isunion: String(row.isunion || row['Union'] || '').trim().toLowerCase() === 'yes' ? 'yes' : 'no',
         union_name: String(row.union_name || row['Union Name'] || '').trim(),
-        annual_leave: parseFloat(row.annual_leave || row['Annual Leave'] || '0') || 0,
-        sick_leave: parseFloat(row.sick_leave || row['Sick Leave'] || '0') || 0,
-        family_leave: parseFloat(row.family_leave || row['Family Leave'] || '0') || 0,
+        annual_leave: parseImportedLeaveAmount(row.annual_leave ?? row['Annual Leave']),
+        sick_leave: parseImportedLeaveAmount(row.sick_leave ?? row['Sick Leave']),
+        family_leave: parseImportedLeaveAmount(row.family_leave ?? row['Family Leave']),
+        family_leave_last_reset_year: parseOptionalImportYear(row.family_leave_last_reset_year, row['Family Leave Last Reset Year'], row['Grant Year Reset'], row.family_leave_last_grant_year, row['Family Leave Last Grant Year']),
         pin: String(row.pin || row['PIN'] || row['Pin'] || '').trim(),
               };
 
@@ -1123,17 +1246,11 @@ export default function App() {
     if (!confirm(`Restore ${employee.first_name} ${employee.last_name} and keep all linked history?`)) return;
 
     try {
-      const result = await appService.restoreEmployee(employee.id) as Employee & { restored_emp_id?: string | null; original_emp_id?: string | null; emp_id_changed?: boolean; emp_id_conflict?: boolean };
+      await appService.restoreEmployee(employee.id);
       await fetchEmployees();
       await fetchRoster();
       await fetchRosterMeta();
-      if (result?.emp_id_conflict) {
-        toast.success(`Employee restored successfully. Original employee ID (${result.original_emp_id || 'unknown'}) could not be restored because it is already in use.`);
-      } else if (result?.emp_id_changed && result?.restored_emp_id) {
-        toast.success(`Employee restored successfully with employee ID ${result.restored_emp_id}`);
-      } else {
-        toast.success('Employee restored successfully');
-      }
+      toast.success('Employee restored successfully');
     } catch (error) {
       console.error('Error restoring employee:', error);
       if (error instanceof ApiError) {
@@ -1273,7 +1390,7 @@ export default function App() {
       const employee = employees.find(emp => emp.id === employeeId);
       const selectedShift = shifts.find(shift => shift.id === shiftId);
       const normalizedShiftLabel = String(selectedShift?.label || '').trim().toLowerCase();
-      const leaveTypeKey = normalizedShiftLabel === 'annual leave'
+      const leaveTypeKey = normalizedShiftLabel === 'annual leave' || normalizedShiftLabel === 'half day'
         ? 'annual_leave'
         : normalizedShiftLabel === 'sick leave'
           ? 'sick_leave'
@@ -1584,15 +1701,14 @@ export default function App() {
             {superAdminSection === 'internal' && <InternalPanel 
               currentUser={auth.user || undefined}
               onLoginAsSuperAdmin={(client) => {
-                setImpersonatedClient(client);
-                setLockedFeatures(client.lockedFeatures || []);
-                setEnabledDefinitions(client.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
-                setRosterStartDay(client.rosterStartDay ?? 1);
-                setRosterDuration(client.rosterDuration || '1_week');
-          setRosterMode(client.rosterMode || client.roster_mode || 'Manual');
-          setRosterSeedWeekStart(client.rosterSeedWeekStart || client.roster_seed_week_start || null);
-                setCurrentWeekStart(getAlignedRosterStart(new Date(), client.rosterStartDay ?? 1));
-                setActiveSection('analytics');
+                if (String(client?.status || 'active').trim().toLowerCase() === 'deactivated') {
+                  clearStoredActiveClientId();
+                  setImpersonatedClient(null);
+                  setActiveSection('internal');
+                  toast.error(`${client.name} is deactivated.`);
+                  return;
+                }
+                applyImpersonatedClientContext(client);
                 toast.success(`Logged in as Super Admin for ${client.name}`);
               }} 
             />}
@@ -1720,7 +1836,7 @@ export default function App() {
               </div>
               <p className="text-xs font-bold mb-3 opacity-90">Managing {impersonatedClient.name}</p>
               <button 
-                onClick={() => setImpersonatedClient(null)}
+                onClick={exitImpersonation}
                 className="w-full py-2 bg-white/20 hover:bg-white/30 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
               >
                 Exit Super Admin
@@ -1755,7 +1871,7 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className={cn("flex-1 ml-72 p-12 overflow-y-auto bg-transparent", (impersonatedClient || auth.user?.isTrial) && "pt-24")}>
+      <main className={cn("flex-1 ml-72 p-12 overflow-y-auto bg-transparent", (impersonatedClient || activeTrialSource) && "pt-24")}>
         {/* Super Admin Mode Banner */}
         {impersonatedClient && (
           <div className="fixed top-0 left-72 right-0 bg-rose-600 text-white py-3 px-10 flex items-center justify-between z-40 shadow-xl shadow-rose-900/20 backdrop-blur-md bg-rose-600/90">
@@ -1769,7 +1885,7 @@ export default function App() {
               </div>
             </div>
             <button 
-              onClick={() => setImpersonatedClient(null)}
+              onClick={exitImpersonation}
               className="px-6 py-2.5 bg-white text-rose-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-50 transition-all shadow-lg shadow-rose-900/10"
             >
               Exit Impersonation
@@ -1778,7 +1894,7 @@ export default function App() {
         )}
 
         {/* Trial Mode Banner */}
-        {!impersonatedClient && auth.user?.isTrial && (
+        {activeTrialSource && (
           <div className="fixed top-0 left-72 right-0 bg-amber-500 text-white py-3 px-10 flex items-center justify-between z-40 shadow-xl shadow-amber-900/20 backdrop-blur-md bg-amber-500/90">
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center border border-white/20">
@@ -1787,10 +1903,12 @@ export default function App() {
               <div>
                 <p className="font-black text-[10px] uppercase tracking-[0.2em] text-amber-100">Trial Mode Active</p>
                 <p className="font-black text-sm">
-                  {auth.user.trialEndDate ? (
+                  {typeof activeTrialDaysRemaining === 'number' ? (
                     <>
-                      {Math.max(0, differenceInDays(new Date(auth.user.trialEndDate), new Date()))} Days Remaining
+                      {activeTrialDaysRemaining} Days Remaining
                     </>
+                  ) : activeTrialSource?.trialEndDate ? (
+                    <>Ends {format(new Date(activeTrialSource.trialEndDate), 'dd MMM yyyy')}</>
                   ) : (
                     'Trial Active'
                   )}
@@ -1812,10 +1930,10 @@ export default function App() {
           transition={{ duration: 0.4, ease: "easeOut" }}
           className="max-w-7xl mx-auto"
         >
-          {(auth.user as any)?.trialExpired ? (
+          {activeTrialSource?.trialExpired ? (
             <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-6 mb-6">
               <h2 className="text-2xl font-black mb-2">Trial Expired</h2>
-              <p className="font-medium">This workspace trial ended{(auth.user as any)?.trialEndDate ? ` on ${format(new Date((auth.user as any).trialEndDate), 'dd MMM yyyy')}` : ''}. Core screens remain visible for review, but protected actions may be limited until the account is reactivated.</p>
+              <p className="font-medium">This workspace trial ended{activeTrialSource?.trialEndDate ? ` on ${format(new Date(activeTrialSource.trialEndDate), 'dd MMM yyyy')}` : ''}. Core screens remain visible for review, but protected actions may be limited until the account is reactivated.</p>
             </div>
           ) : null}
           {activeSection === 'analytics' && (

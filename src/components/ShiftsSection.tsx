@@ -8,6 +8,7 @@ const PAID_LEAVE_SHIFT_HOURS: Record<string, number> = {
   'annual leave': 9,
   'sick leave': 9,
   'family leave': 9,
+  'half day': 4.5,
 };
 const isProtectedLeaveShift = (shift: Shift) => isAdministrativeShift(shift);
 
@@ -40,14 +41,13 @@ export const ShiftsSection: React.FC<ShiftsSectionProps> = ({ shifts, onAdd, onE
 
   const filteredShifts = useMemo(() => {
     const visible = shifts.filter(s => {
-      if (!isSuperAdmin && isProtectedLeaveShift(s)) return false;
       return s.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (s.start && s.start.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (s.end && s.end.toLowerCase().includes(searchTerm.toLowerCase()));
     });
 
     return sortShiftsBaseFirst(visible);
-  }, [shifts, searchTerm, isSuperAdmin]);
+  }, [shifts, searchTerm]);
 
   return (
     <div className="space-y-6">
@@ -112,18 +112,26 @@ export const ShiftsSection: React.FC<ShiftsSectionProps> = ({ shifts, onAdd, onE
                   <td className="px-6 py-5 text-sm text-slate-500 font-bold">{shift.start && shift.end ? getShiftTotalHours(shift).toFixed(2) : '0.00'}</td>
                   <td className="px-6 py-5 text-right">
                     <div className="flex items-center justify-end gap-1 transition-all">
-                      <Tooltip content="Edit Shift">
+                      <Tooltip content={!isSuperAdmin && isProtectedLeaveShift(shift) ? "Only Super Admin can edit administrative shifts" : "Edit Shift"}>
                         <button 
-                          onClick={() => onEdit(shift)}
-                          className="p-2 hover:bg-indigo-50 rounded-xl text-indigo-400 hover:text-indigo-600 transition-colors"
+                          onClick={() => {
+                            if (!isSuperAdmin && isProtectedLeaveShift(shift)) return;
+                            onEdit(shift);
+                          }}
+                          disabled={!isSuperAdmin && isProtectedLeaveShift(shift)}
+                          className={`p-2 rounded-xl transition-colors ${!isSuperAdmin && isProtectedLeaveShift(shift) ? 'text-slate-300 cursor-not-allowed' : 'hover:bg-indigo-50 text-indigo-400 hover:text-indigo-600'}`}
                         >
                           <Edit3 className="w-4 h-4" />
                         </button>
                       </Tooltip>
-                      <Tooltip content="Delete Shift">
+                      <Tooltip content={!isSuperAdmin && isProtectedLeaveShift(shift) ? "Only Super Admin can delete administrative shifts" : "Delete Shift"}>
                         <button 
-                          onClick={() => onDelete(shift.id)}
-                          className="p-2 hover:bg-rose-50 rounded-xl text-rose-400 hover:text-rose-600 transition-colors"
+                          onClick={() => {
+                            if (!isSuperAdmin && isProtectedLeaveShift(shift)) return;
+                            onDelete(shift.id);
+                          }}
+                          disabled={!isSuperAdmin && isProtectedLeaveShift(shift)}
+                          className={`p-2 rounded-xl transition-colors ${!isSuperAdmin && isProtectedLeaveShift(shift) ? 'text-slate-300 cursor-not-allowed' : 'hover:bg-rose-50 text-rose-400 hover:text-rose-600'}`}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>

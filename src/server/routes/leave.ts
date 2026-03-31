@@ -371,6 +371,10 @@ export function registerLeaveRoutes({
         category = 'Absent';
         hours = 0;
         rateMultiplier = 0;
+      } else if (shiftLabel.includes('half day')) {
+        category = 'Leave';
+        hours = 4.5;
+        rateMultiplier = 1;
       } else if (shiftLabel.includes('leave')) {
         category = 'Leave';
         hours = 8;

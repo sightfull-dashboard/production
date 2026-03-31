@@ -14,6 +14,14 @@ export class ApiError extends Error {
   }
 }
 
+const dispatchClientDeactivatedEvent = (payload: unknown) => {
+  if (typeof window === 'undefined') return;
+  try {
+    const detail = typeof payload === 'object' && payload !== null ? payload : { error: 'This client dashboard has been deactivated.' };
+    window.dispatchEvent(new CustomEvent('sightfull:client-deactivated', { detail }));
+  } catch {}
+};
+
 const buildInit = (options: ApiOptions = {}): RequestInit => {
   const { body, ...rest } = options;
   const headers = new Headers(rest.headers ?? {});
@@ -44,6 +52,15 @@ export const apiFetch = async <T>(url: string, options: ApiOptions = {}): Promis
   const payload = isJson ? await response.json() : await response.text();
 
   if (!response.ok) {
+    if (response.status === 423) {
+      const isClientDeactivated = typeof payload === 'object' && payload !== null && 'clientDeactivated' in payload
+        ? Boolean((payload as { clientDeactivated?: unknown }).clientDeactivated)
+        : true;
+      if (isClientDeactivated) {
+        dispatchClientDeactivatedEvent(payload);
+      }
+    }
+
     const message = typeof payload === 'object' && payload && 'error' in payload
       ? String((payload as { error?: unknown }).error)
       : response.statusText || 'Request failed';

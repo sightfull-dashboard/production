@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   Building2, 
   Plus, 
@@ -120,6 +120,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   const [clientSupportTickets, setClientSupportTickets] = useState<SupportTicket[]>([]);
   const [clientPayrollNotifications, setClientPayrollNotifications] = useState<PayrollSubmission[]>([]);
   const [loadingClientData, setLoadingClientData] = useState(false);
+  const loadedClientSectionsRef = useRef<Record<string, Set<string>>>({});
   const [logSearchTerm, setLogSearchTerm] = useState('');
   const [payrollLogSearchTerm, setPayrollLogSearchTerm] = useState('');
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -167,7 +168,8 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   const fetchClients = async () => {
     try {
       const data = await adminService.getClients();
-      setClients(data);
+      const activeClients = (data || []).filter((client: any) => String(client?.status || 'active').trim().toLowerCase() !== 'deactivated');
+      setClients(activeClients);
     } catch (error) {
       console.error('Failed to fetch clients:', error);
       toast.error('Failed to load client dashboards');
@@ -196,6 +198,30 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   }, [selectedClient]);
 
   useEffect(() => {
+    if (!selectedClient?.id) return;
+    const stillVisible = clients.some((client) => String(client?.id || '') === String(selectedClient.id));
+    if (!stillVisible || String(selectedClient?.status || 'active').trim().toLowerCase() === 'deactivated') {
+      setSelectedClient(null);
+    }
+  }, [clients, selectedClient?.id, selectedClient?.status]);
+
+  useEffect(() => {
+    if (!selectedClient?.id) {
+      return;
+    }
+
+    setClientUsers([]);
+    setClientFiles([]);
+    setClientLogs([]);
+    setPayrollLogs([]);
+    setClientSupportTickets([]);
+    setClientPayrollNotifications([]);
+    setCurrentFolderId(null);
+    setFileBackHistory([]);
+    setFileForwardHistory([]);
+  }, [selectedClient?.id]);
+
+  useEffect(() => {
     const loadClientData = async () => {
       if (!selectedClient?.id) {
         setClientUsers([]);
@@ -207,43 +233,101 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
         navigateClientFolder(null, { pushHistory: false });
         return;
       }
+
+      const canManageClientUsers = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('manage_client_users');
+      const canViewFiles = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_files');
+      const canViewClientLogs = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_client_logs') || currentUser?.permissions?.includes('view_logs');
+      const canViewPayroll = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll');
+      const canViewTickets = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_tickets');
+
+      const desiredSections = new Set<string>();
+      if (activeTab === 'overview') {
+        if (canManageClientUsers) desiredSections.add('users');
+        if (canViewFiles) desiredSections.add('files');
+        if (canViewClientLogs) desiredSections.add('logs');
+      }
+      if (activeTab === 'users' && canManageClientUsers) desiredSections.add('users');
+      if (activeTab === 'files' && canViewFiles) desiredSections.add('files');
+      if (activeTab === 'activity' && canViewClientLogs) desiredSections.add('logs');
+      if (activeTab === 'payroll_logs' && canViewPayroll) desiredSections.add('payroll_logs');
+      if (activeTab === 'support_tickets' && canViewTickets) desiredSections.add('support_tickets');
+      if (activeTab === 'payroll_notifications' && canViewPayroll) desiredSections.add('payroll_notifications');
+
+      if (desiredSections.size === 0) {
+        setLoadingClientData(false);
+        return;
+      }
+
+      const loadedSections = loadedClientSectionsRef.current[selectedClient.id] || new Set<string>();
+      const sectionsToLoad = Array.from(desiredSections).filter((section) => !loadedSections.has(section));
+
+      if (sectionsToLoad.length === 0) {
+        return;
+      }
+
+      if (!loadedClientSectionsRef.current[selectedClient.id]) {
+        loadedClientSectionsRef.current[selectedClient.id] = new Set<string>();
+      }
+
       setLoadingClientData(true);
       try {
-        const canManageClientUsers = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('manage_client_users');
-        const canViewFiles = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_files');
-        const canViewClientLogs = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_client_logs') || currentUser?.permissions?.includes('view_logs');
-        const canViewPayroll = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll');
-        const canViewTickets = currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_tickets');
+        const requests = sectionsToLoad.map((section) => {
+          switch (section) {
+            case 'users':
+              return adminService.getClientUsers(selectedClient.id).then((value) => ({ section, value }));
+            case 'files':
+              return adminService.getClientFiles(selectedClient.id).then((value) => ({ section, value }));
+            case 'logs':
+              return adminService.getClientLogs(selectedClient.id).then((value) => ({ section, value }));
+            case 'payroll_logs':
+              return adminService.getClientPayrollLogs(selectedClient.id).then((value) => ({ section, value }));
+            case 'support_tickets':
+              return appService.getSupportTickets().then((value) => ({ section, value }));
+            case 'payroll_notifications':
+              return appService.getPayrollSubmissions().then((value) => ({ section, value }));
+            default:
+              return Promise.resolve({ section, value: [] });
+          }
+        });
 
-        const [usersResult, filesResult, logsResult, payrollResult, supportResult, notificationsResult] = await Promise.allSettled([
-          canManageClientUsers ? adminService.getClientUsers(selectedClient.id) : Promise.resolve([]),
-          canViewFiles ? adminService.getClientFiles(selectedClient.id) : Promise.resolve([]),
-          canViewClientLogs ? adminService.getClientLogs(selectedClient.id) : Promise.resolve([]),
-          canViewPayroll ? adminService.getClientPayrollLogs(selectedClient.id) : Promise.resolve([]),
-          canViewTickets ? appService.getSupportTickets() : Promise.resolve([]),
-          canViewPayroll ? appService.getPayrollSubmissions() : Promise.resolve([]),
-        ]);
+        const results = await Promise.allSettled(requests);
+        const failures = results.filter((result) => result.status === 'rejected');
 
-        const users = usersResult.status === 'fulfilled' ? usersResult.value : [];
-        const files = filesResult.status === 'fulfilled' ? filesResult.value : [];
-        const logs = logsResult.status === 'fulfilled' ? logsResult.value : [];
-        const payroll = payrollResult.status === 'fulfilled' ? payrollResult.value : [];
-        const supportTickets = supportResult.status === 'fulfilled'
-          ? supportResult.value.filter((ticket: SupportTicket) => ticket.client_id === selectedClient.id || ticket.client_name === selectedClient.name)
-          : [];
-        const payrollNotifications = notificationsResult.status === 'fulfilled'
-          ? notificationsResult.value.filter((submission: PayrollSubmission) => submission.clientName === selectedClient.name)
-          : [];
+        results.forEach((result) => {
+          if (result.status !== 'fulfilled') return;
+          const { section, value } = result.value as { section: string; value: any };
+          loadedClientSectionsRef.current[selectedClient.id].add(section);
+          switch (section) {
+            case 'users':
+              setClientUsers(Array.isArray(value) ? value : []);
+              break;
+            case 'files':
+              setClientFiles(Array.isArray(value) ? value : []);
+              navigateClientFolder(null, { pushHistory: false });
+              break;
+            case 'logs':
+              setClientLogs(Array.isArray(value) ? value : []);
+              break;
+            case 'payroll_logs':
+              setPayrollLogs(Array.isArray(value) ? value : []);
+              break;
+            case 'support_tickets':
+              setClientSupportTickets(
+                Array.isArray(value)
+                  ? value.filter((ticket: SupportTicket) => ticket.client_id === selectedClient.id || ticket.client_name === selectedClient.name)
+                  : []
+              );
+              break;
+            case 'payroll_notifications':
+              setClientPayrollNotifications(
+                Array.isArray(value)
+                  ? value.filter((submission: PayrollSubmission) => submission.clientName === selectedClient.name)
+                  : []
+              );
+              break;
+          }
+        });
 
-        setClientUsers(users);
-        setClientFiles(files);
-        setClientLogs(logs);
-        setPayrollLogs(payroll);
-        setClientSupportTickets(supportTickets);
-        setClientPayrollNotifications(payrollNotifications);
-        navigateClientFolder(null, { pushHistory: false });
-
-        const failures = [usersResult, filesResult, logsResult, payrollResult, supportResult, notificationsResult].filter(result => result.status === 'rejected');
         if (failures.length > 0) {
           console.error('Failed to load some selected client data:', failures);
           toast.error('Some client details could not be loaded');
@@ -251,19 +335,19 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
       } catch (error) {
         console.error('Failed to load selected client data:', error);
         toast.error('Failed to load selected client details');
-        setClientUsers([]);
-        setClientFiles([]);
-        setClientLogs([]);
-        setPayrollLogs([]);
-        setClientSupportTickets([]);
-        setClientPayrollNotifications([]);
       } finally {
         setLoadingClientData(false);
       }
     };
 
     void loadClientData();
-  }, [selectedClient?.id, selectedClient?.name]);
+  }, [
+    selectedClient?.id,
+    selectedClient?.name,
+    activeTab,
+    currentUser?.role,
+    JSON.stringify(currentUser?.permissions || []),
+  ]);
 
 
   useEffect(() => {
@@ -957,11 +1041,20 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
         {currentUser?.role === 'superadmin' && (
           <Tooltip content="Access this client's dashboard with full admin privileges">
             <button 
-              onClick={() => onLoginAsSuperAdmin?.({ ...selectedClient, lockedFeatures, dashboardType })}
-              className="flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-black text-sm bg-slate-800 text-white hover:bg-slate-900 shadow-xl shadow-slate-200 transition-all active:scale-95 group shrink-0"
+              onClick={() => {
+                if (String(selectedClient?.status || 'active').toLowerCase() === 'deactivated') return;
+                onLoginAsSuperAdmin?.({ ...selectedClient, lockedFeatures, dashboardType });
+              }}
+              disabled={String(selectedClient?.status || 'active').toLowerCase() === 'deactivated'}
+              className={cn(
+                "flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-black text-sm transition-all active:scale-95 group shrink-0",
+                String(selectedClient?.status || 'active').toLowerCase() === 'deactivated'
+                  ? 'bg-slate-200 text-slate-500 shadow-none cursor-not-allowed'
+                  : 'bg-slate-800 text-white hover:bg-slate-900 shadow-xl shadow-slate-200'
+              )}
             >
               <ShieldCheck className="w-5 h-5 group-hover:scale-110 transition-transform" />
-              Login as Super Admin
+              {String(selectedClient?.status || 'active').toLowerCase() === 'deactivated' ? 'Dashboard Deactivated' : 'Login as Super Admin'}
             </button>
           </Tooltip>
         )}
@@ -1297,10 +1390,19 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                     <h4 className="text-xl font-black tracking-tight mb-2">Quick Actions</h4>
                     <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-8">Need to assist this client directly?</p>
                     <button 
-                      onClick={() => onLoginAsSuperAdmin?.(selectedClient)}
-                      className="w-full py-4 bg-white text-slate-900 text-sm font-black uppercase tracking-widest rounded-2xl hover:bg-slate-50 transition-colors shadow-lg shadow-white/10"
+                      onClick={() => {
+                        if (String(selectedClient?.status || 'active').toLowerCase() === 'deactivated') return;
+                        onLoginAsSuperAdmin?.(selectedClient);
+                      }}
+                      disabled={String(selectedClient?.status || 'active').toLowerCase() === 'deactivated'}
+                      className={cn(
+                        "w-full py-4 text-sm font-black uppercase tracking-widest rounded-2xl transition-colors shadow-lg",
+                        String(selectedClient?.status || 'active').toLowerCase() === 'deactivated'
+                          ? 'bg-slate-200 text-slate-500 cursor-not-allowed shadow-none'
+                          : 'bg-white text-slate-900 hover:bg-slate-50 shadow-white/10'
+                      )}
                     >
-                      Login as Admin
+                      {String(selectedClient?.status || 'active').toLowerCase() === 'deactivated' ? 'Dashboard Deactivated' : 'Login as Admin'}
                     </button>
                   </div>
                 </div>
@@ -2230,7 +2332,24 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
 
                     {isTrial && (
                       <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100 space-y-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Trial Duration (Days)</p>
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Trial Duration (Days)</p>
+                            {selectedClient?.trialEndDate ? (
+                              <p className="mt-2 text-xs font-semibold text-slate-500">
+                                Ends on {new Date(selectedClient.trialEndDate).toLocaleDateString('en-ZA', { year: 'numeric', month: 'short', day: 'numeric' })}
+                                {typeof selectedClient?.trialDaysRemaining === 'number' ? ` · ${selectedClient.trialDaysRemaining} day${selectedClient.trialDaysRemaining === 1 ? '' : 's'} remaining` : ''}
+                              </p>
+                            ) : (
+                              <p className="mt-2 text-xs font-semibold text-slate-500">Save changes to start the trial window.</p>
+                            )}
+                          </div>
+                          {selectedClient?.trialExpired ? (
+                            <span className="px-3 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-600 text-[10px] font-black uppercase tracking-widest">Expired</span>
+                          ) : (
+                            <span className="px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-black uppercase tracking-widest">Live Trial</span>
+                          )}
+                        </div>
                         <div className="flex gap-3">
                           {[3, 5, 7].map(days => (
                             <button
@@ -2294,7 +2413,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                   onClick={async () => {
                     if (!selectedClient) return;
                     try {
-                      await adminService.updateClient(selectedClient.id, {
+                      const updatedClient = await adminService.updateClient(selectedClient.id, {
                         name: selectedClient.name,
                         status: selectedClient.status,
                         fallbackImage: clientFallbackImage,
@@ -2309,8 +2428,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                         payrollCc,
                         payrollSubmissionDay,
                       });
-                      await fetchClients();
-                      setSelectedClient({
+                      const nextClient = updatedClient || {
                         ...selectedClient,
                         fallbackImage: clientFallbackImage,
                         lockedFeatures,
@@ -2323,7 +2441,14 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                         payrollEmail,
                         payrollCc,
                         payrollSubmissionDay,
-                      });
+                      };
+                      await fetchClients();
+                      if (String(nextClient?.status || 'active').trim().toLowerCase() === 'deactivated') {
+                        setSelectedClient(null);
+                        toast.success('Dashboard kill-switched and removed from the list');
+                        return;
+                      }
+                      setSelectedClient(nextClient);
                       toast.success('Client settings updated successfully');
                     } catch (error) {
                       console.error('Failed to update client settings:', error);

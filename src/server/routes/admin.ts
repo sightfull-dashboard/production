@@ -90,33 +90,58 @@ const normalizeRawBody = (value: any) => {
   return Buffer.alloc(0);
 };
 
-const serializeSupabaseClient = (row: any, extras?: { users?: number; employees?: number; files?: number }) => ({
-  id: row.id,
-  name: row.name,
-  status: row.status,
-  users: Number(extras?.users) || 0,
-  files: Number(extras?.files) || 0,
-  lastActive: row.updated_at || row.created_at,
-  dashboardType: row.dashboard_type || 'rostering',
-  lockedFeatures: parseJsonArray(row.locked_features),
-  enabledDefinitions: parseJsonArray(row.enabled_definitions),
-  rosterStartDay: row.roster_start_day ?? 1,
-  rosterDuration: row.roster_duration || '1_week',
-  rosterMode: row.roster_mode || 'Manual',
-  rosterSeedWeekStart: row.roster_seed_week_start || null,
-  isTrial: !!row.is_trial,
-  trialDuration: row.trial_duration || 7,
-  payrollEmail: row.payroll_email || '',
-  payrollCc: row.payroll_cc || '',
-  payrollSubmissionDay: row.payroll_submission_day || 1,
-  fallbackImage: row.fallback_image || null,
-  created_at: row.created_at,
-  data: {
-    employees: Number(extras?.employees) || 0,
-    shiftsThisWeek: 0,
-    totalHours: 0,
-  },
-});
+
+const calculateTrialMeta = (row: any) => {
+  const isTrial = !!row?.is_trial;
+  const trialStartedAt = row?.trial_started_at || null;
+  const trialEndDate = row?.trial_end_date || null;
+  if (!isTrial || !trialEndDate) {
+    return { isTrial, trialStartedAt, trialEndDate, trialExpired: false, trialDaysRemaining: null as number | null };
+  }
+  const end = new Date(trialEndDate);
+  if (Number.isNaN(end.getTime())) {
+    return { isTrial, trialStartedAt, trialEndDate, trialExpired: false, trialDaysRemaining: null as number | null };
+  }
+  const msRemaining = end.getTime() - Date.now();
+  const trialExpired = msRemaining < 0;
+  const trialDaysRemaining = trialExpired ? 0 : Math.ceil(msRemaining / (1000 * 60 * 60 * 24));
+  return { isTrial, trialStartedAt, trialEndDate, trialExpired, trialDaysRemaining };
+};
+
+const serializeSupabaseClient = (row: any, extras?: { users?: number; employees?: number; files?: number }) => {
+  const trialMeta = calculateTrialMeta(row);
+  return ({
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    users: Number(extras?.users) || 0,
+    files: Number(extras?.files) || 0,
+    lastActive: row.updated_at || row.created_at,
+    dashboardType: row.dashboard_type || 'rostering',
+    lockedFeatures: parseJsonArray(row.locked_features),
+    enabledDefinitions: parseJsonArray(row.enabled_definitions),
+    rosterStartDay: row.roster_start_day ?? 1,
+    rosterDuration: row.roster_duration || '1_week',
+    rosterMode: row.roster_mode || 'Manual',
+    rosterSeedWeekStart: row.roster_seed_week_start || null,
+    isTrial: trialMeta.isTrial,
+    trialDuration: row.trial_duration || 7,
+    trialStartedAt: trialMeta.trialStartedAt,
+    trialEndDate: trialMeta.trialEndDate,
+    trialExpired: trialMeta.trialExpired,
+    trialDaysRemaining: trialMeta.trialDaysRemaining,
+    payrollEmail: row.payroll_email || '',
+    payrollCc: row.payroll_cc || '',
+    payrollSubmissionDay: row.payroll_submission_day || 1,
+    fallbackImage: row.fallback_image || null,
+    created_at: row.created_at,
+    data: {
+      employees: Number(extras?.employees) || 0,
+      shiftsThisWeek: 0,
+      totalHours: 0,
+    },
+  });
+};
 
 
 const fetchSupabaseUserById = async (id: string | null | undefined) => {
@@ -1166,6 +1191,8 @@ export function registerAdminRoutes({
         roster_seed_week_start: req.body.rosterSeedWeekStart || null,
         is_trial: !!trialColumns.is_trial,
         trial_duration: trialColumns.trial_duration || 7,
+        trial_started_at: trialColumns.trial_started_at || null,
+        trial_end_date: trialColumns.trial_end_date || null,
         payroll_email: String(req.body.payrollEmail || '').trim(),
         payroll_cc: String(req.body.payrollCc || '').trim(),
         payroll_submission_day: req.body.payrollSubmissionDay || 1,
@@ -1234,6 +1261,8 @@ export function registerAdminRoutes({
       roster_seed_week_start: req.body.rosterSeedWeekStart ?? existing.roster_seed_week_start ?? null,
       is_trial: !!trialColumns.is_trial,
       trial_duration: trialColumns.trial_duration || 7,
+      trial_started_at: trialColumns.trial_started_at || null,
+      trial_end_date: trialColumns.trial_end_date || null,
       payroll_email: String(req.body.payrollEmail ?? existing.payroll_email ?? '').trim(),
       payroll_cc: String(req.body.payrollCc ?? existing.payroll_cc ?? '').trim(),
       payroll_submission_day: req.body.payrollSubmissionDay ?? existing.payroll_submission_day ?? 1,

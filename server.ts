@@ -15,8 +15,7 @@ import { registerWorkforceRoutes } from "./src/server/routes/workforce";
 import { registerSupabaseCoreRoutes } from "./src/server/routes/supabaseCore";
 import { registerMfaRoutes } from "./src/server/routes/mfa";
 import { getActorClientId, getEffectiveClientId } from "./src/server/utils/tenant";
-import { createMemoryRateLimitStore, createOriginProtectionMiddleware, createRateLimitMiddleware, createSqliteRateLimitStore, createSupabaseRateLimitStore, hashSecret, securityHeadersMiddleware } from "./src/server/utils/security";
-import { createSqliteSessionStore } from "./src/server/utils/sqliteSessionStore";
+import { createMemoryRateLimitStore, createOriginProtectionMiddleware, createRateLimitMiddleware, createSupabaseRateLimitStore, hashSecret, securityHeadersMiddleware } from "./src/server/utils/security";
 import { createSupabaseSessionStore } from "./src/server/utils/supabaseSessionStore";
 import { ensureBackgroundJobTables } from "./src/server/utils/backgroundJobs";
 
@@ -142,7 +141,7 @@ const syncRosterLeaveRecordsForEmployee = (employeeId: string) => {
     FROM roster r
     JOIN shifts s ON s.id = r.shift_id
     WHERE r.employee_id = ?
-      AND lower(trim(s.label)) IN ('annual leave', 'sick leave', 'family leave')
+      AND lower(trim(s.label)) IN ('annual leave', 'sick leave', 'family leave', 'half day')
     ORDER BY r.day_date ASC
   `).all(employeeId) as Array<{ day_date: string; label: string }>;
 
@@ -1040,6 +1039,7 @@ if (shiftCount.count === 0) {
     { id: '900002', label: 'Annual Leave', start: '', end: '', lunch: 0 },
     { id: '900003', label: 'Sick Leave', start: '', end: '', lunch: 0 },
     { id: '900004', label: 'Family Leave', start: '', end: '', lunch: 0 },
+    { id: '900006', label: 'Half Day', start: '', end: '', lunch: 0 },
     { id: '900005', label: 'Unshifted', start: '', end: '', lunch: 0 },
   ];
   const insertShift = db.prepare("INSERT INTO shifts (id, label, start, end, lunch) VALUES (?, ?, ?, ?, ?)");
@@ -1173,8 +1173,6 @@ if (isSmtpConfigured) {
   try {
     if (env.authRateLimitStoreDriver === 'supabase') {
       authRateLimitStore = createSupabaseRateLimitStore();
-    } else if (env.authRateLimitStoreDriver === 'sqlite') {
-      authRateLimitStore = await createSqliteRateLimitStore(env.sessionSqlitePath);
     }
   } catch (error) {
     if (isProduction) throw error;
@@ -1475,7 +1473,7 @@ if (isSmtpConfigured) {
     return errors;
   };
 
-  const ADMINISTRATIVE_SHIFT_LABELS = ['absent', 'annual leave', 'sick leave', 'family leave', 'unshifted'];
+  const ADMINISTRATIVE_SHIFT_LABELS = ['absent', 'annual leave', 'sick leave', 'family leave', 'half day', 'unshifted'];
   const isAdministrativeShiftLabel = (label: string | null | undefined) => ADMINISTRATIVE_SHIFT_LABELS.includes(normalizeText(label).toLowerCase());
   const getShiftWindowMinutes = (start: string, end: string) => {
     if (!start || !end) return 0;
@@ -1558,11 +1556,7 @@ if (isSmtpConfigured) {
   app.set('trust proxy', env.trustProxy);
   let sessionStore: session.Store | undefined;
   try {
-    if (env.sessionStoreDriver === 'supabase') {
-      sessionStore = await createSupabaseSessionStore();
-    } else {
-      sessionStore = await createSqliteSessionStore(env.sessionSqlitePath);
-    }
+    sessionStore = await createSupabaseSessionStore();
   } catch (error) {
     if (isProduction) throw error;
     console.warn('[SESSION] Falling back to in-memory store in development:', error);

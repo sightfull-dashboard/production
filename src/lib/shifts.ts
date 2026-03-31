@@ -1,6 +1,8 @@
 import { Shift } from '../types';
 
-export const ADMINISTRATIVE_SHIFT_LABELS = ['absent', 'annual leave', 'sick leave', 'family leave', 'unshifted'];
+export const LEAVE_SHIFT_LABELS = ['annual leave', 'sick leave', 'family leave', 'half day'];
+export const NON_WORKING_SHIFT_LABELS = ['absent', 'unshifted'];
+export const ADMINISTRATIVE_SHIFT_LABELS = [...LEAVE_SHIFT_LABELS, ...NON_WORKING_SHIFT_LABELS];
 
 export const normalizeShiftLabel = (label: string | null | undefined) => String(label || '').trim().toLowerCase();
 
@@ -11,11 +13,12 @@ export const isAdministrativeShift = (shift: Pick<Shift, 'label'> | null | undef
 const shiftSortWeight = (shift: Pick<Shift, 'label'>) => {
   const normalized = normalizeShiftLabel(shift.label);
   if (!ADMINISTRATIVE_SHIFT_LABELS.includes(normalized)) return 0;
-  if (normalized === 'absent') return 10;
   if (normalized === 'annual leave') return 11;
   if (normalized === 'sick leave') return 12;
   if (normalized === 'family leave') return 13;
-  if (normalized === 'unshifted') return 14;
+  if (normalized === 'half day') return 14;
+  if (normalized === 'absent') return 15;
+  if (normalized === 'unshifted') return 16;
   return 20;
 };
 
@@ -25,6 +28,24 @@ export const sortShiftsBaseFirst = <T extends Pick<Shift, 'label'>>(shifts: T[])
     if (weightDiff !== 0) return weightDiff;
     return String(a.label || '').localeCompare(String(b.label || ''));
   });
+};
+
+export type ShiftRosterGroup = 'working' | 'leave' | 'non_working';
+
+export const getShiftRosterGroup = (shift: Pick<Shift, 'label'> | null | undefined): ShiftRosterGroup => {
+  const normalized = normalizeShiftLabel(shift?.label);
+  if (LEAVE_SHIFT_LABELS.includes(normalized)) return 'leave';
+  if (NON_WORKING_SHIFT_LABELS.includes(normalized)) return 'non_working';
+  return 'working';
+};
+
+export const sortRosterDropdownShifts = <T extends Pick<Shift, 'label'>>(shifts: T[]): Record<ShiftRosterGroup, T[]> => {
+  const ordered = sortShiftsBaseFirst(shifts);
+  return {
+    working: ordered.filter((shift) => getShiftRosterGroup(shift) === 'working'),
+    leave: ordered.filter((shift) => getShiftRosterGroup(shift) === 'leave'),
+    non_working: ordered.filter((shift) => getShiftRosterGroup(shift) === 'non_working'),
+  };
 };
 
 
