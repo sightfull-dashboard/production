@@ -1014,6 +1014,71 @@ export function registerFilesRoutes({
     return res.json(serializePayrollSubmission(updated));
   });
 
+
+  app.delete("/api/payroll-submissions/:id", ensureFileAccess, async (req, res) => {
+    const id = req.params.id;
+    const sessionUserId = (req.session as any)?.userId;
+    const sessionRole = String((req.session as any)?.userRole || '').toLowerCase();
+    const sessionEmployeeId = (req.session as any)?.employeeId;
+
+    if (sessionEmployeeId) {
+      return res.status(403).json({ error: 'Employees cannot delete payroll submissions' });
+    }
+
+    const actingUser = env.databaseProvider !== 'supabase'
+      ? (sessionUserId ? db.prepare("SELECT id, email, client_id, role FROM users WHERE id = ?").get(sessionUserId) as any : null)
+      : await fetchSupabaseUserById(sessionUserId);
+
+    if (!actingUser && sessionRole !== 'superadmin') {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (env.databaseProvider !== 'supabase') {
+      const existing = db.prepare("SELECT * FROM payroll_submissions WHERE id = ?").get(id) as any;
+      if (!existing) {
+        return res.status(404).json({ error: 'Payroll submission not found' });
+      }
+
+      if (sessionRole !== 'superadmin') {
+        const scopedClientId = getEffectiveClientId(db, req) || actingUser?.client_id || null;
+        if (!scopedClientId || String(existing.client_id || '') !== String(scopedClientId)) {
+          return res.status(403).json({ error: 'Forbidden' });
+        }
+      }
+
+      db.prepare("DELETE FROM payroll_submissions WHERE id = ?").run(id);
+      logActivity(req, 'DELETE_PAYROLL_SUBMISSION', { payrollSubmissionId: id, clientId: existing.client_id || null, clientName: existing.client_name || null, periodLabel: existing.period_label || existing.period || null });
+      return res.json({ success: true });
+    }
+
+    const { data: existing, error: fetchError } = await supabaseAdmin
+      .from('payroll_submissions')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existing) {
+      return res.status(404).json({ error: 'Payroll submission not found' });
+    }
+
+    if (sessionRole !== 'superadmin') {
+      return res.status(403).json({ error: 'Only super admins can delete payroll submissions' });
+    }
+
+    const { error: deleteError } = await supabaseAdmin
+      .from('payroll_submissions')
+      .delete()
+      .eq('id', id);
+
+    if (deleteError) {
+      console.error('Failed to delete payroll submission from Supabase:', deleteError);
+      return res.status(500).json({ error: 'Failed to delete payroll submission' });
+    }
+
+    logActivity(req, 'DELETE_PAYROLL_SUBMISSION', { payrollSubmissionId: id, clientId: existing.client_id || null, clientName: existing.client_name || null, periodLabel: existing.period_label || existing.period || null });
+    return res.json({ success: true });
+  });
+
   app.get("/api/support-tickets", ensureFileAccess, async (req, res) => {
     const sessionEmployeeId = (req.session as any)?.employeeId;
     if (sessionEmployeeId) {
@@ -1159,6 +1224,53 @@ export function registerFilesRoutes({
     } catch (error) {
       console.error('Failed to update support ticket:', error);
       return res.status(500).json({ error: 'Failed to update support ticket' });
+    }
+  });
+
+
+  app.delete("/api/support-tickets/:id", ensureFileAccess, async (req, res) => {
+    try {
+      const sessionUserId = (req.session as any)?.userId;
+      const sessionRole = String((req.session as any)?.userRole || '').toLowerCase();
+      const actingUser = env.databaseProvider !== 'supabase'
+        ? (sessionUserId ? db.prepare("SELECT id, email, client_id, role, permissions, assigned_clients, name, image FROM users WHERE id = ?").get(sessionUserId) as any : null)
+        : await fetchSupabaseUserById(sessionUserId);
+
+      if (!actingUser) return res.status(401).json({ error: 'Unauthorized' });
+
+      if (env.databaseProvider !== 'supabase') {
+        const existing = db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(req.params.id) as any;
+        if (!existing) return res.status(404).json({ error: 'Support ticket not found' });
+        const canDelete = sessionRole === 'superadmin';
+        if (!canDelete) return res.status(403).json({ error: 'Only super admins can delete support tickets' });
+        db.prepare("DELETE FROM support_ticket_comments WHERE ticket_id = ?").run(req.params.id);
+        db.prepare("DELETE FROM support_tickets WHERE id = ?").run(req.params.id);
+        logActivity(req, 'DELETE_SUPPORT_TICKET', { ticketId: req.params.id, clientId: existing.client_id, subject: existing.subject });
+        return res.json({ success: true });
+      }
+
+      const { data: existing, error: fetchError } = await supabaseAdmin.from('support_tickets').select('*').eq('id', req.params.id).single();
+      if (fetchError || !existing) return res.status(404).json({ error: 'Support ticket not found' });
+      const canDelete = sessionRole === 'superadmin';
+      if (!canDelete) return res.status(403).json({ error: 'Only super admins can delete support tickets' });
+
+      const { error: commentsDeleteError } = await supabaseAdmin.from('support_ticket_comments').delete().eq('ticket_id', req.params.id);
+      if (commentsDeleteError) {
+        console.error('Failed to delete support ticket comments:', commentsDeleteError);
+        return res.status(500).json({ error: 'Failed to delete support ticket comments' });
+      }
+
+      const { error: deleteError } = await supabaseAdmin.from('support_tickets').delete().eq('id', req.params.id);
+      if (deleteError) {
+        console.error('Failed to delete support ticket:', deleteError);
+        return res.status(500).json({ error: 'Failed to delete support ticket' });
+      }
+
+      logActivity(req, 'DELETE_SUPPORT_TICKET', { ticketId: req.params.id, clientId: existing.client_id, subject: existing.subject });
+      return res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to delete support ticket:', error);
+      return res.status(500).json({ error: 'Failed to delete support ticket' });
     }
   });
 

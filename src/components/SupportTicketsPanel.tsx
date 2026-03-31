@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MessageSquare, Eye, ShieldCheck, Search, Filter, X, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { MessageSquare, Eye, ShieldCheck, Search, Filter, X, CheckCircle2, Clock, AlertCircle, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
 import { Tooltip } from './Tooltip';
@@ -11,13 +11,15 @@ import { TicketDetailPage } from './TicketDetailPage';
 interface SupportTicketsPanelProps {
   tickets: SupportTicket[];
   onUpdateTicket?: (ticket: SupportTicket) => void;
+  onDeleteTicket?: (ticket: SupportTicket) => void | Promise<void>;
   clientScoped?: boolean;
   currentUser?: User;
 }
 
 export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({ 
   tickets, 
-  onUpdateTicket, 
+  onUpdateTicket,
+  onDeleteTicket,
   clientScoped = false,
   currentUser
 }) => {
@@ -207,6 +209,19 @@ export const SupportTicketsPanel: React.FC<SupportTicketsPanelProps> = ({
                           className="p-2.5 bg-slate-50 hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 rounded-xl transition-all"
                         >
                           <CheckCircle2 className="w-5 h-5" />
+                        </button>
+                      </Tooltip>
+                    )}
+                    {onDeleteTicket && currentUser?.role === 'superadmin' && (
+                      <Tooltip content="Delete Ticket">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteTicket(ticket);
+                          }}
+                          className="p-2.5 bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-xl transition-all"
+                        >
+                          <Trash2 className="w-5 h-5" />
                         </button>
                       </Tooltip>
                     )}

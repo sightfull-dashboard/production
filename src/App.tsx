@@ -155,7 +155,7 @@ export default function App() {
   const [supportPriority, setSupportPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
   const [isSubmittingSupport, setIsSubmittingSupport] = useState(false);
 
-  const resetDashboardState = useCallback(() => {
+  const clearClientWorkspaceState = useCallback(() => {
     clearStoredActiveClientId();
     setImpersonatedClient(null);
     setLockedFeatures([]);
@@ -169,11 +169,17 @@ export default function App() {
     setRoster([]);
     setRosterMeta([]);
     setRequests([]);
-    setNotifications([]);
-    setClientTickets([]);
     setLeaveManagementEmployeeId(null);
     setEditingEmployee(null);
+    setActiveSection('internal');
+    setSuperAdminSection('internal');
   }, []);
+
+  const resetDashboardState = useCallback(() => {
+    clearClientWorkspaceState();
+    setNotifications([]);
+    setClientTickets([]);
+  }, [clearClientWorkspaceState]);
 
 
   const filteredCountryOfIssueOptions = useMemo(() => {
@@ -198,22 +204,48 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (auth.user || (isEmployeeRoute && employeeAuth.employee)) {
-      void fetchEmployees();
-      void fetchShifts();
-      void fetchRoster();
-      void fetchRosterMeta();
+    const hasClientScopedAccess = isEmployeeRoute
+      ? Boolean(employeeAuth.employee)
+      : Boolean(auth.user) && (!isSuperAdminRole(auth.user?.role) || Boolean(getVisibleClientId()));
+
+    if (!hasClientScopedAccess) {
+      if (!isEmployeeRoute) {
+        setEmployees([]);
+        setShifts([]);
+        setRoster([]);
+        setRosterMeta([]);
+      }
+      return;
     }
-  }, [auth.user, isEmployeeRoute, employeeAuth.employee, currentWeekStart]);
+
+    void fetchEmployees();
+    void fetchShifts();
+    void fetchRoster();
+    void fetchRosterMeta();
+  }, [auth.user, isEmployeeRoute, employeeAuth.employee, currentWeekStart, impersonatedClient?.id]);
 
   useEffect(() => {
-    if (auth.user || (isEmployeeRoute && employeeAuth.employee)) {
-      void fetchRoster();
-      void fetchRosterMeta();
+    const hasClientScopedAccess = isEmployeeRoute
+      ? Boolean(employeeAuth.employee)
+      : Boolean(auth.user) && (!isSuperAdminRole(auth.user?.role) || Boolean(getVisibleClientId()));
+
+    if (!hasClientScopedAccess) {
+      if (!isEmployeeRoute) {
+        setRoster([]);
+        setRosterMeta([]);
+      }
+      return;
     }
-  }, [employees, auth.user, isEmployeeRoute, employeeAuth.employee]);
+
+    void fetchRoster();
+    void fetchRosterMeta();
+  }, [employees, auth.user, isEmployeeRoute, employeeAuth.employee, impersonatedClient?.id]);
 
   const fetchEmployees = async () => {
+    if (!isEmployeeRoute && isSuperAdminRole(auth.user?.role) && !getVisibleClientId()) {
+      setEmployees([]);
+      return;
+    }
     try {
       const data = await appService.getEmployees();
       const visibleClientId = getVisibleClientId();
@@ -228,6 +260,10 @@ export default function App() {
   };
 
   const fetchShifts = async () => {
+    if (!isEmployeeRoute && isSuperAdminRole(auth.user?.role) && !getVisibleClientId()) {
+      setShifts([]);
+      return;
+    }
     try {
       const data = await appService.getShifts();
       setShifts(data);
@@ -237,6 +273,10 @@ export default function App() {
   };
 
   const fetchRoster = async () => {
+    if (!isEmployeeRoute && isSuperAdminRole(auth.user?.role) && !getVisibleClientId()) {
+      setRoster([]);
+      return;
+    }
     try {
       const periodDays = rosterDuration === '2_weeks' ? 14 : rosterDuration === '1_month' ? 28 : 7;
       const rosterFetchStart = subDays(currentWeekStart, 1);
@@ -250,6 +290,10 @@ export default function App() {
   };
 
   const fetchRosterMeta = async () => {
+    if (!isEmployeeRoute && isSuperAdminRole(auth.user?.role) && !getVisibleClientId()) {
+      setRosterMeta([]);
+      return;
+    }
     try {
       const data = await appService.getRosterMeta(format(currentWeekStart, 'yyyy-MM-dd'));
       const employeeIds = new Set(employees.map((employee) => employee.id));
@@ -261,6 +305,10 @@ export default function App() {
   };
 
   const fetchLeaveRequests = async (employeeId?: string) => {
+    if (!isEmployeeRoute && isSuperAdminRole(auth.user?.role) && !getVisibleClientId()) {
+      setRequests([]);
+      return [];
+    }
     try {
       const data = await appService.getLeaveRequests(employeeId);
       setRequests(data);
@@ -357,9 +405,7 @@ export default function App() {
     if (!client?.id) return false;
     const clientStatus = String(client?.status || 'active').trim().toLowerCase();
     if (clientStatus === 'deactivated') {
-      clearStoredActiveClientId();
-      setImpersonatedClient(null);
-      setActiveSection('internal');
+      clearClientWorkspaceState();
       return false;
     }
     setImpersonatedClient(client);
@@ -393,9 +439,7 @@ export default function App() {
   };
 
   const exitImpersonation = () => {
-    clearStoredActiveClientId();
-    setImpersonatedClient(null);
-    setActiveSection('internal');
+    clearClientWorkspaceState();
     if (auth.user) {
       applyUserDashboardContext(auth.user);
     }
@@ -471,11 +515,9 @@ export default function App() {
   useEffect(() => {
     if (!impersonatedClient?.id) return;
     if (String(impersonatedClient?.status || 'active').trim().toLowerCase() !== 'deactivated') return;
-    clearStoredActiveClientId();
-    setImpersonatedClient(null);
-    setActiveSection('internal');
+    clearClientWorkspaceState();
     toast.error('That client dashboard is deactivated.');
-  }, [impersonatedClient?.id, impersonatedClient?.status]);
+  }, [impersonatedClient?.id, impersonatedClient?.status, clearClientWorkspaceState]);
 
   useEffect(() => {
     const handleClientDeactivated = (event: Event) => {
@@ -485,9 +527,7 @@ export default function App() {
         : 'This client dashboard has been deactivated.';
 
       if (isSuperAdminRole(auth.user?.role)) {
-        resetDashboardState();
-        setActiveSection('internal');
-        setSuperAdminSection('internal');
+        clearClientWorkspaceState();
       } else {
         resetDashboardState();
         setAuth({ user: null, loading: false });
@@ -497,9 +537,24 @@ export default function App() {
       toast.error(message);
     };
 
+    const handleClientContextCleared = (event: Event) => {
+      if (!isSuperAdminRole(auth.user?.role)) return;
+      const detail = event instanceof CustomEvent ? event.detail : null;
+      const message = typeof detail === 'object' && detail && 'error' in detail
+        ? String((detail as { error?: unknown }).error || 'No active client dashboard selected.')
+        : 'No active client dashboard selected.';
+
+      clearClientWorkspaceState();
+      toast.error(message);
+    };
+
     window.addEventListener('sightfull:client-deactivated', handleClientDeactivated as EventListener);
-    return () => window.removeEventListener('sightfull:client-deactivated', handleClientDeactivated as EventListener);
-  }, [auth.user?.role, resetDashboardState]);
+    window.addEventListener('sightfull:client-context-cleared', handleClientContextCleared as EventListener);
+    return () => {
+      window.removeEventListener('sightfull:client-deactivated', handleClientDeactivated as EventListener);
+      window.removeEventListener('sightfull:client-context-cleared', handleClientContextCleared as EventListener);
+    };
+  }, [auth.user?.role, clearClientWorkspaceState, resetDashboardState]);
 
 
   useEffect(() => {
@@ -510,10 +565,12 @@ export default function App() {
       return;
     }
 
-    if (auth.user) {
+    if (auth.user && (!isSuperAdminRole(auth.user?.role) || Boolean(getVisibleClientId()))) {
       void fetchLeaveRequests();
+    } else if (!isEmployeeRoute) {
+      setRequests([]);
     }
-  }, [auth.user, employeeAuth.employee, isEmployeeRoute]);
+  }, [auth.user, employeeAuth.employee, isEmployeeRoute, impersonatedClient?.id]);
 
   useEffect(() => {
     if (!isEmployeeRoute && auth.user) {
@@ -570,12 +627,12 @@ export default function App() {
     setActiveSection('leave');
   }, [activeEmployees]);
 
-  const getVisibleClientId = () => {
+  function getVisibleClientId() {
     if (isSuperAdminRole(auth.user?.role)) {
       return impersonatedClient?.id || getStoredActiveClientId() || null;
     }
     return auth.user?.client_id || null;
-  };
+  }
 
   useEffect(() => {
     if (isSuperAdminRole(auth.user?.role) && !impersonatedClient) {
@@ -1067,6 +1124,31 @@ export default function App() {
     } catch (error) {
       console.error('Failed to revert payroll submission:', error);
       toast.error(error instanceof ApiError ? error.message : 'Failed to update payroll submission');
+    }
+  };
+
+
+  const handleDeletePayrollSubmission = async (id: string) => {
+    if (!window.confirm('Delete this payroll submission? This cannot be undone.')) return;
+    try {
+      await appService.deletePayrollSubmission(id);
+      setNotifications((prev) => prev.filter((submission) => submission.id !== id));
+      toast.success('Payroll submission deleted');
+    } catch (error) {
+      console.error('Failed to delete payroll submission:', error);
+      toast.error(error instanceof ApiError ? error.message : 'Failed to delete payroll submission');
+    }
+  };
+
+  const handleDeleteSupportTicket = async (ticket: SupportTicket) => {
+    if (!window.confirm(`Delete support ticket "${ticket.subject}"? This cannot be undone.`)) return;
+    try {
+      await appService.deleteSupportTicket(ticket.id);
+      setClientTickets((prev) => prev.filter((row) => row.id !== ticket.id));
+      toast.success('Support ticket deleted');
+    } catch (error) {
+      console.error('Failed to delete support ticket:', error);
+      toast.error(error instanceof ApiError ? error.message : 'Failed to delete support ticket');
     }
   };
 
@@ -1702,9 +1784,7 @@ export default function App() {
               currentUser={auth.user || undefined}
               onLoginAsSuperAdmin={(client) => {
                 if (String(client?.status || 'active').trim().toLowerCase() === 'deactivated') {
-                  clearStoredActiveClientId();
-                  setImpersonatedClient(null);
-                  setActiveSection('internal');
+                  clearClientWorkspaceState();
                   toast.error(`${client.name} is deactivated.`);
                   return;
                 }
@@ -1730,6 +1810,7 @@ export default function App() {
                     toast.error(error instanceof ApiError ? error.message : 'Failed to update support ticket');
                   }
                 }}
+                onDeleteTicket={handleDeleteSupportTicket}
               />
             )}
             {superAdminSection === 'notifications' && (
@@ -1737,6 +1818,8 @@ export default function App() {
                 notifications={notifications} 
                 onProcess={handleProcessNotification}
                 onRevert={handleRevertNotification}
+                onDelete={handleDeletePayrollSubmission}
+                currentUser={auth.user || undefined}
               />
             )}
             {superAdminSection === 'admin' && <AdminPanel />}
@@ -2116,7 +2199,9 @@ export default function App() {
           )}
           {activeSection === 'payroll-submissions' && (
             <PayrollSubmissionsSection 
-              submissions={currentClientNotifications} 
+              submissions={currentClientNotifications}
+              onDeleteSubmission={handleDeletePayrollSubmission}
+              currentUser={auth.user || undefined}
             />
           )}
           {activeSection === 'leave' && (

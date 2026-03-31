@@ -9,7 +9,8 @@ import {
   CheckCircle2, 
   AlertCircle,
   AtSign,
-  Loader2
+  Loader2,
+  Trash2
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'motion/react';
@@ -22,6 +23,7 @@ interface TicketDetailPageProps {
   ticket: SupportTicket;
   onBack: () => void;
   onUpdateTicket: (ticket: SupportTicket) => void;
+  onDeleteTicket?: (ticket: SupportTicket) => void | Promise<void>;
   currentUser: User;
 }
 
@@ -29,6 +31,7 @@ export const TicketDetailPage: React.FC<TicketDetailPageProps> = ({
   ticket, 
   onBack, 
   onUpdateTicket,
+  onDeleteTicket,
   currentUser
 }) => {
   const [comments, setComments] = useState<TicketComment[]>([]);
@@ -180,6 +183,15 @@ export const TicketDetailPage: React.FC<TicketDetailPageProps> = ({
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {onDeleteTicket && currentUser?.role === 'superadmin' && (
+            <button
+              onClick={() => onDeleteTicket(ticket)}
+              className="px-6 py-3 rounded-2xl bg-rose-600 text-white font-black text-sm hover:bg-rose-700 shadow-xl shadow-rose-100 transition-all active:scale-95 flex items-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete Ticket
+            </button>
+          )}
           {ticket.status !== 'resolved' && (currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('resolve_tickets')) && (
             <button 
               onClick={handleResolve}

@@ -22,10 +22,12 @@ export const appService = {
   getPayrollSubmissions: () => apiGet<PayrollSubmission[]>('/api/payroll-submissions'),
   createPayrollSubmission: (payload: Record<string, unknown>) => apiPost<PayrollSubmission>('/api/payroll-submissions', payload),
   updatePayrollSubmissionStatus: (id: string, status: string) => apiPut<PayrollSubmission>(`/api/payroll-submissions/${id}/status`, { status }),
+  deletePayrollSubmission: (id: string) => apiDelete<{ success: boolean }>(`/api/payroll-submissions/${id}`),
 
   getSupportTickets: () => apiGet<SupportTicket[]>('/api/support-tickets'),
   createSupportTicket: (payload: Record<string, unknown>) => apiPost('/api/support-tickets', payload),
   updateSupportTicket: (id: string, payload: Record<string, unknown>) => apiPatch<SupportTicket>(`/api/support-tickets/${id}`, payload),
+  deleteSupportTicket: (id: string) => apiDelete<{ success: boolean }>(`/api/support-tickets/${id}`),
   getTicketComments: (ticketId: string) => apiGet<TicketComment[]>(`/api/support-tickets/${ticketId}/comments`),
   addTicketComment: (ticketId: string, payload: Record<string, unknown>) => apiPost<TicketComment>(`/api/support-tickets/${ticketId}/comments`, payload),
   getInternalMentionableUsers: (clientId?: string) => apiGet<User[]>(clientId ? `/api/internal/users?client_id=${encodeURIComponent(clientId)}` : '/api/internal/users'),

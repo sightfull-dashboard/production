@@ -7,12 +7,14 @@ import {
   Download,
   User,
   AlertCircle,
-  Activity
+  Activity,
+  Trash2
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
+import type { User as AppUser } from '../types';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -49,9 +51,13 @@ export interface PayrollLog {
 }
 
 export const PayrollSubmissionsSection = ({ 
-  submissions = []
+  submissions = [],
+  onDeleteSubmission,
+  currentUser,
 }: { 
-  submissions?: PayrollSubmission[]
+  submissions?: PayrollSubmission[];
+  onDeleteSubmission?: (id: string) => void | Promise<void>;
+  currentUser?: AppUser;
 }) => {
   const handleDownload = (sub: PayrollSubmission) => {
     try {
@@ -204,6 +210,16 @@ export const PayrollSubmissionsSection = ({
                     <Download className="w-5 h-5" />
                   </button>
                 </Tooltip>
+                {onDeleteSubmission && currentUser?.role === 'superadmin' && (
+                  <Tooltip content="Delete payroll submission">
+                    <button
+                      onClick={() => onDeleteSubmission(sub.id)}
+                      className="p-3 rounded-xl bg-slate-50 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-all"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </Tooltip>
+                )}
               </div>
             </div>
           </motion.div>

@@ -22,6 +22,14 @@ const dispatchClientDeactivatedEvent = (payload: unknown) => {
   } catch {}
 };
 
+const dispatchClientContextClearedEvent = (payload: unknown) => {
+  if (typeof window === 'undefined') return;
+  try {
+    const detail = typeof payload === 'object' && payload !== null ? payload : { error: 'No active client dashboard selected.' };
+    window.dispatchEvent(new CustomEvent('sightfull:client-context-cleared', { detail }));
+  } catch {}
+};
+
 const buildInit = (options: ApiOptions = {}): RequestInit => {
   const { body, ...rest } = options;
   const headers = new Headers(rest.headers ?? {});
@@ -52,6 +60,10 @@ export const apiFetch = async <T>(url: string, options: ApiOptions = {}): Promis
   const payload = isJson ? await response.json() : await response.text();
 
   if (!response.ok) {
+    const message = typeof payload === 'object' && payload && 'error' in payload
+      ? String((payload as { error?: unknown }).error)
+      : response.statusText || 'Request failed';
+
     if (response.status === 423) {
       const isClientDeactivated = typeof payload === 'object' && payload !== null && 'clientDeactivated' in payload
         ? Boolean((payload as { clientDeactivated?: unknown }).clientDeactivated)
@@ -61,9 +73,10 @@ export const apiFetch = async <T>(url: string, options: ApiOptions = {}): Promis
       }
     }
 
-    const message = typeof payload === 'object' && payload && 'error' in payload
-      ? String((payload as { error?: unknown }).error)
-      : response.statusText || 'Request failed';
+    if (response.status === 400 && message === 'No active client dashboard selected.') {
+      dispatchClientContextClearedEvent(payload);
+    }
+
     throw new ApiError(message, response.status, payload);
   }
 

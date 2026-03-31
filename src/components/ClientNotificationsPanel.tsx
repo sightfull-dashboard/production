@@ -8,12 +8,14 @@ import {
   Calendar,
   User,
   Download,
-  RotateCcw
+  RotateCcw,
+  Trash2
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
+import type { User as AppUser } from '../types';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -44,12 +46,16 @@ export const ClientNotificationsPanel = ({
   notifications = [], 
   onProcess,
   onRevert,
-  clientScoped = false
+  onDelete,
+  clientScoped = false,
+  currentUser,
 }: { 
   notifications?: PayrollSubmission[],
   onProcess?: (id: string) => void;
   onRevert?: (id: string) => void;
+  onDelete?: (id: string) => void | Promise<void>;
   clientScoped?: boolean;
+  currentUser?: AppUser;
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'processed'>('all');
@@ -287,6 +293,16 @@ export const ClientNotificationsPanel = ({
                       className="p-3 rounded-xl bg-amber-50 text-amber-600 hover:bg-amber-100 transition-all"
                     >
                       <RotateCcw className="w-5 h-5" />
+                    </button>
+                  </Tooltip>
+                )}
+                {onDelete && currentUser?.role === 'superadmin' && (
+                  <Tooltip content="Delete payroll submission">
+                    <button 
+                      onClick={() => onDelete?.(sub.id)}
+                      className="p-3 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition-all"
+                    >
+                      <Trash2 className="w-5 h-5" />
                     </button>
                   </Tooltip>
                 )}

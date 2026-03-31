@@ -870,20 +870,119 @@ export function registerAdminRoutes({
         });
         tx();
       } else {
-        const { data: employeeRows, error: employeesError } = await supabaseAdmin.from('employees').select('id').eq('client_id', req.params.id);
+        const requireDeleteOk = (result: { error?: any } | null | undefined, step: string) => {
+          if (result?.error) {
+            throw new Error(`${step}: ${result.error.message || 'delete failed'}`);
+          }
+        };
+
+        const { data: employeeRows, error: employeesError } = await supabaseAdmin
+          .from('employees')
+          .select('id')
+          .eq('client_id', req.params.id);
         if (employeesError) throw employeesError;
         const employeeIds = (employeeRows || []).map((row: any) => row.id).filter(Boolean);
-        await supabaseAdmin.from('payroll_submissions').delete().or(`client_id.eq.${req.params.id},client_name.eq.${existing.name}`);
-        await supabaseAdmin.from('activity_logs').delete().eq('client_id', req.params.id);
-        await supabaseAdmin.from('files').delete().eq('client_id', req.params.id);
-        if (employeeIds.length > 0) {
-          await supabaseAdmin.from('leave_requests').delete().in('employee_id', employeeIds);
-          await supabaseAdmin.from('roster_meta').delete().in('employee_id', employeeIds);
-          await supabaseAdmin.from('roster').delete().in('employee_id', employeeIds);
+
+        const { data: supportTicketRows, error: supportTicketsError } = await supabaseAdmin
+          .from('support_tickets')
+          .select('id')
+          .eq('client_id', req.params.id);
+        if (supportTicketsError) throw supportTicketsError;
+        const supportTicketIds = (supportTicketRows || []).map((row: any) => row.id).filter(Boolean);
+
+        const { data: whatsappBatchRows, error: whatsappBatchesError } = await supabaseAdmin
+          .from('whatsapp_payslip_batches')
+          .select('id')
+          .eq('client_id', req.params.id);
+        if (whatsappBatchesError) throw whatsappBatchesError;
+        const whatsappBatchIds = (whatsappBatchRows || []).map((row: any) => row.id).filter((value: any) => value !== null && value !== undefined);
+
+        if (supportTicketIds.length > 0) {
+          requireDeleteOk(
+            await supabaseAdmin.from('support_ticket_comments').delete().in('ticket_id', supportTicketIds),
+            'Failed to remove support ticket comments',
+          );
         }
-        await supabaseAdmin.from('employees').delete().eq('client_id', req.params.id);
-        await supabaseAdmin.from('users').delete().eq('client_id', req.params.id);
-        await supabaseAdmin.from('clients').delete().eq('id', req.params.id);
+
+        if (whatsappBatchIds.length > 0) {
+          const { data: whatsappBatchItemRows, error: whatsappBatchItemsError } = await supabaseAdmin
+            .from('whatsapp_payslip_batch_items')
+            .select('id')
+            .in('batch_id', whatsappBatchIds);
+          if (whatsappBatchItemsError) throw whatsappBatchItemsError;
+          const whatsappBatchItemIds = (whatsappBatchItemRows || []).map((row: any) => row.id).filter((value: any) => value !== null && value !== undefined);
+
+          if (whatsappBatchItemIds.length > 0) {
+            requireDeleteOk(
+              await supabaseAdmin.from('whatsapp_payslip_delivery_logs').delete().in('batch_item_id', whatsappBatchItemIds),
+              'Failed to remove WhatsApp delivery logs',
+            );
+            requireDeleteOk(
+              await supabaseAdmin.from('whatsapp_payslip_batch_items').delete().in('id', whatsappBatchItemIds),
+              'Failed to remove WhatsApp batch items',
+            );
+          }
+
+          requireDeleteOk(
+            await supabaseAdmin.from('whatsapp_payslip_batches').delete().in('id', whatsappBatchIds),
+            'Failed to remove WhatsApp batches',
+          );
+        }
+
+        requireDeleteOk(
+          await supabaseAdmin.from('internal_notifications').delete().eq('client_id', req.params.id),
+          'Failed to remove internal notifications',
+        );
+        requireDeleteOk(
+          await supabaseAdmin.from('support_tickets').delete().eq('client_id', req.params.id),
+          'Failed to remove support tickets',
+        );
+        requireDeleteOk(
+          await supabaseAdmin.from('payroll_submissions').delete().or(`client_id.eq.${req.params.id},client_name.eq.${existing.name}`),
+          'Failed to remove payroll submissions',
+        );
+        requireDeleteOk(
+          await supabaseAdmin.from('activity_logs').delete().eq('client_id', req.params.id),
+          'Failed to remove activity logs',
+        );
+        requireDeleteOk(
+          await supabaseAdmin.from('files').delete().eq('client_id', req.params.id),
+          'Failed to remove files',
+        );
+        requireDeleteOk(
+          await supabaseAdmin.from('shifts').delete().eq('client_id', req.params.id),
+          'Failed to remove shifts',
+        );
+
+        if (employeeIds.length > 0) {
+          requireDeleteOk(
+            await supabaseAdmin.from('leave_requests').delete().in('employee_id', employeeIds),
+            'Failed to remove leave requests',
+          );
+          requireDeleteOk(
+            await supabaseAdmin.from('roster_meta').delete().in('employee_id', employeeIds),
+            'Failed to remove roster meta',
+          );
+          requireDeleteOk(
+            await supabaseAdmin.from('roster').delete().in('employee_id', employeeIds),
+            'Failed to remove roster entries',
+          );
+        }
+
+        requireDeleteOk(
+          await supabaseAdmin.from('employees').delete().eq('client_id', req.params.id),
+          'Failed to remove employees',
+        );
+        requireDeleteOk(
+          await supabaseAdmin.from('users').delete().eq('client_id', req.params.id),
+          'Failed to remove client users',
+        );
+
+        const deleteClientResult = await supabaseAdmin.from('clients').delete().eq('id', req.params.id).select('id').maybeSingle();
+        requireDeleteOk(deleteClientResult, 'Failed to remove client dashboard');
+        if (!deleteClientResult.data) {
+          throw new Error('Failed to remove client dashboard: client row still exists');
+        }
       }
       logActivity(req, 'DELETE_CLIENT', { clientId: req.params.id, name: existing.name, mode: 'kill_switch' });
       res.json({ success: true });

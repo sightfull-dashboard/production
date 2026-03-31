@@ -1789,6 +1789,17 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                 toast.error('Failed to update support ticket');
               }
             }}
+            onDeleteTicket={async (ticket) => {
+              if (!window.confirm(`Delete support ticket "${ticket.subject}"? This cannot be undone.`)) return;
+              try {
+                await appService.deleteSupportTicket(ticket.id);
+                setClientSupportTickets((prev) => prev.filter((row) => row.id !== ticket.id));
+                toast.success('Support ticket deleted');
+              } catch (error) {
+                console.error('Failed to delete support ticket:', error);
+                toast.error('Failed to delete support ticket');
+              }
+            }}
           />
         )}
 
@@ -1796,6 +1807,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
           <ClientNotificationsPanel
             notifications={clientPayrollNotifications}
             clientScoped={true}
+            currentUser={currentUser}
             onProcess={async (id) => {
               try {
                 const saved = await appService.updatePayrollSubmissionStatus(id, 'processed');
@@ -1814,6 +1826,17 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
               } catch (error) {
                 console.error('Failed to revert payroll submission:', error);
                 toast.error('Failed to revert payroll submission');
+              }
+            }}
+            onDelete={async (id) => {
+              if (!window.confirm('Delete this payroll submission? This cannot be undone.')) return;
+              try {
+                await appService.deletePayrollSubmission(id);
+                setClientPayrollNotifications((prev) => prev.filter((submission) => submission.id !== id));
+                toast.success('Payroll submission deleted');
+              } catch (error) {
+                console.error('Failed to delete payroll submission:', error);
+                toast.error('Failed to delete payroll submission');
               }
             }}
           />
