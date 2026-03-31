@@ -83,6 +83,7 @@ import { Toaster, toast } from 'sonner';
 import { calculateEmployeePayroll } from './services/PayrollService';
 import { appService } from './services/appService';
 import { adminService } from './services/adminService';
+import { isAdministrativeShift } from './lib/shifts';
 
 export default function App() {
   const [isSuperAdminRoute, setIsSuperAdminRoute] = useState(isSuperAdminPath(window.location.pathname));
@@ -472,8 +473,10 @@ export default function App() {
         if (isInternalRole(normalizedUser.role)) {
           setImpersonatedClient(null);
           setActiveSection('internal');
+          setSuperAdminSection('internal');
         } else {
           clearStoredActiveClientId();
+          setActiveSection('analytics');
         }
         applyUserDashboardContext(normalizedUser);
       }
@@ -589,13 +592,13 @@ export default function App() {
     try {
       const user = await appService.login(email, password);
       const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
+      resetDashboardState();
       setAuth({ user: normalizedUser, loading: false });
       setImpersonatedClient(null);
       clearStoredActiveClientId();
       applyUserDashboardContext(normalizedUser);
-      if (isInternalRole(normalizedUser.role)) {
-        setActiveSection('internal');
-      }
+      setSuperAdminSection('internal');
+      setActiveSection(isInternalRole(normalizedUser.role) ? 'internal' : 'analytics');
       toast.success('Welcome back!');
     } catch (err) {
       if (err instanceof ApiError) {
@@ -608,6 +611,10 @@ export default function App() {
   };
 
   const activeEmployees = useMemo(() => employees.filter(e => e.status !== 'offboarded'), [employees]);
+  const visibleShiftsForManagement = useMemo(
+    () => (isSuperAdminRole(auth.user?.role) ? shifts : shifts.filter((shift) => !isAdministrativeShift(shift))),
+    [auth.user?.role, shifts],
+  );
 
   const handleOpenLeaveEmployeeProfile = useCallback((employeeName: string) => {
     const normalizedTarget = String(employeeName || '').trim().toLowerCase();
@@ -633,6 +640,14 @@ export default function App() {
     }
     return auth.user?.client_id || null;
   }
+
+  useEffect(() => {
+    if (!auth.user) return;
+    if (isInternalRole(auth.user.role)) return;
+    if (activeSection === 'internal') {
+      setActiveSection('analytics');
+    }
+  }, [auth.user, activeSection]);
 
   useEffect(() => {
     if (isSuperAdminRole(auth.user?.role) && !impersonatedClient) {
@@ -1032,10 +1047,9 @@ export default function App() {
     return null;
   };
 
-  const ADMINISTRATIVE_SHIFT_LABELS = ['absent', 'annual leave', 'sick leave', 'family leave', 'half day', 'unshifted'];
   const rosterTitle = rosterDuration === '2_weeks' ? 'Fortnightly Roster' : rosterDuration === '1_month' ? 'Monthly Roster' : 'Weekly Roster';
 
-  const isAdministrativeShiftLabel = (label: string) => ADMINISTRATIVE_SHIFT_LABELS.includes(String(label || '').trim().toLowerCase());
+  const isAdministrativeShiftLabel = (label: string) => isAdministrativeShift({ label });
 
   const getShiftWindowMinutes = (start: string, end: string) => {
     if (!start || !end) return 0;
@@ -2021,7 +2035,11 @@ export default function App() {
           ) : null}
           {activeSection === 'analytics' && (
             <FeatureWrapper isLocked={lockedFeatures.includes('analytics')} featureName="Analytics">
-              <AnalyticsSection onViewLeaveEmployeeProfile={handleOpenLeaveEmployeeProfile} />
+              <AnalyticsSection
+                onViewLeaveEmployeeProfile={handleOpenLeaveEmployeeProfile}
+                clientContextKey={getVisibleClientId() || currentClientId || null}
+                isClientContextReady={!auth.loading && (!isSuperAdminRole(auth.user?.role) || Boolean(getVisibleClientId()))}
+              />
             </FeatureWrapper>
           )}
           {activeSection === 'employee-records' && (
@@ -2041,7 +2059,7 @@ export default function App() {
           )}
           {activeSection === 'shifts' && (
             <ShiftsSection 
-              shifts={shifts}
+              shifts={visibleShiftsForManagement}
               onAdd={() => { setEditingShift(null); setIsShiftModalOpen(true); }}
               onEdit={(shift) => { setEditingShift(shift); setIsShiftModalOpen(true); }}
               onDelete={handleDeleteShift}

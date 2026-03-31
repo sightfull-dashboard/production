@@ -46,19 +46,29 @@ const SafeResponsiveChart = ({ children, minHeight = 300, className = '' }: { ch
 
 interface AnalyticsSectionProps {
   onViewLeaveEmployeeProfile?: (employeeName: string) => void;
+  clientContextKey?: string | null;
+  isClientContextReady?: boolean;
 }
 
-export function AnalyticsSection({ onViewLeaveEmployeeProfile }: AnalyticsSectionProps) {
+export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey, isClientContextReady = true }: AnalyticsSectionProps) {
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [leaveSearch, setLeaveSearch] = useState('');
 
   useEffect(() => {
-    fetchAnalytics();
-  }, [month]);
+    if (!isClientContextReady) {
+      setLoading(true);
+      setData(null);
+      return;
+    }
+
+    void fetchAnalytics();
+  }, [month, clientContextKey, isClientContextReady]);
 
   const fetchAnalytics = async () => {
+    if (!isClientContextReady) return;
+
     setLoading(true);
     try {
       const json = await apiFetch<any>(`/api/analytics?month=${month}`);
