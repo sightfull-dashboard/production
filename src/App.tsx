@@ -102,6 +102,8 @@ export default function App() {
   const [rosterSeedWeekStart, setRosterSeedWeekStart] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState('analytics');
   const [leaveManagementEmployeeId, setLeaveManagementEmployeeId] = useState<string | null>(null);
+  const topBannerRef = useRef<HTMLDivElement | null>(null);
+  const [topBannerHeight, setTopBannerHeight] = useState(0);
   
   const [clientTickets, setClientTickets] = useState<SupportTicket[]>([]);
 
@@ -332,6 +334,35 @@ export default function App() {
   const activeTrialDaysRemaining = activeTrialEndDate && !Number.isNaN(activeTrialEndDate.getTime())
     ? Math.max(0, differenceInDays(activeTrialEndDate, new Date()))
     : null;
+
+  useEffect(() => {
+    const hasTopBanner = Boolean(impersonatedClient || activeTrialSource);
+    if (!hasTopBanner) {
+      setTopBannerHeight(0);
+      return;
+    }
+
+    const measure = () => {
+      setTopBannerHeight(topBannerRef.current?.offsetHeight ?? 0);
+    };
+
+    measure();
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' && topBannerRef.current
+      ? new ResizeObserver(() => measure())
+      : null;
+
+    if (resizeObserver && topBannerRef.current) {
+      resizeObserver.observe(topBannerRef.current);
+    }
+
+    window.addEventListener('resize', measure);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [impersonatedClient, activeTrialSource]);
   const currentClientNotifications = React.useMemo(() => {
     if (!currentClientName) {
       return notifications;
@@ -1541,19 +1572,39 @@ export default function App() {
   };
 
   const updateMeta = async (employeeId: string, field: keyof RosterMeta, value: string) => {
+    const weekStart = format(currentWeekStart, 'yyyy-MM-dd');
+
     try {
       const res = await fetch('/api/roster-meta', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...buildActiveClientHeaders() },
         body: JSON.stringify({ 
           employee_id: employeeId, 
-          week_start: format(currentWeekStart, 'yyyy-MM-dd'), 
+          week_start: weekStart, 
           field, 
           value 
         }),
       });
       if (res.ok) {
-        await fetchRosterMeta();
+        const savedMeta = await res.json().catch(() => null);
+        setRosterMeta((current) => {
+          const withoutCurrent = current.filter((row) => !(row.employee_id === employeeId && row.week_start === weekStart));
+
+          if (savedMeta && typeof savedMeta === 'object') {
+            return [...withoutCurrent, savedMeta as RosterMeta];
+          }
+
+          const existing = current.find((row) => row.employee_id === employeeId && row.week_start === weekStart);
+          return [
+            ...withoutCurrent,
+            {
+              ...(existing || {}),
+              employee_id: employeeId,
+              week_start: weekStart,
+              [field]: value,
+            } as RosterMeta,
+          ];
+        });
       } else {
         const err = await res.json();
         toast.error(`Failed to update additional info: ${err.error || 'Unknown error'}`);
@@ -1968,56 +2019,68 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className={cn("flex-1 ml-72 p-12 overflow-y-auto bg-transparent", (impersonatedClient || activeTrialSource) && "pt-24")}>
-        {/* Super Admin Mode Banner */}
-        {impersonatedClient && (
-          <div className="fixed top-0 left-72 right-0 bg-rose-600 text-white py-3 px-10 flex items-center justify-between z-40 shadow-xl shadow-rose-900/20 backdrop-blur-md bg-rose-600/90">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center border border-white/20">
-                <ShieldCheck className="w-6 h-6" />
-              </div>
-              <div>
-                <p className="font-black text-[10px] uppercase tracking-[0.2em] text-rose-100">Super Admin Mode</p>
-                <p className="font-black text-sm">Impersonating {impersonatedClient.name.toUpperCase()}</p>
-              </div>
-            </div>
-            <button 
-              onClick={exitImpersonation}
-              className="px-6 py-2.5 bg-white text-rose-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-50 transition-all shadow-lg shadow-rose-900/10"
-            >
-              Exit Impersonation
-            </button>
-          </div>
-        )}
+      <main
+        className="flex-1 ml-72 p-12 overflow-y-auto bg-transparent relative"
+        style={{
+          ...(topBannerHeight ? { paddingTop: `${topBannerHeight + 48}px` } : {}),
+          ['--dashboard-banner-offset' as any]: `${topBannerHeight}px`,
+          ['--dashboard-section-height' as any]: `calc(100dvh - ${topBannerHeight + 78}px)`,
+          ['--dashboard-table-card-height' as any]: `calc(100dvh - ${topBannerHeight + 78}px)`,
+        }}
+      >
+        {(impersonatedClient || activeTrialSource) && (
+          <div className="fixed top-0 left-72 right-0 z-[300]">
+              <div ref={topBannerRef} className="space-y-0 shadow-xl">
+                {impersonatedClient && (
+                  <div className="bg-rose-600/95 text-white py-3 px-10 flex items-center justify-between backdrop-blur-md shadow-rose-900/20">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center border border-white/20">
+                        <ShieldCheck className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="font-black text-[10px] uppercase tracking-[0.2em] text-rose-100">Super Admin Mode</p>
+                        <p className="font-black text-sm">Impersonating {impersonatedClient.name.toUpperCase()}</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={exitImpersonation}
+                      className="px-6 py-2.5 bg-white text-rose-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-50 transition-all shadow-lg shadow-rose-900/10"
+                    >
+                      Exit Impersonation
+                    </button>
+                  </div>
+                )}
 
-        {/* Trial Mode Banner */}
-        {activeTrialSource && (
-          <div className="fixed top-0 left-72 right-0 bg-amber-500 text-white py-3 px-10 flex items-center justify-between z-40 shadow-xl shadow-amber-900/20 backdrop-blur-md bg-amber-500/90">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center border border-white/20">
-                <Clock className="w-6 h-6" />
-              </div>
-              <div>
-                <p className="font-black text-[10px] uppercase tracking-[0.2em] text-amber-100">Trial Mode Active</p>
-                <p className="font-black text-sm">
-                  {typeof activeTrialDaysRemaining === 'number' ? (
-                    <>
-                      {activeTrialDaysRemaining} Days Remaining
-                    </>
-                  ) : activeTrialSource?.trialEndDate ? (
-                    <>Ends {format(new Date(activeTrialSource.trialEndDate), 'dd MMM yyyy')}</>
-                  ) : (
-                    'Trial Active'
-                  )}
-                </p>
+                {activeTrialSource && (
+                  <div className="bg-amber-500/95 text-white py-3 px-10 flex items-center justify-between backdrop-blur-md shadow-amber-900/20">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center border border-white/20">
+                        <Clock className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="font-black text-[10px] uppercase tracking-[0.2em] text-amber-100">Trial Mode Active</p>
+                        <p className="font-black text-sm">
+                          {typeof activeTrialDaysRemaining === 'number' ? (
+                            <>
+                              {activeTrialDaysRemaining} Days Remaining
+                            </>
+                          ) : activeTrialSource?.trialEndDate ? (
+                            <>Ends {format(new Date(activeTrialSource.trialEndDate), 'dd MMM yyyy')}</>
+                          ) : (
+                            'Trial Active'
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <button 
+                      className="px-6 py-2.5 bg-white text-amber-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-50 transition-all shadow-lg shadow-amber-900/10"
+                    >
+                      Upgrade Now
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
-            <button 
-              className="px-6 py-2.5 bg-white text-amber-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-50 transition-all shadow-lg shadow-amber-900/10"
-            >
-              Upgrade Now
-            </button>
-          </div>
         )}
 
         <motion.div

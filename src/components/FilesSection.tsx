@@ -371,7 +371,7 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
 
           <div className="flex-1">
             {items.length > 0 ? (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto hide-horizontal-scrollbar">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">

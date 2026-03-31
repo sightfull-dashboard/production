@@ -274,7 +274,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
         </div>
 
 
-        <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+        <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden flex-1 min-h-0 flex flex-col">
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <h3 className="text-lg font-black text-slate-800">Leave History & Requests</h3>
             {pendingCount > 0 && (
@@ -447,7 +447,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
 
   // Main View (List of Employees or Calendar)
   return (
-    <div className="space-y-8">
+    <div className="dashboard-section-shell flex flex-col gap-8 min-h-0">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1">
           <h2 className="text-4xl font-black text-slate-800 tracking-tight">Leave Management</h2>
@@ -493,7 +493,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
       </div>
 
       {activeTab === 'employees' && (
-        <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+        <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden flex-1 min-h-0 flex flex-col">
           <div className="p-6 border-b border-slate-100 flex items-center gap-4">
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -506,9 +506,9 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               />
             </div>
           </div>
-          <div className="overflow-x-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto hide-horizontal-scrollbar">
             <table className="w-full text-left border-collapse">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur-sm">
                 <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
                   <th className="px-8 py-6">Employee</th>
                   <th className="px-8 py-6">Department</th>

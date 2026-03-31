@@ -143,7 +143,7 @@ export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onA
   };
 
   return (
-    <div className="space-y-6">
+    <div className="dashboard-section-shell flex flex-col gap-6 min-h-0">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h2 className="text-3xl sm:text-4xl font-black text-slate-800 tracking-tight">Employee Records</h2>
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
@@ -167,7 +167,7 @@ export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onA
         </div>
       </div>
 
-      <div className="bg-white/80 backdrop-blur-md rounded-[24px] sm:rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
+      <div className="bg-white/80 backdrop-blur-md rounded-[24px] sm:rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden flex-1 min-h-0 flex flex-col">
         <div className="p-4 sm:p-5 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
             <span className="text-[10px] sm:text-xs font-black text-slate-400 uppercase tracking-widest">{filtered.length} Employees</span>
@@ -236,9 +236,9 @@ export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onA
             )}
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto hide-horizontal-scrollbar">
+          <table className="w-full min-w-full text-left border-collapse">
+            <thead className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur-sm">
               <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
                 <th className="px-6 py-5">ID</th>
                 <th className="px-6 py-5">Name</th>

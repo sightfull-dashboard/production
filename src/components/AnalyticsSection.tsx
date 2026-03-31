@@ -294,7 +294,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
           <div className="p-6 pb-4 border-b border-slate-100">
             <h4 className="font-bold text-slate-800">Employees & Salary Share</h4>
           </div>
-          <div className="overflow-auto flex-1">
+          <div className="overflow-y-auto overflow-x-auto hide-horizontal-scrollbar flex-1">
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-50/50">
                 <tr>
@@ -343,7 +343,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
               />
             </div>
           </div>
-          <div className="overflow-auto flex-1">
+          <div className="overflow-y-auto overflow-x-auto hide-horizontal-scrollbar flex-1">
             <table className="w-full text-left border-collapse">
               <thead className="bg-slate-50/50">
                 <tr>

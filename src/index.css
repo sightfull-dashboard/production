@@ -34,6 +34,52 @@ body {
   background: #9ca3af;
 }
 
+
+
+/* Hide scrollbars while preserving scroll */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.hide-horizontal-scrollbar {
+  overflow-x: auto;
+  -ms-overflow-style: auto;
+  scrollbar-width: auto;
+}
+
+.hide-horizontal-scrollbar::-webkit-scrollbar:horizontal {
+  height: 8px;
+}
+
+.hide-horizontal-scrollbar::-webkit-scrollbar:vertical {
+  width: 0;
+}
+
+.hide-horizontal-scrollbar::-webkit-scrollbar-thumb:horizontal {
+  background: #d1d5db;
+  border-radius: 4px;
+}
+
+.hide-horizontal-scrollbar::-webkit-scrollbar-thumb:horizontal:hover {
+  background: #9ca3af;
+}
+
+.hide-horizontal-scrollbar::-webkit-scrollbar-track:horizontal {
+  background: transparent;
+}
+
+.hide-horizontal-scrollbar::-webkit-scrollbar-thumb:vertical,
+.hide-horizontal-scrollbar::-webkit-scrollbar-track:vertical {
+  background: transparent;
+}
+
 /* Hide default number input arrows */
 input::-webkit-outer-spin-button,
 input::-webkit-inner-spin-button {
@@ -43,4 +89,15 @@ input::-webkit-inner-spin-button {
 
 input[type=number] {
   -moz-appearance: textfield;
+}
+
+
+.dashboard-section-shell {
+  height: var(--dashboard-section-height, calc(100dvh - 165px));
+  min-height: 0;
+}
+
+.dashboard-table-shell {
+  height: var(--dashboard-table-card-height, calc(100dvh - 210px));
+  min-height: 0;
 }

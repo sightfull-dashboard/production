@@ -78,7 +78,7 @@ export const ShiftsSection: React.FC<ShiftsSectionProps> = ({ shifts, onAdd, onE
         <div className="p-5 border-b border-slate-100 bg-slate-50/50">
           <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{filteredShifts.length} Shifts Found</span>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto hide-horizontal-scrollbar">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">

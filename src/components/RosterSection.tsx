@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { format, addDays, subDays, isSunday, isToday, isBefore, startOfDay, differenceInCalendarDays } from 'date-fns';
 import { ChevronLeft, ChevronRight, CheckCircle2, DollarSign, AlertCircle, Clock, CreditCard, FileText, Search, Download } from 'lucide-react';
 import { Employee, Shift, RosterAssignment, RosterMeta, PayrollSubmission } from '../types';
@@ -260,10 +260,88 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
     return isSeedDate(dayDate);
   };
 
-  const getMetaValue = (employeeId: string, field: keyof RosterMeta) => {
-    const meta = rosterMeta.find(m => m.employee_id === employeeId && m.week_start === weekStartIso);
-    return (meta ? (meta[field] as string) : "") ?? "";
-  };
+  const metaLookup = useMemo(() => {
+    const lookup = new Map<string, string>();
+    rosterMeta
+      .filter((meta) => meta.week_start === weekStartIso)
+      .forEach((meta) => {
+        ROSTER_DEFINITIONS.forEach((def) => {
+          const rawValue = meta[def.id as keyof RosterMeta];
+          if (rawValue !== undefined && rawValue !== null && rawValue !== '') {
+            lookup.set(`${meta.employee_id}:${def.id}`, String(rawValue));
+          }
+        });
+      });
+    return lookup;
+  }, [rosterMeta, weekStartIso]);
+
+  const [metaDrafts, setMetaDrafts] = useState<Record<string, string>>({});
+  const metaSaveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  useEffect(() => {
+    const nextDrafts: Record<string, string> = {};
+    metaLookup.forEach((value, key) => {
+      nextDrafts[key] = value;
+    });
+    setMetaDrafts(nextDrafts);
+  }, [metaLookup]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(metaSaveTimersRef.current).forEach(clearTimeout);
+      metaSaveTimersRef.current = {};
+    };
+  }, []);
+
+  const getMetaDraftKey = useCallback((employeeId: string, field: keyof RosterMeta) => `${employeeId}:${String(field)}`, []);
+
+  const getMetaValue = useCallback((employeeId: string, field: keyof RosterMeta) => {
+    const key = getMetaDraftKey(employeeId, field);
+    if (Object.prototype.hasOwnProperty.call(metaDrafts, key)) return metaDrafts[key] ?? '';
+    return metaLookup.get(key) ?? '';
+  }, [getMetaDraftKey, metaDrafts, metaLookup]);
+
+  const commitMetaValue = useCallback((employeeId: string, field: keyof RosterMeta, value: string) => {
+    onUpdateMeta(employeeId, field, value);
+  }, [onUpdateMeta]);
+
+  const queueMetaSave = useCallback((employeeId: string, field: keyof RosterMeta, value: string) => {
+    const key = getMetaDraftKey(employeeId, field);
+    const currentPersistedValue = metaLookup.get(key) ?? '';
+
+    if (metaSaveTimersRef.current[key]) {
+      clearTimeout(metaSaveTimersRef.current[key]);
+      delete metaSaveTimersRef.current[key];
+    }
+
+    if (value === currentPersistedValue) return;
+
+    metaSaveTimersRef.current[key] = setTimeout(() => {
+      commitMetaValue(employeeId, field, value);
+      delete metaSaveTimersRef.current[key];
+    }, 250);
+  }, [commitMetaValue, getMetaDraftKey, metaLookup]);
+
+  const flushMetaSave = useCallback((employeeId: string, field: keyof RosterMeta) => {
+    const key = getMetaDraftKey(employeeId, field);
+    const value = metaDrafts[key] ?? metaLookup.get(key) ?? '';
+    const currentPersistedValue = metaLookup.get(key) ?? '';
+
+    if (metaSaveTimersRef.current[key]) {
+      clearTimeout(metaSaveTimersRef.current[key]);
+      delete metaSaveTimersRef.current[key];
+    }
+
+    if (value === currentPersistedValue) return;
+    commitMetaValue(employeeId, field, value);
+  }, [commitMetaValue, getMetaDraftKey, metaDrafts, metaLookup]);
+
+  const handleMetaInputChange = useCallback((employeeId: string, field: keyof RosterMeta, value: string) => {
+    const sanitizedValue = sanitizeDefinitionValue(field as RosterDefinition, value);
+    const key = getMetaDraftKey(employeeId, field);
+    setMetaDrafts((current) => ({ ...current, [key]: sanitizedValue }));
+    queueMetaSave(employeeId, field, sanitizedValue);
+  }, [getMetaDraftKey, queueMetaSave]);
 
   const handleSubmitPayroll = async () => {
     if (onPayrollSubmit) {
@@ -349,7 +427,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="dashboard-section-shell flex flex-col gap-6 min-h-0">
       <div className="flex flex-col gap-6">
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
           <div className="space-y-1">
@@ -456,12 +534,12 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
           </div>
         </div>
       </div>
-      <div className="bg-white rounded-[32px] shadow-2xl shadow-slate-200/50 border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="bg-white rounded-[32px] shadow-2xl shadow-slate-200/50 border border-slate-200 overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto hide-horizontal-scrollbar isolate bg-white">
           <table className="w-full text-left border-separate border-spacing-0">
             <thead>
-              <tr className="bg-slate-50/80 backdrop-blur-sm text-slate-500 text-[10px] uppercase tracking-[0.15em] font-black">
-                <th className="pl-10 pr-6 py-5 sticky left-0 bg-slate-50/95 backdrop-blur-md z-[120] border-r border-b border-slate-200 min-w-[255px] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
+              <tr className="bg-slate-50 text-slate-500 text-[10px] uppercase tracking-[0.15em] font-black">
+                <th className="pl-10 pr-6 py-5 sticky top-0 left-0 bg-slate-50 z-[220] border-r border-b border-slate-200 min-w-[255px] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
                   Employee Details
                 </th>
                 {weekDays.map((day, dayIndex) => {
@@ -470,22 +548,20 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                   const isTdy = isToday(day);
                   return (
                     <th key={day.toISOString()} className={cn(
-                      "px-5 py-5 text-center min-w-[155px] border-b border-slate-200 transition-colors relative",
+                      "px-5 py-5 text-center min-w-[155px] border-b border-slate-200 transition-colors relative sticky top-0 z-[200] bg-slate-50",
                       dayIndex === 0 && "min-w-[195px]",
                       isSun && "bg-emerald-100 text-emerald-900",
                       isHol && "bg-amber-100 text-amber-900",
-                      isTdy && "bg-indigo-50/50 text-indigo-700"
+                      isTdy && "text-indigo-700"
                     )}>
-                      <div className="flex flex-col gap-0.5">
+                      {isTdy && <div className="absolute inset-0 bg-indigo-50 z-0 pointer-events-none" />}
+                      <div className="relative z-10 flex flex-col gap-0.5">
                         <span className="text-[11px] font-black">{format(day, 'EEEE')}</span>
                         <span className="text-[10px] font-bold opacity-60 font-mono">{format(day, 'dd MMM')}</span>
                         {isHol && (
                           <div className="mt-1.5 px-2 py-0.5 rounded-md bg-amber-200 text-[8px] font-black text-amber-900 inline-block mx-auto">
                             Public Holiday
                           </div>
-                        )}
-                        {isTdy && (
-                          <div className="absolute top-0 left-0 right-0 h-1 bg-indigo-500" />
                         )}
                         {isTdy && (
                           <div className="mt-1 px-2 py-0.5 rounded-md bg-indigo-100 text-[8px] font-black text-indigo-700 inline-block mx-auto">
@@ -497,7 +573,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                   );
                 })}
                 {ROSTER_DEFINITIONS.filter(d => enabledDefinitions.includes(d.id)).map(def => (
-                  <th key={def.id} className="px-4 py-5 text-center min-w-[130px] bg-slate-100/30 border-b border-slate-200 font-black text-slate-400">
+                  <th key={def.id} className="px-4 py-5 text-center min-w-[130px] bg-slate-100 border-b border-slate-200 font-black text-slate-400 sticky top-0 z-[200]">
                     {def.label}
                   </th>
                 ))}
@@ -509,7 +585,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                   <tr className="bg-indigo-500">
                     <td colSpan={totalVisibleColumns} className="p-0 border-b border-indigo-600/20">
                       <div className="flex items-center h-10">
-                        <div className="sticky left-0 flex items-center gap-3 pl-10 pr-6 bg-indigo-500 h-full z-[110] border-r border-indigo-600/20">
+                        <div className="sticky left-0 flex items-center gap-3 pl-10 pr-6 bg-indigo-500 h-full z-[90] border-r border-indigo-600/20">
                           <div className="w-1.5 h-3 bg-white rounded-full" />
                           <span className="text-[10px] font-black text-white uppercase tracking-[0.25em] whitespace-nowrap">{dept}</span>
                         </div>
@@ -524,15 +600,13 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                       "hover:bg-indigo-50"
                     )}>
                       <td className={cn(
-                        "pl-10 pr-6 py-5 sticky left-0 z-[100] border-r border-slate-200 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)] transition-colors",
+                        "pl-10 pr-6 py-5 sticky left-0 z-[80] border-r border-slate-200 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)] transition-colors",
                         idx % 2 === 0 ? "bg-white" : "bg-slate-50",
                         "group-hover:bg-indigo-50"
                       )}>
                         <div className="flex flex-col gap-1">
-                          <span className="text-[15px] font-black text-slate-800 tracking-tight leading-none">{emp.first_name} {emp.last_name}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{emp.emp_id}</span>
-                          </div>
+                          <span className="block text-sm font-bold text-slate-800">{emp.first_name} {emp.last_name}</span>
+                          <span className="block text-xs font-medium text-slate-500 tracking-[1px]">{emp.emp_id}</span>
                         </div>
                       </td>
                       {weekDays.map((day, dayIndex) => {
@@ -637,7 +711,8 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
                               maxLength={def.id === 'notes' ? 250 : 12}
                               placeholder={def.placeholder}
                               value={getMetaValue(emp.id, def.id)}
-                              onChange={(e) => onUpdateMeta(emp.id, def.id, sanitizeDefinitionValue(def.id, e.target.value))}
+                              onChange={(e) => handleMetaInputChange(emp.id, def.id, e.target.value)}
+                              onBlur={() => flushMetaSave(emp.id, def.id)}
                               disabled={isPeriodLocked}
                               className="w-full text-[11px] font-bold border-2 border-slate-100 rounded-xl px-3 py-2.5 bg-white/50 focus:bg-white focus:border-slate-300 focus:ring-4 focus:ring-slate-200/50 outline-none transition-all placeholder:text-slate-300 font-mono" 
                             />

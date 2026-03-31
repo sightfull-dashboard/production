@@ -14,7 +14,6 @@ export const adminService = {
   updateClientFile: (clientId: string, fileId: string, payload: Record<string, unknown>) => apiPatch(`/api/admin/clients/${clientId}/files/${fileId}`, payload),
   deleteClientFile: (clientId: string, fileId: string) => apiDelete(`/api/admin/clients/${clientId}/files/${fileId}`),
   getClientLogs: (clientId: string) => apiGet<any[]>(`/api/admin/clients/${clientId}/logs`),
-  getClientPayrollLogs: (clientId: string) => apiGet<any[]>(`/api/admin/clients/${clientId}/payroll-logs`),
   getInternalUsers: () => apiGet<any[]>('/api/admin/users'),
   createInternalUser: (payload: Record<string, unknown>) => apiPost('/api/admin/users', payload),
   updateInternalUser: (id: string, payload: Record<string, unknown>) => apiPatch(`/api/admin/users/${id}`, payload),

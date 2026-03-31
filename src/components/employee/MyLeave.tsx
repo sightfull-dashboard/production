@@ -100,7 +100,7 @@ export const MyLeave: React.FC<MyLeaveProps> = ({ employee, requests, onCancelRe
       </div>
 
       <div className="bg-white rounded-[40px] shadow-xl shadow-slate-200/50 border border-slate-100 overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto hide-horizontal-scrollbar">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">

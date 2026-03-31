@@ -512,7 +512,8 @@ export function registerAdminRoutes({
         SELECT al.*
         FROM activity_logs al
         INNER JOIN users u ON u.id = al.user_id
-        WHERE u.role = 'superadmin' AND u.client_id IS NULL
+        WHERE u.client_id IS NULL
+          AND u.role IN ('superadmin', 'staff')
         ORDER BY al.created_at DESC
         LIMIT 500
       `).all();
@@ -523,8 +524,8 @@ export function registerAdminRoutes({
       const { data: users, error: usersError } = await supabaseAdmin
         .from('users')
         .select('id')
-        .eq('role', 'superadmin')
-        .is('client_id', null);
+        .is('client_id', null)
+        .in('role', ['superadmin', 'staff']);
       if (usersError) throw usersError;
       const userIds = (users || []).map((row: any) => row.id).filter(Boolean);
       if (userIds.length === 0) return res.json([]);
@@ -814,35 +815,6 @@ export function registerAdminRoutes({
     }
   });
 
-  app.get("/api/admin/clients/:id/payroll-logs", requireClientAccess('view_payroll'), async (req, res) => {
-    const client = env.databaseProvider !== 'supabase'
-      ? db.prepare("SELECT id, name FROM clients WHERE id = ?").get(req.params.id) as any
-      : await fetchSupabaseClientById(req.params.id);
-    if (!client) return res.status(404).json({ error: 'Client not found' });
-
-    try {
-      if (env.databaseProvider !== 'supabase') {
-        const rows = db.prepare(`
-          SELECT * FROM payroll_submissions
-          WHERE client_id = ? OR client_name = ?
-          ORDER BY datetime(submitted_at) DESC, created_at DESC
-        `).all(client.id, client.name) as any[];
-        return res.json(rows.map(serializePayrollSubmission));
-      }
-
-      const { data, error } = await supabaseAdmin
-        .from('payroll_submissions')
-        .select('*')
-        .eq('client_id', client.id)
-        .order('submitted_at', { ascending: false });
-
-      if (error) throw error;
-      return res.json((data || []).map(serializePayrollSubmission));
-    } catch (error) {
-      console.error('Failed to load client payroll logs:', error);
-      return res.status(500).json({ error: 'Failed to load client payroll logs' });
-    }
-  });
 
   app.delete("/api/admin/clients/:id", isSuperAdmin, async (req, res) => {
     const existing = env.databaseProvider !== 'supabase'
@@ -978,13 +950,34 @@ export function registerAdminRoutes({
           'Failed to remove client users',
         );
 
+        const { data: internalUserRows, error: internalUsersError } = await supabaseAdmin
+          .from('users')
+          .select('id, assigned_clients, client_id')
+          .is('client_id', null);
+        if (internalUsersError) throw internalUsersError;
+
+        for (const internalUser of internalUserRows || []) {
+          const assignedClients = parseJsonArray((internalUser as any).assigned_clients)
+            .map((value: any) => String(value))
+            .filter(Boolean);
+          if (!assignedClients.includes(String(req.params.id))) continue;
+          const nextAssignedClients = assignedClients.filter((value: string) => value !== String(req.params.id));
+          requireDeleteOk(
+            await supabaseAdmin
+              .from('users')
+              .update({ assigned_clients: nextAssignedClients })
+              .eq('id', (internalUser as any).id),
+            'Failed to remove deleted client from internal user assignments',
+          );
+        }
+
         const deleteClientResult = await supabaseAdmin.from('clients').delete().eq('id', req.params.id).select('id').maybeSingle();
         requireDeleteOk(deleteClientResult, 'Failed to remove client dashboard');
         if (!deleteClientResult.data) {
           throw new Error('Failed to remove client dashboard: client row still exists');
         }
       }
-      logActivity(req, 'DELETE_CLIENT', { clientId: req.params.id, name: existing.name, mode: 'kill_switch' });
+      logActivity(req, 'DELETE_CLIENT', { deletedClientId: req.params.id, name: existing.name, mode: 'kill_switch' });
       res.json({ success: true });
     } catch (error) {
       console.error('Delete client error:', error);

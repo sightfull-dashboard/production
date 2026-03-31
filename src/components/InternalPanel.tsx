@@ -111,18 +111,16 @@ interface InternalPanelProps {
 export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmin, currentUser }) => {
   const [clients, setClients] = useState<any[]>([]);
   const [selectedClient, setSelectedClient] = useState<any | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'files' | 'logs' | 'settings' | 'activity' | 'payroll_logs' | 'support_tickets' | 'payroll_notifications' | 'whatsapp'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'files' | 'logs' | 'settings' | 'activity' | 'support_tickets' | 'payroll_notifications' | 'whatsapp'>('overview');
   
   const [clientUsers, setClientUsers] = useState<any[]>([]);
   const [clientFiles, setClientFiles] = useState<any[]>([]);
   const [clientLogs, setClientLogs] = useState<any[]>([]);
-  const [payrollLogs, setPayrollLogs] = useState<any[]>([]);
   const [clientSupportTickets, setClientSupportTickets] = useState<SupportTicket[]>([]);
   const [clientPayrollNotifications, setClientPayrollNotifications] = useState<PayrollSubmission[]>([]);
   const [loadingClientData, setLoadingClientData] = useState(false);
   const loadedClientSectionsRef = useRef<Record<string, Set<string>>>({});
   const [logSearchTerm, setLogSearchTerm] = useState('');
-  const [payrollLogSearchTerm, setPayrollLogSearchTerm] = useState('');
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [fileBackHistory, setFileBackHistory] = useState<(string | null)[]>([]);
   const [fileForwardHistory, setFileForwardHistory] = useState<(string | null)[]>([]);
@@ -146,34 +144,13 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   const [waSelected, setWaSelected] = useState<number[]>([1, 2]);
   const [isWaConfirmOpen, setIsWaConfirmOpen] = useState(false);
 
-  const filteredPayrollLogs = payrollLogs.filter((submission: any) => {
-    const query = payrollLogSearchTerm.trim().toLowerCase();
-    if (!query) return true;
-    return [
-      submission?.id,
-      submission?.clientName,
-      submission?.client_name,
-      submission?.submittedBy,
-      submission?.submitted_by,
-      submission?.period,
-      submission?.status,
-      submission?.processedBy,
-      submission?.processed_by,
-    ]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(query));
-  });
-
-
   const fetchClients = async () => {
     try {
       const data = await adminService.getClients();
-      const activeClients = (data || []).filter((client: any) => String(client?.status || 'active').trim().toLowerCase() !== 'deactivated');
-      setClients(activeClients);
-    } catch (error) {
-      console.error('Failed to fetch clients:', error);
-      toast.error('Failed to load client dashboards');
-      setClients([]);
+      setClients(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to fetch clients:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to fetch clients');
     }
   };
 
@@ -213,7 +190,6 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
     setClientUsers([]);
     setClientFiles([]);
     setClientLogs([]);
-    setPayrollLogs([]);
     setClientSupportTickets([]);
     setClientPayrollNotifications([]);
     setCurrentFolderId(null);
@@ -227,8 +203,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
         setClientUsers([]);
         setClientFiles([]);
         setClientLogs([]);
-        setPayrollLogs([]);
-        setClientSupportTickets([]);
+            setClientSupportTickets([]);
         setClientPayrollNotifications([]);
         navigateClientFolder(null, { pushHistory: false });
         return;
@@ -249,7 +224,6 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
       if (activeTab === 'users' && canManageClientUsers) desiredSections.add('users');
       if (activeTab === 'files' && canViewFiles) desiredSections.add('files');
       if (activeTab === 'activity' && canViewClientLogs) desiredSections.add('logs');
-      if (activeTab === 'payroll_logs' && canViewPayroll) desiredSections.add('payroll_logs');
       if (activeTab === 'support_tickets' && canViewTickets) desiredSections.add('support_tickets');
       if (activeTab === 'payroll_notifications' && canViewPayroll) desiredSections.add('payroll_notifications');
 
@@ -279,8 +253,6 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
               return adminService.getClientFiles(selectedClient.id).then((value) => ({ section, value }));
             case 'logs':
               return adminService.getClientLogs(selectedClient.id).then((value) => ({ section, value }));
-            case 'payroll_logs':
-              return adminService.getClientPayrollLogs(selectedClient.id).then((value) => ({ section, value }));
             case 'support_tickets':
               return appService.getSupportTickets().then((value) => ({ section, value }));
             case 'payroll_notifications':
@@ -307,9 +279,6 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
               break;
             case 'logs':
               setClientLogs(Array.isArray(value) ? value : []);
-              break;
-            case 'payroll_logs':
-              setPayrollLogs(Array.isArray(value) ? value : []);
               break;
             case 'support_tickets':
               setClientSupportTickets(
@@ -629,18 +598,17 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
     const confirmed = window.confirm(`Are you sure you want to permanently remove the ${selectedClient.name} dashboard? This action cannot be undone.`);
     if (!confirmed) return;
 
-    const passphrase = window.prompt('Type DELETE to permanently remove this dashboard.');
+    const passphrase = window.prompt('Type DELETE to permanently delete this dashboard from the database.');
     if (passphrase === null) return;
 
     try {
       await adminService.deleteClient(selectedClient.id, passphrase);
-      toast.success('Client dashboard removed successfully');
+      toast.success('Client dashboard deleted from the database successfully');
       setSelectedClient(null);
       setClientUsers([]);
       setClientFiles([]);
       setClientLogs([]);
-      setPayrollLogs([]);
-      await fetchClients();
+        await fetchClients();
     } catch (error: any) {
       console.error('Failed to delete client dashboard:', error);
       toast.error(error?.message || 'Failed to delete client dashboard');
@@ -687,7 +655,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
               </button>
             </Tooltip>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto hide-horizontal-scrollbar">
             {clients.length === 0 ? (
               <BrandedState 
                 type="empty" 
@@ -851,7 +819,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
               </div>
             </div>
             
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto hide-horizontal-scrollbar">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
@@ -1070,7 +1038,6 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
             { id: 'activity', icon: Activity, label: 'Activity Logs', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_client_logs') || currentUser?.permissions?.includes('view_logs') },
             { id: 'support_tickets', icon: MessageSquare, label: 'Support Tickets', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_tickets') },
             { id: 'payroll_notifications', icon: Bell, label: 'Payroll Notifications', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll') },
-            { id: 'payroll_logs', icon: History, label: 'Payroll Logs', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('view_payroll') },
             { id: 'whatsapp', icon: WhatsAppIcon, label: 'WhatsApp', visible: currentUser?.role === 'superadmin' },
             { id: 'settings', icon: Settings, label: 'Settings', visible: currentUser?.role === 'superadmin' || currentUser?.permissions?.includes('edit_client_details') }
           ].filter(tab => tab.visible)).map(tab => (
@@ -1456,7 +1423,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                 action={{ label: 'Add User', onClick: () => { setEditingUser(null); setIsNewUserModalOpen(true); } }}
               />
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto hide-horizontal-scrollbar">
                 <div className="pl-8 pr-8 pb-4">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -1617,7 +1584,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                 action={{ label: 'Upload File', onClick: () => { setEditingFile(null); setIsUploadFileModalOpen(true); } }}
               />
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto hide-horizontal-scrollbar">
                 <div className="pl-8 pr-8 pb-4">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -1842,174 +1809,6 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
           />
         )}
 
-        
-        {activeTab === 'payroll_logs' && (
-          <div className="space-y-6">
-            {/* Summary Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Submissions</p>
-                <div className="flex items-end gap-2">
-                  <h4 className="text-2xl font-black text-slate-800">{filteredPayrollLogs.length}</h4>
-                  <span className="text-[10px] text-slate-400 font-bold mb-1.5 uppercase tracking-tighter">Logs</span>
-                </div>
-              </div>
-              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
-                <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-1">Processed</p>
-                <div className="flex items-end gap-2">
-                  <h4 className="text-2xl font-black text-emerald-600">{filteredPayrollLogs.filter(l => l.status === 'processed').length}</h4>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 mb-2" />
-                </div>
-              </div>
-              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
-                <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest mb-1">Pending Review</p>
-                <div className="flex items-end gap-2">
-                  <h4 className="text-2xl font-black text-amber-600">{filteredPayrollLogs.filter(l => l.status !== 'processed' && l.status !== 'archived').length}</h4>
-                  <AlertCircle className="w-4 h-4 text-amber-400 mb-2" />
-                </div>
-              </div>
-              <div className="bg-white/80 backdrop-blur-md p-6 rounded-[32px] border border-white/20 shadow-sm">
-                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Total Value</p>
-                <div className="flex items-end gap-2">
-                  <h4 className="text-2xl font-black text-indigo-600">
-                    R {filteredPayrollLogs.reduce((acc, curr) => acc + (Number(curr.totalPay) || 0), 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </h4>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden">
-              <div className="p-8 border-b border-slate-100 flex items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <h3 className="text-xl font-black text-slate-800 tracking-tight">Payroll Submission History</h3>
-                  <p className="text-sm text-slate-500 font-medium">Detailed log of all payroll data submitted for processing.</p>
-                </div>
-                <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input 
-                    type="text" 
-                    value={payrollLogSearchTerm}
-                    onChange={(e) => setPayrollLogSearchTerm(e.target.value)}
-                    placeholder="Search logs..." 
-                    className="pl-11 pr-6 py-3 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:outline-none focus:ring-4 focus:ring-indigo-500/10 w-80 transition-all"
-                  />
-                </div>
-              </div>
-
-              {filteredPayrollLogs.length === 0 ? (
-                <BrandedState
-                  type="empty"
-                  portal="superadmin"
-                  title="No Payroll Logs"
-                  message="No payroll submissions have been logged for this client yet."
-                />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
-                        <th className="px-8 py-6">Submission Details</th>
-                        <th className="px-8 py-6">Period</th>
-                        <th className="px-8 py-6">Metrics</th>
-                        <th className="px-8 py-6">Financials</th>
-                        <th className="px-8 py-6">Status & Processing</th>
-                        <th className="px-8 py-6 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredPayrollLogs.map((submission) => (
-                        <tr key={submission.id} className="hover:bg-indigo-50/30 transition-colors group">
-                          <td className="px-8 py-6">
-                            <div className="flex items-center gap-4">
-                              <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400">
-                                <FileText className="w-5 h-5" />
-                              </div>
-                              <div className="space-y-0.5">
-                                <p className="text-sm font-black text-slate-800">{submission.submittedBy || 'System'}</p>
-                                <div className="flex items-center gap-2 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                                  <Clock className="w-3 h-3" />
-                                  {submission.submittedAt ? new Date(submission.submittedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="space-y-1">
-                              <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-widest">
-                                {submission.period || 'N/A'}
-                              </span>
-                              <p className="text-[10px] text-slate-400 font-black uppercase tracking-tighter">ID: {submission.id.substring(0, 8)}...</p>
-                            </div>
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="flex flex-col gap-1">
-                              <div className="flex items-center gap-2">
-                                <Users className="w-3.5 h-3.5 text-slate-400" />
-                                <span className="text-sm font-bold text-slate-700">{submission.employeeCount ?? 0} Employees</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Clock className="w-3.5 h-3.5 text-slate-400" />
-                                <span className="text-xs font-medium text-slate-500">{Number(submission.totalHours || 0).toFixed(1)} Hours</span>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="space-y-0.5">
-                              <p className="text-sm font-black text-indigo-600">
-                                R {Number(submission.totalPay || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </p>
-                              <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Gross Total</p>
-                            </div>
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="flex flex-col gap-3">
-                              <div className={cn(
-                                "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest w-fit",
-                                submission.status === 'processed'
-                                  ? "bg-emerald-100 text-emerald-600"
-                                  : submission.status === 'archived'
-                                    ? "bg-slate-100 text-slate-600"
-                                    : "bg-amber-100 text-amber-600"
-                              )}>
-                                {submission.status === 'processed' ? (
-                                  <CheckCircle2 className="w-3 h-3" />
-                                ) : submission.status === 'archived' ? (
-                                  <History className="w-3 h-3" />
-                                ) : (
-                                  <AlertCircle className="w-3 h-3" />
-                                )}
-                                {submission.status}
-                              </div>
-                              {submission.processedBy && (
-                                <div className="flex items-center gap-2">
-                                  <div className="w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center text-[8px] font-black text-slate-500">
-                                    {submission.processedBy.substring(0, 2).toUpperCase()}
-                                  </div>
-                                  <div className="space-y-0">
-                                    <p className="text-[10px] font-bold text-slate-600 leading-none">{submission.processedBy}</p>
-                                    <p className="text-[9px] text-slate-400 font-medium">
-                                      {submission.processedAt ? new Date(submission.processedAt).toLocaleDateString() : ''}
-                                    </p>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-8 py-6 text-right">
-                            <button className="p-2.5 hover:bg-white rounded-xl text-slate-400 hover:text-indigo-600 transition-colors shadow-sm">
-                              <Eye className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {activeTab === 'whatsapp' && renderWhatsAppTab()}
 
         {activeTab === 'settings' && (
@@ -2230,7 +2029,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                     <div className="pt-8 border-t border-rose-100 space-y-4">
                       <div className="space-y-1">
                         <h4 className="text-sm font-bold text-rose-700">Danger Zone</h4>
-                        <p className="text-xs text-slate-500">Permanently remove this client dashboard and all of its data. This action cannot be undone.</p>
+                        <p className="text-xs text-slate-500">Permanently delete this client dashboard from the database, including all of its data. This action cannot be undone.</p>
                       </div>
                       <div className="flex items-center justify-between gap-4 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4">
                         <div className="space-y-1">

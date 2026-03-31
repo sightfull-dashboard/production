@@ -506,7 +506,7 @@ export const AdminPanel: React.FC = () => {
             action={!searchTerm ? { label: 'Add Internal User', onClick: () => setIsModalOpen(true) } : undefined}
           />
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto hide-horizontal-scrollbar">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50/50 text-slate-500 text-[10px] uppercase tracking-widest font-black">
