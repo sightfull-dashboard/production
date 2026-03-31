@@ -176,14 +176,16 @@ export const securityHeadersMiddleware: RequestHandler = (_req, res, next) => {
   next();
 };
 
-export const createOriginProtectionMiddleware = (appUrl: string, enabled: boolean): RequestHandler => {
-  const appOrigin = (() => {
-    try {
-      return new URL(appUrl).origin;
-    } catch {
-      return '';
-    }
-  })();
+export const createOriginProtectionMiddleware = (allowedOriginsInput: string | string[], enabled: boolean): RequestHandler => {
+  const allowedOrigins = Array.from(new Set((Array.isArray(allowedOriginsInput) ? allowedOriginsInput : [allowedOriginsInput])
+    .map((value) => {
+      try {
+        return new URL(String(value || '').trim()).origin;
+      } catch {
+        return '';
+      }
+    })
+    .filter(Boolean)));
 
   return (req, res, next) => {
     if (!enabled) return next();
@@ -191,7 +193,7 @@ export const createOriginProtectionMiddleware = (appUrl: string, enabled: boolea
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return next();
 
     const origin = String(req.headers.origin || '').trim();
-    if (!origin || !appOrigin || origin === appOrigin) return next();
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return next();
 
     return res.status(403).json({ error: 'Blocked by origin policy' });
   };

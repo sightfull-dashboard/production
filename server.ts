@@ -1191,7 +1191,7 @@ if (isSmtpConfigured) {
 
   app.disable('x-powered-by');
   app.use(securityHeadersMiddleware);
-  app.use(createOriginProtectionMiddleware(env.appUrl, isProduction));
+  app.use(createOriginProtectionMiddleware(env.allowedOrigins, isProduction));
   app.use(express.json({ limit: bodyLimit }));
   app.use(express.urlencoded({ limit: bodyLimit, extended: true }));
   app.use(['/api/auth/login', '/api/employee-auth/login', '/api/system/test-email'], authRateLimit);

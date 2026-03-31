@@ -12,11 +12,11 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    allowedHosts: ['.onrender.com', 'localhost', '127.0.0.1'],
+    allowedHosts: ['.onrender.com', 'dashboard.sightfull.co.za', 'www.dashboard.sightfull.co.za', 'localhost', '127.0.0.1'],
     hmr: process.env.DISABLE_HMR !== 'true',
   },
   preview: {
     host: '0.0.0.0',
-    allowedHosts: ['.onrender.com', 'localhost', '127.0.0.1'],
+    allowedHosts: ['.onrender.com', 'dashboard.sightfull.co.za', 'www.dashboard.sightfull.co.za', 'localhost', '127.0.0.1'],
   },
 });

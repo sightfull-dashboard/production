@@ -38,6 +38,19 @@ const parseCsv = (value: string | undefined) => String(value ?? '')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 
+const normalizeUrlOrigin = (value: string | undefined) => {
+  try {
+    return new URL(String(value ?? '').trim()).origin;
+  } catch {
+    return '';
+  }
+};
+
+const parseAllowedOrigins = (value: string | undefined, defaults: string[] = []) => Array.from(new Set([
+  ...defaults,
+  ...String(value ?? '').split(',').map((item) => item.trim()),
+].map((item) => normalizeUrlOrigin(item)).filter(Boolean)));
+
 const INSECURE_SESSION_SECRETS = new Set([
   '',
   'change-me-sightfull-session-secret',
@@ -76,6 +89,12 @@ export const env = {
   nodeEnv: rawNodeEnv,
   port: toInt(process.env.PORT, 3000),
   appUrl: process.env.APP_URL ?? 'http://localhost:3000',
+  allowedOrigins: parseAllowedOrigins(process.env.ALLOWED_ORIGINS, [
+    process.env.APP_URL ?? 'http://localhost:3000',
+    'https://production-p3y7.onrender.com',
+    'https://dashboard.sightfull.co.za',
+    'https://www.dashboard.sightfull.co.za',
+  ]),
   databaseProvider,
   sessionStoreDriver,
   authRateLimitStoreDriver,
