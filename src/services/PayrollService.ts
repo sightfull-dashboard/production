@@ -54,6 +54,40 @@ const parseShiftWindow = (dayIso: string, shift: Shift): ShiftWindow | null => {
 const getDayStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 const getNextDayStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
 const isSundayDate = (date: Date) => date.getDay() === 0;
+const isSaturdayDate = (date: Date) => date.getDay() === 6;
+
+const getSpecialSaturdaySundayPaidMinutes = (
+  shift: Shift,
+  assignmentIso: string,
+  window: ShiftWindow,
+  segmentDay: Date,
+  rawMinutes: number,
+) => {
+  if (!shift.crosses_saturday_into_sunday) return null;
+  if (!isSaturdayDate(new Date(`${assignmentIso}T00:00:00`))) return null;
+  if (window.end <= window.start) return null;
+
+  const [startHour, startMinute] = String(shift.start || '').split(':').map(Number);
+  const [endHour, endMinute] = String(shift.end || '').split(':').map(Number);
+  if ([startHour, startMinute, endHour, endMinute].some((value) => Number.isNaN(value))) return null;
+
+  const startTotal = startHour * 60 + startMinute;
+  const endTotal = endHour * 60 + endMinute;
+  if (endTotal > startTotal) return null;
+
+  const saturdayPortionMinutes = Math.max(0, 24 * 60 - startTotal);
+  const sundayPortionMinutes = Math.max(0, endTotal);
+  const saturdayLunchMinutes = Math.max(0, Number(shift.saturday_lunch_hours || 0) * 60);
+  const sundayLunchMinutes = Math.max(0, Number(shift.sunday_lunch_hours || 0) * 60);
+
+  if (isSaturdayDate(segmentDay)) {
+    return Math.max(0, Math.min(rawMinutes, saturdayPortionMinutes) - saturdayLunchMinutes);
+  }
+  if (isSundayDate(segmentDay)) {
+    return Math.max(0, Math.min(rawMinutes, sundayPortionMinutes) - sundayLunchMinutes);
+  }
+  return null;
+};
 
 export function calculateEmployeePayroll(
   employeeId: string,
@@ -120,8 +154,9 @@ export function calculateEmployeePayroll(
       const segmentEnd = new Date(Math.min(nextBoundary.getTime(), effectiveEnd.getTime()));
       const rawMinutes = Math.max(0, (segmentEnd.getTime() - cursor.getTime()) / 60000);
       if (rawMinutes > 0) {
-        const paidSegmentMinutes = (rawMinutes / window.grossMinutes) * window.paidMinutes;
         const segmentDay = getDayStart(cursor);
+        const specialPaidMinutes = getSpecialSaturdaySundayPaidMinutes(shift, assignmentIso, window, segmentDay, rawMinutes);
+        const paidSegmentMinutes = specialPaidMinutes ?? ((rawMinutes / window.grossMinutes) * window.paidMinutes);
 
         if (isSAPublicHoliday(segmentDay)) {
           holidayMinutes += paidSegmentMinutes;

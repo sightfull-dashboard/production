@@ -103,12 +103,28 @@ export const ShiftsSection: React.FC<ShiftsSectionProps> = ({ shifts, onAdd, onE
                     </div>
                   </td>
                   <td className="px-6 py-5">
-                    <div className="flex items-center gap-2 text-sm text-slate-600 font-bold">
-                      <Clock className="w-3.5 h-3.5 text-slate-400" />
-                      {shift.start && shift.end ? `${shift.start} — ${shift.end}` : 'N/A'}
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-sm text-slate-600 font-bold">
+                        <Clock className="w-3.5 h-3.5 text-slate-400" />
+                        {shift.start && shift.end ? `${shift.start} — ${shift.end}` : 'N/A'}
+                      </div>
+                      {shift.crosses_saturday_into_sunday && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[10px] font-black uppercase tracking-wide">
+                          Saturday → Sunday split
+                        </span>
+                      )}
                     </div>
                   </td>
-                  <td className="px-6 py-5 text-sm text-slate-500 font-bold">{Number(shift.lunch || 0)} minutes</td>
+                  <td className="px-6 py-5 text-sm text-slate-500 font-bold">
+                    <div className="space-y-1">
+                      <div>{Number(shift.lunch || 0)} minutes</div>
+                      {shift.crosses_saturday_into_sunday && (
+                        <div className="text-[11px] text-slate-400 font-black tracking-wide">
+                          Sat {Number(shift.saturday_lunch_hours || 0).toFixed(2)}h · Sun {Number(shift.sunday_lunch_hours || 0).toFixed(2)}h
+                        </div>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-6 py-5 text-sm text-slate-500 font-bold">{shift.start && shift.end ? getShiftTotalHours(shift).toFixed(2) : '0.00'}</td>
                   <td className="px-6 py-5 text-right">
                     <div className="flex items-center justify-end gap-1 transition-all">

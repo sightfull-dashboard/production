@@ -5,6 +5,9 @@ export type Shift = {
   start: string; // HH:mm
   end: string;   // HH:mm
   lunch: number; // minutes
+  crosses_saturday_into_sunday?: boolean;
+  saturday_lunch_hours?: number;
+  sunday_lunch_hours?: number;
 };
 
 export type Employee = {

@@ -7,9 +7,10 @@ interface TooltipProps {
   content: React.ReactNode;
   position?: 'top' | 'bottom' | 'left' | 'right';
   className?: string;
+  contentClassName?: string;
 }
 
-export const Tooltip: React.FC<TooltipProps> = ({ children, content, position = 'top', className = "inline-block" }) => {
+export const Tooltip: React.FC<TooltipProps> = ({ children, content, position = 'top', className = "inline-block", contentClassName = "" }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLDivElement>(null);
@@ -119,7 +120,7 @@ export const Tooltip: React.FC<TooltipProps> = ({ children, content, position = 
               }}
               className="pointer-events-none"
             >
-              <div className="max-w-[280px] px-3 py-2 bg-slate-800 text-white text-[10px] font-black tracking-wide rounded-lg shadow-2xl whitespace-pre-line break-words relative leading-4">
+              <div className={`max-w-[280px] px-3 py-2 bg-slate-800 text-white text-[10px] font-black tracking-wide rounded-lg shadow-2xl whitespace-pre-line break-words relative leading-4 ${contentClassName}`.trim()}>
                 {content}
                 {/* Arrow */}
                 <div className={`absolute w-2 h-2 bg-slate-800 rotate-45 ${

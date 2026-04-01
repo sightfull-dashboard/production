@@ -67,6 +67,9 @@ type ShiftPayload = {
   start: string;
   end: string;
   lunch: number;
+  crosses_saturday_into_sunday?: boolean;
+  saturday_lunch_hours?: number;
+  sunday_lunch_hours?: number;
 };
 
 type RegisterWorkforceRoutesDeps = {

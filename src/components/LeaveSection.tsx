@@ -540,8 +540,8 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
 
       {activeTab === 'employees' && (
         <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 overflow-hidden flex-1 min-h-0 flex flex-col">
-          <div className="p-6 border-b border-slate-100 flex items-center gap-4">
-            <div className="relative flex-1 max-w-md">
+          <div className="p-6 border-b border-slate-100 flex items-center justify-end gap-4">
+            <div className="relative w-full max-w-md ml-auto">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input 
                 type="text" 
@@ -755,7 +755,11 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                   
                   <div className="space-y-1">
                     {uniqueEmployeeCount > 0 && (
-                      <Tooltip content={hoverBreakdown} className="block">
+                      <Tooltip
+                        content={hoverBreakdown}
+                        className="block"
+                        contentClassName="max-w-[560px] whitespace-pre text-[11px] leading-5 break-normal"
+                      >
                         <div className="cursor-help rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[10px] font-black leading-tight text-indigo-700 shadow-sm">
                           {uniqueEmployeeCount} employee{uniqueEmployeeCount === 1 ? '' : 's'} on leave
                         </div>

@@ -1489,12 +1489,18 @@ if (isSmtpConfigured) {
   const normalizeShiftPayload = (data: any) => {
     const label = normalizeText(data.label);
     const isAdministrative = isAdministrativeShiftLabel(label);
+    const crossesSaturdayIntoSunday = !isAdministrative && (data.crosses_saturday_into_sunday === true || String(data.crosses_saturday_into_sunday || '').toLowerCase() === 'true' || String(data.crosses_saturday_into_sunday || '').toLowerCase() === 'on');
+    const saturdayLunchHours = !isAdministrative && crossesSaturdayIntoSunday ? (Number(data.saturday_lunch_hours) || 0) : 0;
+    const sundayLunchHours = !isAdministrative && crossesSaturdayIntoSunday ? (Number(data.sunday_lunch_hours) || 0) : 0;
     return {
       id: normalizeText(data.id),
       label,
       start: isAdministrative ? '' : normalizeText(data.start),
       end: isAdministrative ? '' : normalizeText(data.end),
       lunch: isAdministrative ? 0 : (Number(data.lunch) || 0),
+      crosses_saturday_into_sunday: crossesSaturdayIntoSunday,
+      saturday_lunch_hours: saturdayLunchHours,
+      sunday_lunch_hours: sundayLunchHours,
     };
   };
 
@@ -1507,6 +1513,38 @@ if (isSmtpConfigured) {
     if (!Number.isInteger(data.lunch) || data.lunch < 0) errors.push('lunch must be 0 or more.');
     const shiftWindowMinutes = getShiftWindowMinutes(data.start, data.end);
     if (!isAdministrative && shiftWindowMinutes > 0 && data.lunch > shiftWindowMinutes) errors.push('lunch break cannot exceed the shift time window.');
+
+    const saturdayLunchHours = Number(data.saturday_lunch_hours || 0);
+    const sundayLunchHours = Number(data.sunday_lunch_hours || 0);
+    if (saturdayLunchHours < 0 || sundayLunchHours < 0) errors.push('Saturday and Sunday lunch hours must be 0 or more.');
+
+    if (!data.crosses_saturday_into_sunday && (saturdayLunchHours > 0 || sundayLunchHours > 0)) {
+      errors.push('Saturday and Sunday lunch hours can only be set when the Saturday to Sunday overlap option is enabled.');
+    }
+
+    if (!isAdministrative && data.crosses_saturday_into_sunday) {
+      const [startHour, startMinute] = String(data.start || '').split(':').map(Number);
+      const [endHour, endMinute] = String(data.end || '').split(':').map(Number);
+      if ([startHour, startMinute, endHour, endMinute].some(Number.isNaN)) {
+        errors.push('A valid overnight shift is required for the Saturday to Sunday overlap option.');
+      } else {
+        const startTotal = startHour * 60 + startMinute;
+        const endTotal = endHour * 60 + endMinute;
+        if (endTotal > startTotal) {
+          errors.push('The Saturday to Sunday overlap option can only be used on overnight shifts that end the next day.');
+        } else {
+          const saturdayPortionHours = Math.max(0, (24 * 60 - startTotal) / 60);
+          const sundayPortionHours = Math.max(0, endTotal / 60);
+          if (saturdayLunchHours > saturdayPortionHours) errors.push('Saturday lunch hours cannot exceed the Saturday portion of the shift.');
+          if (sundayLunchHours > sundayPortionHours) errors.push('Sunday lunch hours cannot exceed the Sunday portion of the shift.');
+        }
+      }
+
+      if (((saturdayLunchHours + sundayLunchHours) * 60) > data.lunch + 0.0001) {
+        errors.push('Saturday and Sunday lunch hours cannot exceed the total lunch minutes.');
+      }
+    }
+
     return errors;
   };
 

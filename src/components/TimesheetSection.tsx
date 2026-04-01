@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { format, addDays, subDays } from 'date-fns';
-import { ChevronLeft, ChevronRight, Download, FileText, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, FileText, Search, Loader2 } from 'lucide-react';
 import { Employee, Shift, RosterAssignment, RosterMeta, RosterDefinition, PayrollSubmission } from '../types';
 import { calculateEmployeePayroll } from '../services/PayrollService';
 import { cn } from '../lib/utils';
@@ -48,6 +48,7 @@ interface TimesheetSectionProps {
   rosterTitle?: string;
   onWeekChange: (date: Date) => void;
   onPayrollSubmit?: () => void | Promise<void>;
+  isLoading?: boolean;
 }
 
 const formatValue = (val: number | string | undefined) => {
@@ -70,6 +71,7 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
   rosterTitle = 'Weekly Roster',
   onWeekChange,
   onPayrollSubmit,
+  isLoading = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showExportOptions, setShowExportOptions] = useState(false);
@@ -81,12 +83,6 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
   );
   const currentPeriodStartIso = format(currentWeekStart, 'yyyy-MM-dd');
   const currentPeriodEndIso = format(addDays(currentWeekStart, periodDays - 1), 'yyyy-MM-dd');
-  const isCurrentPeriodSubmitted = payrollSubmissions.some(submission => {
-    const start = String(submission.periodStart || '').trim();
-    const end = String(submission.periodEnd || '').trim();
-    if (!start || !end) return false;
-    return start <= currentPeriodEndIso && end >= currentPeriodStartIso;
-  });
 
   useEffect(() => {
     if (!showExportOptions) return;
@@ -117,13 +113,7 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
 
   const handleGoToPrevious = () => onWeekChange(subDays(currentWeekStart, periodDays));
 
-  const handleGoToNext = () => {
-    if (!isCurrentPeriodSubmitted) {
-      toast.error('Submit payroll in the roster for this period before moving to the next period.');
-      return;
-    }
-    onWeekChange(addDays(currentWeekStart, periodDays));
-  };
+  const handleGoToNext = () => onWeekChange(addDays(currentWeekStart, periodDays));
 
   const buildExportRows = (includeDefinitions: boolean) => {
     return filteredEmployees.map(emp => {
@@ -328,6 +318,14 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
           </div>
         </div>
 
+
+        {isLoading && (
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500 px-1">
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+            Loading timesheet...
+          </div>
+        )}
+
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white/60 backdrop-blur-md p-2 rounded-2xl border border-slate-200/60 shadow-sm">
           <div className="relative w-full md:w-96">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -351,10 +349,7 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
             </div>
             <button
               onClick={handleGoToNext}
-              className={cn(
-                'p-2 rounded-lg transition-all',
-                isCurrentPeriodSubmitted ? 'hover:bg-slate-50 active:scale-90' : 'opacity-40 cursor-not-allowed'
-              )}
+              className="p-2 rounded-lg transition-all hover:bg-slate-50 active:scale-90"
             >
               <ChevronRight className="w-4 h-4 text-slate-600" />
             </button>
