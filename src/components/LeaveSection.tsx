@@ -338,7 +338,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               employeeRequests.map(req => (
                 <div key={req.id} className="p-6 hover:bg-slate-50 transition-colors">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                       <div className="flex items-center gap-3">
                         <span className="inline-flex items-center px-3 py-1 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-widest">
                           {leaveTypeMeta[req.type as LeaveType]?.label || req.type}
@@ -407,7 +407,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                   </button>
                 </div>
                 <form onSubmit={handleLogLeave} className="p-8 space-y-6">
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Leave Type</label>
                     <select
                       value={leaveType}
@@ -433,7 +433,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                   )}
                   
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Start Date</label>
                       <input
                         type="date"
@@ -443,7 +443,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                         className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 focus:border-indigo-600 outline-none transition-all font-bold text-slate-700"
                       />
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-1">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">End Date</label>
                       <input
                         type="date"
@@ -456,7 +456,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                     </div>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Notes (Optional)</label>
                     <textarea
                       value={notes}
@@ -638,7 +638,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                 return (
                   <div key={req.id} className="p-6 hover:bg-slate-50 transition-colors">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div className="space-y-2">
+                      <div className="space-y-1">
                         <div className="flex items-center gap-3">
                           <span className="inline-flex items-center px-3 py-1 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-widest">
                             {leaveTypeMeta[req.type as LeaveType]?.label || req.type}
@@ -674,8 +674,8 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
       )}
 
       {activeTab === 'calendar' && (
-        <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 p-8">
-          <div className="flex items-center justify-between mb-8">
+        <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 p-6">
+          <div className="flex items-center justify-between mb-5">
             <h2 className="text-xl font-black text-slate-800">{format(currentMonth, 'MMMM yyyy')}</h2>
             <div className="flex items-center gap-2">
               <Tooltip content="Previous Month">
@@ -707,7 +707,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
 
           <div className="grid grid-cols-7 gap-px bg-slate-200 rounded-2xl overflow-hidden border border-slate-200">
             {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
-              <div key={day} className="bg-slate-50 p-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              <div key={day} className="bg-slate-50 px-2 py-2.5 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
                 {day}
               </div>
             ))}
@@ -738,12 +738,12 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                 <div 
                   key={i} 
                   className={cn(
-                    "min-h-[140px] bg-white p-2 transition-colors",
+                    "min-h-[96px] bg-white p-1.5 transition-colors",
                     !isSameMonth(day, monthStart) && "bg-slate-50/50",
                     isSameDay(day, new Date()) && "bg-indigo-50/30"
                   )}
                 >
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-1">
                     <span className={cn(
                       "text-xs font-black w-6 h-6 flex items-center justify-center rounded-full",
                       isSameDay(day, new Date()) ? "bg-indigo-600 text-white" : "text-slate-400",
@@ -753,10 +753,10 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                     </span>
                   </div>
                   
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     {uniqueEmployeeCount > 0 && (
                       <Tooltip content={hoverBreakdown} className="block">
-                        <div className="cursor-help rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 py-2 text-[10px] font-black text-indigo-700 shadow-sm">
+                        <div className="cursor-help rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[10px] font-black leading-tight text-indigo-700 shadow-sm">
                           {uniqueEmployeeCount} employee{uniqueEmployeeCount === 1 ? '' : 's'} on leave
                         </div>
                       </Tooltip>
@@ -768,7 +768,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
           </div>
 
 
-          <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-4 text-sm font-bold text-slate-500">
+          <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs font-bold text-slate-500">
             Approved and pending leave is shown as a daily count. Hover the leave badge in each day to see the employee breakdown, including past and future leave when you move between months.
           </div>        </div>
       )}
