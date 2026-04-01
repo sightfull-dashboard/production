@@ -16,8 +16,6 @@ import { motion } from 'motion/react';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
 import type { User as AppUser } from '../types';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
 interface EmployeePayrollBreakdown {
   employeeName: string;
@@ -82,8 +80,13 @@ export const ClientNotificationsPanel = ({
     return matchesSearch && matchesStatus;
   });
 
-  const handleDownload = (sub: PayrollSubmission) => {
+  const handleDownload = async (sub: PayrollSubmission) => {
     try {
+      const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+      ]);
+
       const doc = new jsPDF();
       
       // Header

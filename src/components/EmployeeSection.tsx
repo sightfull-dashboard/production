@@ -20,8 +20,6 @@ interface EmployeeSectionProps {
 }
 
 import { downloadCSV } from '../utils/exportUtils';
-import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
 
 export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onAdd, onEdit, onDelete, onOffboard, onImport, onRestore, canImportCsv = false, fileVaultReadOnly = false }) => {
   const [search, setSearch] = useState('');
@@ -91,7 +89,7 @@ export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onA
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -100,10 +98,11 @@ export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onA
 
     if (isExcelFile) {
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         try {
           const data = event.target?.result;
           if (!data) throw new Error('Could not read the selected spreadsheet file.');
+          const XLSX = await import('xlsx');
           const workbook = XLSX.read(data, { type: 'array', cellDates: true });
           const firstSheetName = workbook.SheetNames[0];
           if (!firstSheetName) throw new Error('No worksheet found in the spreadsheet.');
@@ -127,6 +126,8 @@ export const EmployeeSection: React.FC<EmployeeSectionProps> = ({ employees, onA
       reader.readAsArrayBuffer(file);
       return;
     }
+
+    const Papa = (await import('papaparse')).default;
 
     Papa.parse(file, {
       header: true,

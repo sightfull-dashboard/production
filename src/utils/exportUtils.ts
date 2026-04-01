@@ -1,6 +1,3 @@
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
-
 export const downloadCSV = (data: any[], filename: string) => {
   if (data.length === 0) return;
 
@@ -39,7 +36,12 @@ export interface ExportToPDFOptions {
   margin?: { top?: number; right?: number; bottom?: number; left?: number };
 }
 
-export const exportToPDF = (title: string, headers: string[], rows: any[][], filename: string, options: ExportToPDFOptions = {}) => {
+export const exportToPDF = async (title: string, headers: string[], rows: any[][], filename: string, options: ExportToPDFOptions = {}) => {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ]);
+
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',

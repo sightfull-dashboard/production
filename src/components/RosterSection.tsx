@@ -377,7 +377,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
     setShowExportOptions(false);
   };
 
-  const handleExportPDF = (includeDefinitions: boolean = false) => {
+  const handleExportPDF = async (includeDefinitions: boolean = false) => {
     const title = `Roster Period: ${format(currentWeekStart, 'dd MMM')} - ${format(addDays(currentWeekStart, periodDays - 1), 'dd MMM yyyy')}`;
     const defs = ROSTER_DEFINITIONS.filter(d => enabledDefinitions.includes(d.id));
     
@@ -422,7 +422,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
     });
 
     const filename = `Roster_${includeDefinitions ? 'Full_' : ''}${format(addDays(currentWeekStart, periodDays - 1), 'yyyy-MM-dd')}.pdf`;
-    exportToPDF(title, headers, rows, filename);
+    await exportToPDF(title, headers, rows, filename);
     setShowExportOptions(false);
   };
 

@@ -157,7 +157,7 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
     setShowExportOptions(false);
   };
 
-  const handleExportPDF = (includeDefinitions: boolean) => {
+  const handleExportPDF = async (includeDefinitions: boolean) => {
     const headers = [
       'Employee',
       'Department',
@@ -232,7 +232,7 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
       });
     }
 
-    exportToPDF(
+    await exportToPDF(
       `Timesheet Period: ${format(currentWeekStart, 'dd MMM')} - ${format(addDays(currentWeekStart, periodDays - 1), 'dd MMM yyyy')}`,
       headers,
       rows,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   LayoutDashboard,
   Users,
@@ -51,39 +51,47 @@ import {
   phoneDigitsToLocalSa,
 } from './app/shared/formatters';
 import { Card, FeatureWrapper, Modal, SidebarItem, SuperAdminSidebarItem } from './app/shared/chrome';
-import { EmployeeSection } from './components/EmployeeSection';
-import { RosterSection } from './components/RosterSection';
-import { TimesheetSection } from './components/TimesheetSection';
-import { PayrollSubmissionsSection } from './components/PayrollSubmissionsSection';
 import { ShiftsSection } from './components/ShiftsSection';
-import { FilesSection } from './components/FilesSection';
-import { LeaveSection } from './components/LeaveSection';
 import { OffboardModal } from './components/OffboardModal';
 import { Login } from './components/Login';
 import { SuperAdminLogin } from './components/SuperAdminLogin';
 import { EmployeeLogin } from './components/EmployeeLogin';
 import { MfaSetup } from './components/MfaSetup';
 import { MfaVerify } from './components/MfaVerify';
-import { EmployeeDashboard } from './components/employee/EmployeeDashboard';
-import { ApplyLeave } from './components/employee/ApplyLeave';
-import { MyLeave } from './components/employee/MyLeave';
-import { EmployeeCalendar } from './components/employee/EmployeeCalendar';
-import { EmployeeDocuments } from './components/employee/EmployeeDocuments';
-import { EmployeeProfile } from './components/employee/EmployeeProfile';
-import { AdminPanel } from './components/AdminPanel';
-import { InternalPanel } from './components/InternalPanel';
 import { InternalNotifications } from './components/InternalNotifications';
-import { SupportTicketsPanel } from './components/SupportTicketsPanel';
-import { ClientNotificationsPanel } from './components/ClientNotificationsPanel';
-import { AnalyticsSection } from './components/AnalyticsSection';
-import { ActivityLogsPanel } from './components/ActivityLogsPanel';
-import { SettingsSection } from './components/SettingsSection';
 import { Tooltip } from './components/Tooltip';
+
 import { Toaster, toast } from 'sonner';
 import { calculateEmployeePayroll } from './services/PayrollService';
 import { appService } from './services/appService';
 import { adminService } from './services/adminService';
 import { isAdministrativeShift } from './lib/shifts';
+
+const EmployeeSection = lazy(() => import('./components/EmployeeSection').then((module) => ({ default: module.EmployeeSection })));
+const RosterSection = lazy(() => import('./components/RosterSection').then((module) => ({ default: module.RosterSection })));
+const TimesheetSection = lazy(() => import('./components/TimesheetSection').then((module) => ({ default: module.TimesheetSection })));
+const PayrollSubmissionsSection = lazy(() => import('./components/PayrollSubmissionsSection').then((module) => ({ default: module.PayrollSubmissionsSection })));
+const FilesSection = lazy(() => import('./components/FilesSection').then((module) => ({ default: module.FilesSection })));
+const LeaveSection = lazy(() => import('./components/LeaveSection').then((module) => ({ default: module.LeaveSection })));
+const EmployeeDashboard = lazy(() => import('./components/employee/EmployeeDashboard').then((module) => ({ default: module.EmployeeDashboard })));
+const ApplyLeave = lazy(() => import('./components/employee/ApplyLeave').then((module) => ({ default: module.ApplyLeave })));
+const MyLeave = lazy(() => import('./components/employee/MyLeave').then((module) => ({ default: module.MyLeave })));
+const EmployeeCalendar = lazy(() => import('./components/employee/EmployeeCalendar').then((module) => ({ default: module.EmployeeCalendar })));
+const EmployeeDocuments = lazy(() => import('./components/employee/EmployeeDocuments').then((module) => ({ default: module.EmployeeDocuments })));
+const EmployeeProfile = lazy(() => import('./components/employee/EmployeeProfile').then((module) => ({ default: module.EmployeeProfile })));
+const AdminPanel = lazy(() => import('./components/AdminPanel').then((module) => ({ default: module.AdminPanel })));
+const InternalPanel = lazy(() => import('./components/InternalPanel').then((module) => ({ default: module.InternalPanel })));
+const SupportTicketsPanel = lazy(() => import('./components/SupportTicketsPanel').then((module) => ({ default: module.SupportTicketsPanel })));
+const ClientNotificationsPanel = lazy(() => import('./components/ClientNotificationsPanel').then((module) => ({ default: module.ClientNotificationsPanel })));
+const AnalyticsSection = lazy(() => import('./components/AnalyticsSection').then((module) => ({ default: module.AnalyticsSection })));
+const ActivityLogsPanel = lazy(() => import('./components/ActivityLogsPanel').then((module) => ({ default: module.ActivityLogsPanel })));
+const SettingsSection = lazy(() => import('./components/SettingsSection').then((module) => ({ default: module.SettingsSection })));
+
+const SectionLoader = () => (
+  <div className="min-h-[240px] flex items-center justify-center">
+    <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+  </div>
+);
 
 export default function App() {
   const [isSuperAdminRoute, setIsSuperAdminRoute] = useState(isSuperAdminPath(window.location.pathname));
@@ -1707,12 +1715,14 @@ export default function App() {
             transition={{ duration: 0.4, ease: "easeOut" }}
             className="max-w-7xl mx-auto"
           >
-            {employeeSection === 'dashboard' && <EmployeeDashboard employee={employeeAuth.employee} onApplyLeave={() => setEmployeeSection('apply-leave')} />}
-            {employeeSection === 'apply-leave' && <ApplyLeave employee={employeeAuth.employee} onSuccess={async () => { await fetchLeaveRequests(employeeAuth.employee.id); setEmployeeSection('my-leave'); }} onCancel={() => setEmployeeSection('dashboard')} />}
-            {employeeSection === 'my-leave' && <MyLeave employee={employeeAuth.employee} requests={requests.filter(req => req.employee_id === employeeAuth.employee.id)} onCancelRequest={async (id) => { await appService.cancelLeaveRequest(id); await fetchLeaveRequests(employeeAuth.employee.id); toast.success('Leave request cancelled'); }} />}
-            {employeeSection === 'calendar' && <EmployeeCalendar employee={employeeAuth.employee} teamLeave={requests.filter(req => req.status === 'approved')} />}
-            {employeeSection === 'documents' && <EmployeeDocuments employee={employeeAuth.employee} />}
-            {employeeSection === 'profile' && <EmployeeProfile employee={employeeAuth.employee} onLogout={handleLogout} />}
+            <Suspense fallback={<SectionLoader />}>
+              {employeeSection === 'dashboard' && <EmployeeDashboard employee={employeeAuth.employee} onApplyLeave={() => setEmployeeSection('apply-leave')} />}
+              {employeeSection === 'apply-leave' && <ApplyLeave employee={employeeAuth.employee} onSuccess={async () => { await fetchLeaveRequests(employeeAuth.employee.id); setEmployeeSection('my-leave'); }} onCancel={() => setEmployeeSection('dashboard')} />}
+              {employeeSection === 'my-leave' && <MyLeave employee={employeeAuth.employee} requests={requests.filter(req => req.employee_id === employeeAuth.employee.id)} onCancelRequest={async (id) => { await appService.cancelLeaveRequest(id); await fetchLeaveRequests(employeeAuth.employee.id); toast.success('Leave request cancelled'); }} />}
+              {employeeSection === 'calendar' && <EmployeeCalendar employee={employeeAuth.employee} teamLeave={requests.filter(req => req.status === 'approved')} />}
+              {employeeSection === 'documents' && <EmployeeDocuments employee={employeeAuth.employee} />}
+              {employeeSection === 'profile' && <EmployeeProfile employee={employeeAuth.employee} onLogout={handleLogout} />}
+            </Suspense>
           </motion.div>
         </main>
       </div>
@@ -1845,6 +1855,7 @@ export default function App() {
             transition={{ duration: 0.4, ease: "easeOut" }}
             className="max-w-7xl mx-auto"
           >
+            <Suspense fallback={<SectionLoader />}>
             {superAdminSection === 'internal' && <InternalPanel 
               currentUser={auth.user || undefined}
               onLoginAsSuperAdmin={(client) => {
@@ -1895,6 +1906,7 @@ export default function App() {
                 onUpdateUser={(updatedUser) => setAuth(prev => ({ ...prev, user: updatedUser }))}
               />
             )}
+            </Suspense>
           </motion.div>
         </main>
       </div>
@@ -2090,6 +2102,7 @@ export default function App() {
           transition={{ duration: 0.4, ease: "easeOut" }}
           className="max-w-7xl mx-auto"
         >
+          <Suspense fallback={<SectionLoader />}>
           {activeTrialSource?.trialExpired ? (
             <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-6 mb-6">
               <h2 className="text-2xl font-black mb-2">Trial Expired</h2>
@@ -2295,6 +2308,7 @@ export default function App() {
               <FilesSection readOnly={!isSuperAdminRole(auth.user?.role)} />
             </FeatureWrapper>
           )}
+          </Suspense>
         </motion.div>
       </main>
 
