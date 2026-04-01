@@ -590,14 +590,14 @@ export function registerSupabaseCoreRoutes({
       mailer: getMailerReadiness(),
       timestamp: new Date().toISOString(),
     });
-  }));
+  });
 
   app.get('/api/system/readiness', (_req, res) => {
     res.json({
       database: getDatabaseReadiness(),
       integrations: { supabase: getSupabaseReadiness(), mailer: getMailerReadiness() },
     });
-  }));
+  });
 
   app.post('/api/auth/login', async (req, res) => {
     try {
@@ -673,13 +673,13 @@ export function registerSupabaseCoreRoutes({
       return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: payload.client_id }));
     }
     return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending, authSource: (req.session as any).authLoginSource || 'supabase' });
-  }));
+  });
 
   app.post('/api/auth/logout', (req, res) => {
     logActivity(req, 'LOGOUT');
     clearSessionAuthState(req);
     req.session.destroy(() => res.json({ success: true }));
-  }));
+  });
 
   app.post('/api/employee-auth/login', async (req, res) => {
     try {
@@ -705,7 +705,7 @@ export function registerSupabaseCoreRoutes({
     } catch (error: any) {
       return res.status(500).json({ error: error?.message || 'Failed to sign in employee' });
     }
-  }));
+  });
 
   app.get('/api/employee-auth/me', async (req, res) => {
     const employeeId = getSessionEmployeeId(req);
@@ -717,13 +717,13 @@ export function registerSupabaseCoreRoutes({
       return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: employee.client_id || null }));
     }
     return res.json(sanitizeEmployeeForResponse({ ...employee, fallback_image: client?.fallback_image || null }));
-  }));
+  });
 
   app.post('/api/employee-auth/logout', (req, res) => {
     delete (req.session as any).employeeId;
     delete (req.session as any).employeeClientId;
     res.json({ ok: true });
-  }));
+  });
 
   app.get('/api/employees', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
