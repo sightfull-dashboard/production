@@ -389,8 +389,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
                         </div>
                       </td>
                     </tr>
-                    );
-                  })
+                  ))
                 ) : (
                   <tr>
                     <td colSpan={3} className="py-8 text-center text-slate-400 font-medium">No employees found</td>
@@ -431,21 +430,21 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
                   filteredLeave.map((emp: any, idx: number) => {
                     const movement = leaveBalanceDeltas[String(emp.id)] || { annual: 0, sick: 0, family: 0 };
                     return (
-                    <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
-                      <td className="py-4 px-6 text-sm font-bold text-slate-700 group-hover:text-slate-900">{emp.name}</td>
-                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.annual)}`}><div className="flex flex-col items-center"><span>{formatLeaveMetric(emp.annual)}</span>{renderLeaveDeltaBadge(movement.annual)}</div></td>
-                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.sick)}`}><div className="flex flex-col items-center"><span>{formatLeaveMetric(emp.sick)}</span>{renderLeaveDeltaBadge(movement.sick)}</div></td>
-                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.family)}`}><div className="flex flex-col items-center"><span>{formatLeaveMetric(emp.family)}</span>{renderLeaveDeltaBadge(movement.family)}</div></td>
-                      <td className="py-4 px-6 text-right">
-                        <button
-                          type="button"
-                          onClick={() => onViewLeaveEmployeeProfile?.(emp.name)}
-                          className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-700 transition-colors"
-                        >
-                          View More <ChevronRight className="w-3 h-3" />
-                        </button>
-                      </td>
-                    </tr>
+                      <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
+                        <td className="py-4 px-6 text-sm font-bold text-slate-700 group-hover:text-slate-900">{emp.name}</td>
+                        <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.annual)}`}><div className="flex flex-col items-center"><span>{formatLeaveMetric(emp.annual)}</span>{renderLeaveDeltaBadge(movement.annual)}</div></td>
+                        <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.sick)}`}><div className="flex flex-col items-center"><span>{formatLeaveMetric(emp.sick)}</span>{renderLeaveDeltaBadge(movement.sick)}</div></td>
+                        <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.family)}`}><div className="flex flex-col items-center"><span>{formatLeaveMetric(emp.family)}</span>{renderLeaveDeltaBadge(movement.family)}</div></td>
+                        <td className="py-4 px-6 text-right">
+                          <button
+                            type="button"
+                            onClick={() => onViewLeaveEmployeeProfile?.(emp.name)}
+                            className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-widest text-indigo-600 hover:text-indigo-700 transition-colors"
+                          >
+                            View More <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </td>
+                      </tr>
                     );
                   })
                 ) : (
