@@ -77,7 +77,7 @@ const LeaveSection = lazy(() => import('./components/LeaveSection').then((module
 type LeaveBalanceDelta = { annual: number; sick: number; family: number };
 type LeaveBalanceDeltaMap = Record<string, LeaveBalanceDelta>;
 
-const getLeaveSnapshotKey = (clientKey: string) => `sd-leave-balance-snapshot:${clientKey}`;
+const getLeaveBaselineKey = (clientKey: string) => `sd-leave-balance-baseline:${clientKey}`;
 
 const buildLeaveSnapshot = (employees: Employee[]) => Object.fromEntries(
   employees.map((employee) => [String(employee.id), {
@@ -466,7 +466,8 @@ export default function App() {
       return [];
     }
     try {
-      const data = await appService.getLeaveRequests(employeeId);
+      const shouldFetchScopedEmployee = Boolean(isEmployeeRoute && employeeId);
+      const data = await appService.getLeaveRequests(shouldFetchScopedEmployee ? employeeId : undefined);
       setRequests(data);
       await fetchEmployees();
       return data;
@@ -846,31 +847,37 @@ export default function App() {
   const leaveDeltaClientKey = getVisibleClientId() || 'default';
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    leaveBalanceSnapshotRef.current = null;
+  }, [leaveDeltaClientKey]);
+
+  useEffect(() => {
     const currentSnapshot = buildLeaveSnapshot(activeEmployees);
     if (typeof window === 'undefined') {
-      leaveBalanceSnapshotRef.current = currentSnapshot;
       setLeaveBalanceDeltas({});
       return;
     }
 
-    const snapshotKey = getLeaveSnapshotKey(leaveDeltaClientKey);
-    let previousSnapshot = leaveBalanceSnapshotRef.current;
-    if (!previousSnapshot) {
+    const baselineKey = getLeaveBaselineKey(leaveDeltaClientKey);
+    let baselineSnapshot = leaveBalanceSnapshotRef.current;
+    if (!baselineSnapshot) {
       try {
-        const rawSnapshot = window.sessionStorage.getItem(snapshotKey);
-        previousSnapshot = rawSnapshot ? JSON.parse(rawSnapshot) : null;
+        const rawSnapshot = window.sessionStorage.getItem(baselineKey);
+        baselineSnapshot = rawSnapshot ? JSON.parse(rawSnapshot) : null;
       } catch {
-        previousSnapshot = null;
+        baselineSnapshot = null;
       }
     }
 
-    const deltaMap = buildLeaveDeltaMap(currentSnapshot, previousSnapshot);
-    setLeaveBalanceDeltas(deltaMap);
-    leaveBalanceSnapshotRef.current = currentSnapshot;
+    if (!baselineSnapshot || Object.keys(baselineSnapshot).length === 0) {
+      baselineSnapshot = currentSnapshot;
+      try {
+        window.sessionStorage.setItem(baselineKey, JSON.stringify(currentSnapshot));
+      } catch {}
+    }
 
-    try {
-      window.sessionStorage.setItem(snapshotKey, JSON.stringify(currentSnapshot));
-    } catch {}
+    leaveBalanceSnapshotRef.current = baselineSnapshot;
+    setLeaveBalanceDeltas(buildLeaveDeltaMap(currentSnapshot, baselineSnapshot));
   }, [activeEmployees, leaveDeltaClientKey]);
 
   useEffect(() => {
@@ -2144,7 +2151,7 @@ export default function App() {
             icon={CalendarDays} 
             label="Leave Management" 
             active={activeSection === 'leave'} 
-            onClick={() => setActiveSection('leave')} 
+            onClick={() => { setLeaveManagementEmployeeId(null); setActiveSection('leave'); }} 
             badge={requests.filter(r => r.status === 'pending').length}
             isLocked={lockedFeatures.includes('leave_management')}
           />

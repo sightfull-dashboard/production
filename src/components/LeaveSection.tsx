@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   CalendarDays, 
   CheckCircle, 
@@ -95,7 +95,10 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
   }, [employees, selectedEmployee?.id]);
 
   useEffect(() => {
-    if (!initialSelectedEmployeeId) return;
+    if (!initialSelectedEmployeeId) {
+      setSelectedEmployee(null);
+      return;
+    }
     const employeeMatch = employees.find((employee) => String(employee.id) === String(initialSelectedEmployeeId)) || null;
     if (employeeMatch) {
       setSelectedEmployee(employeeMatch);
@@ -218,9 +221,24 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
   const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 });
   const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
   const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
-  const visibleCalendarRequests = requests
-    .filter((request) => ['approved', 'pending'].includes(request.status))
-    .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
+  const visibleCalendarRequests = useMemo(() => {
+    const deduped = new Map<string, LeaveRequest>();
+    requests
+      .filter((request) => ['approved', 'pending'].includes(request.status))
+      .forEach((request) => {
+        const employeeKey = String(request.employee_id || request.employee_name || '').trim().toLowerCase();
+        const key = [employeeKey, request.type, String(request.is_half_day ? 'half' : 'full'), String(request.start_date).slice(0, 10), String(request.end_date).slice(0, 10), request.status].join('|');
+        const existing = deduped.get(key);
+        if (!existing || (existing.source !== 'manual' && request.source !== 'roster')) {
+          deduped.set(key, request);
+        }
+      });
+    return [...deduped.values()].sort((a, b) => {
+      const dateDiff = new Date(a.start_date).getTime() - new Date(b.start_date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return String(a.employee_name || '').localeCompare(String(b.employee_name || ''));
+    });
+  }, [requests]);
 
   // If an employee is selected, show their detailed view
   if (selectedEmployee) {
@@ -694,16 +712,17 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               </div>
             ))}
             {calendarDays.map((day, i) => {
-              const dayRequests = visibleCalendarRequests.filter((request) =>
-                new Date(request.start_date) <= day &&
-                new Date(request.end_date) >= day
-              );
+              const dayRequests = visibleCalendarRequests.filter((request) => {
+                const start = parseISO(`${String(request.start_date).slice(0, 10)}T00:00:00`);
+                const end = parseISO(`${String(request.end_date).slice(0, 10)}T00:00:00`);
+                return start <= day && end >= day;
+              });
 
               return (
                 <div 
                   key={i} 
                   className={cn(
-                    "min-h-[120px] bg-white p-2 transition-colors",
+                    "min-h-[140px] bg-white p-2 transition-colors",
                     !isSameMonth(day, monthStart) && "bg-slate-50/50",
                     isSameDay(day, new Date()) && "bg-indigo-50/30"
                   )}
@@ -719,7 +738,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                   </div>
                   
                   <div className="space-y-1">
-                    {dayRequests.slice(0, 4).map(r => (
+                    {dayRequests.slice(0, 6).map(r => (
                       <div 
                         key={r.id} 
                         className={cn(
@@ -732,9 +751,9 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                         <span className="block opacity-80">{leaveTypeMeta[r.type as LeaveType]?.label || r.type}{r.status === 'pending' ? ' • Pending' : ''}</span>
                       </div>
                     ))}
-                    {dayRequests.length > 4 && (
+                    {dayRequests.length > 6 && (
                       <div className="px-2 py-1 rounded-md text-[9px] font-black bg-slate-100 text-slate-600 border border-slate-200">
-                        +{dayRequests.length - 4} more
+                        +{dayRequests.length - 6} more
                       </div>
                     )}
                   </div>
