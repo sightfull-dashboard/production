@@ -732,8 +732,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               ).size;
               const hoverBreakdown = breakdownRequests
                 .map((request) => `${request.employee_name} • ${leaveTypeMeta[request.type as LeaveType]?.label || request.type}${request.status === 'pending' ? ' • Pending' : ''}`)
-                .join('
-');
+                .join('\n');
 
               return (
                 <div 
