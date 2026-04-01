@@ -480,6 +480,8 @@ export default function App() {
   const currentClientName = impersonatedClient?.name || auth.user?.client_name || auth.user?.clientName || null;
   const currentClientId = impersonatedClient?.id || auth.user?.client_id || null;
   const activeTrialSource = (() => {
+    // Do not show the trial banner when a super admin is impersonating a client.
+    if (impersonatedClient) return auth.user?.isTrial ? (auth.user as any) : null;
     if (impersonatedClient?.isTrial) return impersonatedClient;
     if (auth.user?.isTrial) return auth.user as any;
     return null;

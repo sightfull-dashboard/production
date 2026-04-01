@@ -717,6 +717,23 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                 const end = parseISO(`${String(request.end_date).slice(0, 10)}T00:00:00`);
                 return start <= day && end >= day;
               });
+              const breakdownRequests = Array.from(new Map(
+                dayRequests.map((request) => {
+                  const key = [
+                    String(request.employee_id || request.employee_name || '').trim().toLowerCase(),
+                    String(request.type),
+                    String(request.status),
+                  ].join('|');
+                  return [key, request] as const;
+                })
+              ).values());
+              const uniqueEmployeeCount = new Set(
+                breakdownRequests.map((request) => String(request.employee_id || request.employee_name || '').trim().toLowerCase())
+              ).size;
+              const hoverBreakdown = breakdownRequests
+                .map((request) => `${request.employee_name} • ${leaveTypeMeta[request.type as LeaveType]?.label || request.type}${request.status === 'pending' ? ' • Pending' : ''}`)
+                .join('
+');
 
               return (
                 <div 
@@ -737,23 +754,13 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                     </span>
                   </div>
                   
-                  <div className="space-y-1">
-                    {dayRequests.slice(0, 6).map(r => (
-                      <div 
-                        key={r.id} 
-                        className={cn(
-                          "px-2 py-1 rounded-md text-[9px] leading-tight font-bold border whitespace-normal break-words",
-                          leaveTypeMeta[r.type as LeaveType]?.badge || 'bg-slate-100 text-slate-700 border-slate-200'
-                        )}
-                        title={`${r.employee_name} (${leaveTypeMeta[r.type as LeaveType]?.label || r.type}) • ${r.status}`}
+                  <div className="space-y-2">
+                    {uniqueEmployeeCount > 0 && (
+                      <div
+                        title={hoverBreakdown}
+                        className="rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 py-2 text-[10px] font-black text-indigo-700 shadow-sm"
                       >
-                        <span className="block">{r.employee_name}</span>
-                        <span className="block opacity-80">{leaveTypeMeta[r.type as LeaveType]?.label || r.type}{r.status === 'pending' ? ' • Pending' : ''}</span>
-                      </div>
-                    ))}
-                    {dayRequests.length > 6 && (
-                      <div className="px-2 py-1 rounded-md text-[9px] font-black bg-slate-100 text-slate-600 border border-slate-200">
-                        +{dayRequests.length - 6} more
+                        {uniqueEmployeeCount} employee{uniqueEmployeeCount === 1 ? '' : 's'} on leave
                       </div>
                     )}
                   </div>
@@ -764,7 +771,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
 
 
           <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-4 text-sm font-bold text-slate-500">
-            Approved and pending leave is shown directly inside each calendar day, including past and future leave when you move between months.
+            Approved and pending leave is shown as a daily count. Hover the leave badge in each day to see the employee breakdown, including past and future leave when you move between months.
           </div>        </div>
       )}
     </div>
