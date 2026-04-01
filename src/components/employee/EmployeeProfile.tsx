@@ -23,7 +23,6 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Employee, LeaveRequest, LeaveType } from '../../types';
 import { cn } from '../../lib/utils';
-import { normalizeLeaveRequestsForDisplay } from '../../lib/leaveDisplay';
 import { toast } from 'sonner';
 import { format, parseISO } from 'date-fns';
 
@@ -51,7 +50,7 @@ export const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employee, leav
   };
 
   const sortedLeaveRequests = useMemo(
-    () => normalizeLeaveRequestsForDisplay(leaveRequests),
+    () => [...leaveRequests].sort((a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()),
     [leaveRequests]
   );
 

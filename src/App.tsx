@@ -73,6 +73,35 @@ const TimesheetSection = lazy(() => import('./components/TimesheetSection').then
 const PayrollSubmissionsSection = lazy(() => import('./components/PayrollSubmissionsSection').then((module) => ({ default: module.PayrollSubmissionsSection })));
 const FilesSection = lazy(() => import('./components/FilesSection').then((module) => ({ default: module.FilesSection })));
 const LeaveSection = lazy(() => import('./components/LeaveSection').then((module) => ({ default: module.LeaveSection })));
+
+type LeaveBalanceDelta = { annual: number; sick: number; family: number };
+type LeaveBalanceDeltaMap = Record<string, LeaveBalanceDelta>;
+
+const getLeaveSnapshotKey = (clientKey: string) => `sd-leave-balance-snapshot:${clientKey}`;
+
+const buildLeaveSnapshot = (employees: Employee[]) => Object.fromEntries(
+  employees.map((employee) => [String(employee.id), {
+    annual: Number(employee.annual_leave || 0),
+    sick: Number(employee.sick_leave || 0),
+    family: Number(employee.family_leave || 0),
+  }])
+) as LeaveBalanceDeltaMap;
+
+const buildLeaveDeltaMap = (current: LeaveBalanceDeltaMap, previous: LeaveBalanceDeltaMap | null) => {
+  const deltaMap: LeaveBalanceDeltaMap = {};
+  if (!previous) return deltaMap;
+  for (const [employeeId, balances] of Object.entries(current)) {
+    const prior = previous[employeeId];
+    if (!prior) continue;
+    const annual = Number((balances.annual - prior.annual).toFixed(4));
+    const sick = Number((balances.sick - prior.sick).toFixed(4));
+    const family = Number((balances.family - prior.family).toFixed(4));
+    if (annual || sick || family) {
+      deltaMap[employeeId] = { annual, sick, family };
+    }
+  }
+  return deltaMap;
+};
 const EmployeeDashboard = lazy(() => import('./components/employee/EmployeeDashboard').then((module) => ({ default: module.EmployeeDashboard })));
 const ApplyLeave = lazy(() => import('./components/employee/ApplyLeave').then((module) => ({ default: module.ApplyLeave })));
 const MyLeave = lazy(() => import('./components/employee/MyLeave').then((module) => ({ default: module.MyLeave })));
@@ -224,6 +253,8 @@ export default function App() {
   const [rosterSeedWeekStart, setRosterSeedWeekStart] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState('analytics');
   const [leaveManagementEmployeeId, setLeaveManagementEmployeeId] = useState<string | null>(null);
+  const [leaveBalanceDeltas, setLeaveBalanceDeltas] = useState<LeaveBalanceDeltaMap>({});
+  const leaveBalanceSnapshotRef = useRef<LeaveBalanceDeltaMap | null>(null);
   const topBannerRef = useRef<HTMLDivElement | null>(null);
   const [topBannerHeight, setTopBannerHeight] = useState(0);
   
@@ -811,6 +842,36 @@ export default function App() {
     }
     return auth.user?.client_id || null;
   }
+
+  const leaveDeltaClientKey = getVisibleClientId() || 'default';
+
+  useEffect(() => {
+    const currentSnapshot = buildLeaveSnapshot(activeEmployees);
+    if (typeof window === 'undefined') {
+      leaveBalanceSnapshotRef.current = currentSnapshot;
+      setLeaveBalanceDeltas({});
+      return;
+    }
+
+    const snapshotKey = getLeaveSnapshotKey(leaveDeltaClientKey);
+    let previousSnapshot = leaveBalanceSnapshotRef.current;
+    if (!previousSnapshot) {
+      try {
+        const rawSnapshot = window.sessionStorage.getItem(snapshotKey);
+        previousSnapshot = rawSnapshot ? JSON.parse(rawSnapshot) : null;
+      } catch {
+        previousSnapshot = null;
+      }
+    }
+
+    const deltaMap = buildLeaveDeltaMap(currentSnapshot, previousSnapshot);
+    setLeaveBalanceDeltas(deltaMap);
+    leaveBalanceSnapshotRef.current = currentSnapshot;
+
+    try {
+      window.sessionStorage.setItem(snapshotKey, JSON.stringify(currentSnapshot));
+    } catch {}
+  }, [activeEmployees, leaveDeltaClientKey]);
 
   useEffect(() => {
     if (!auth.user) return;
@@ -2251,6 +2312,7 @@ export default function App() {
                 onViewLeaveEmployeeProfile={handleOpenLeaveEmployeeProfile}
                 clientContextKey={getVisibleClientId() || currentClientId || null}
                 isClientContextReady={!auth.loading && (!isSuperAdminRole(auth.user?.role) || Boolean(getVisibleClientId()))}
+                leaveBalanceDeltas={leaveBalanceDeltas}
               />
             </FeatureWrapper>
           )}
@@ -2436,7 +2498,7 @@ export default function App() {
           )}
           {activeSection === 'leave' && (
             <FeatureWrapper isLocked={lockedFeatures.includes('leave_management')} featureName="Leave Management">
-              <LeaveSection employees={activeEmployees} requests={combinedLeaveRequests} setRequests={setRequests} onRefresh={fetchLeaveRequests} onRefreshEmployees={fetchEmployees} initialSelectedEmployeeId={leaveManagementEmployeeId} />
+              <LeaveSection employees={activeEmployees} requests={combinedLeaveRequests} setRequests={setRequests} onRefresh={fetchLeaveRequests} onRefreshEmployees={fetchEmployees} initialSelectedEmployeeId={leaveManagementEmployeeId} clientContextKey={getVisibleClientId() || currentClientId || null} leaveBalanceDeltas={leaveBalanceDeltas} />
             </FeatureWrapper>
           )}
           {activeSection === 'files' && (

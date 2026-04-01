@@ -19,7 +19,6 @@ import { Employee, LeaveRequest, LeaveStatus } from '../../types';
 import { cn } from '../../lib/utils';
 import { format, parseISO } from 'date-fns';
 import { BrandedState } from '../BrandedStates';
-import { normalizeLeaveRequestsForDisplay } from '../../lib/leaveDisplay';
 
 interface MyLeaveProps {
   employee: Employee;
@@ -39,9 +38,7 @@ export const MyLeave: React.FC<MyLeaveProps> = ({ employee, requests, onCancelRe
   const [search, setSearch] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<LeaveRequest | null>(null);
 
-  const normalizedRequests = normalizeLeaveRequestsForDisplay(requests);
-
-  const filteredRequests = normalizedRequests.filter(req => {
+  const filteredRequests = requests.filter(req => {
     const matchesFilter = filter === 'all' || req.status === filter;
     const matchesSearch = req.type.toLowerCase().includes(search.toLowerCase()) || 
                           req.notes?.toLowerCase().includes(search.toLowerCase());
@@ -133,7 +130,7 @@ export const MyLeave: React.FC<MyLeaveProps> = ({ employee, requests, onCancelRe
                       {format(parseISO(req.start_date), 'MMM d')} - {format(parseISO(req.end_date), 'MMM d, yyyy')}
                     </div>
                     <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">
-                      {Number(req.days ?? (req.is_half_day ? 0.5 : 1)).toFixed(2)} Day(s)
+                      {req.is_half_day ? '0.5 Day' : 'Full Day'}
                     </p>
                   </td>
                   <td className="px-10 py-6">

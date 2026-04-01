@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   CalendarDays, 
   CheckCircle, 
@@ -11,7 +11,9 @@ import {
   User,
   FileText,
   ChevronLeft,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  TrendingUp,
+  TrendingDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -30,7 +32,6 @@ import {
 } from 'date-fns';
 import { Employee, LeaveRequest, LeaveType } from '../types';
 import { cn } from '../lib/utils';
-import { normalizeLeaveRequestsForDisplay } from '../lib/leaveDisplay';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
 import { appService } from '../services/appService';
@@ -42,9 +43,11 @@ interface LeaveSectionProps {
   onRefresh: (employeeId?: string) => Promise<LeaveRequest[]>;
   onRefreshEmployees?: () => Promise<void>;
   initialSelectedEmployeeId?: string | null;
+  clientContextKey?: string | null;
+  leaveBalanceDeltas?: Record<string, { annual: number; sick: number; family: number }>;
 }
 
-export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests, setRequests, onRefresh, onRefreshEmployees, initialSelectedEmployeeId }) => {
+export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests, setRequests, onRefresh, onRefreshEmployees, initialSelectedEmployeeId, clientContextKey: _clientContextKey, leaveBalanceDeltas = {} }) => {
   const pendingLeaveLocked = true;
   const [activeTab, setActiveTab] = useState<'employees' | 'pending' | 'calendar'>('employees');
   const [searchTerm, setSearchTerm] = useState('');
@@ -59,6 +62,23 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [notes, setNotes] = useState('');
+
+  const renderMovementBadge = (delta: unknown, positiveLabel = 'Accrued', negativeLabel = 'Used') => {
+    const numericValue = Number(delta);
+    if (!Number.isFinite(numericValue) || Math.abs(numericValue) < 0.00005) return null;
+    const isPositive = numericValue > 0;
+    return (
+      <div
+        className={cn(
+          'mt-3 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-widest',
+          isPositive ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+        )}
+      >
+        {isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+        <span>{isPositive ? positiveLabel : negativeLabel} {isPositive ? `+${Math.abs(numericValue).toFixed(4)}` : `-${Math.abs(numericValue).toFixed(4)}`}</span>
+      </div>
+    );
+  };
 
   const leaveTypeMeta: Record<LeaveType, { label: string; badge: string }> = {
     annual: { label: 'Annual Leave', badge: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
@@ -187,8 +207,6 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
     }
   };
 
-  const displayRequests = useMemo(() => normalizeLeaveRequestsForDisplay(requests), [requests]);
-
   const filteredEmployees = employees.filter(emp => 
     `${emp.first_name} ${emp.last_name}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
     emp.emp_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -200,14 +218,15 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
   const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 });
   const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
   const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
-  const visibleCalendarRequests = displayRequests
+  const visibleCalendarRequests = requests
     .filter((request) => ['approved', 'pending'].includes(request.status))
     .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
 
   // If an employee is selected, show their detailed view
   if (selectedEmployee) {
-    const employeeRequests = displayRequests.filter(r => r.employee_id === selectedEmployee.id);
+    const employeeRequests = requests.filter(r => r.employee_id === selectedEmployee.id);
     const pendingCount = employeeRequests.filter(r => r.status === 'pending').length;
+    const employeeDelta = leaveBalanceDeltas[String(selectedEmployee.id)] || { annual: 0, sick: 0, family: 0 };
 
     return (
       <div className="space-y-8">
@@ -251,6 +270,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               <div>
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Annual Leave</div>
                 <div className={cn("text-2xl font-black", Number(selectedEmployee.annual_leave || 0) < 0 ? "text-red-600" : "text-slate-800")}>{Number(selectedEmployee.annual_leave || 0).toFixed(4)} Days</div>
+                {renderMovementBadge(employeeDelta.annual)}
               </div>
             </div>
           </div>
@@ -262,6 +282,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               <div>
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Sick Leave</div>
                 <div className={cn("text-2xl font-black", Number(selectedEmployee.sick_leave || 0) < 0 ? "text-red-600" : "text-slate-800")}>{Number(selectedEmployee.sick_leave || 0).toFixed(4)} Days</div>
+                {renderMovementBadge(employeeDelta.sick)}
               </div>
             </div>
           </div>
@@ -273,6 +294,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               <div>
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Family Leave</div>
                 <div className={cn("text-2xl font-black", Number(selectedEmployee.family_leave || 0) < 0 ? "text-red-600" : "text-slate-800")}>{Number(selectedEmployee.family_leave || 0).toFixed(4)} Days</div>
+                {renderMovementBadge(employeeDelta.family)}
               </div>
             </div>
           </div>
@@ -524,7 +546,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredEmployees.map(emp => {
-                  const empRequests = displayRequests.filter(r => r.employee_id === emp.id);
+                  const empRequests = requests.filter(r => r.employee_id === emp.id);
                   const pendingCount = empRequests.filter(r => r.status === 'pending').length;
                   
                   return (
@@ -584,16 +606,16 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <h3 className="text-lg font-black text-slate-800">Pending Leave Requests</h3>
             <span className="px-3 py-1 bg-amber-100 text-amber-700 rounded-lg text-[10px] font-black uppercase tracking-widest">
-              {displayRequests.filter(r => r.status === 'pending').length} Pending
+              {requests.filter(r => r.status === 'pending').length} Pending
             </span>
           </div>
           <div className="divide-y divide-slate-100">
-            {displayRequests.filter(r => r.status === 'pending').length === 0 ? (
+            {requests.filter(r => r.status === 'pending').length === 0 ? (
               <div className="p-8 text-center text-slate-500 font-medium">
                 No pending leave requests.
               </div>
             ) : (
-              displayRequests.filter(r => r.status === 'pending').map(req => {
+              requests.filter(r => r.status === 'pending').map(req => {
                 const emp = employees.find(e => e.id === req.employee_id);
                 return (
                   <div key={req.id} className="p-6 hover:bg-slate-50 transition-colors">

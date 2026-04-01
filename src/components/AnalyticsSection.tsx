@@ -73,9 +73,10 @@ interface AnalyticsSectionProps {
   onViewLeaveEmployeeProfile?: (employeeName: string) => void;
   clientContextKey?: string | null;
   isClientContextReady?: boolean;
+  leaveBalanceDeltas?: Record<string, { annual: number; sick: number; family: number }>;
 }
 
-export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey, isClientContextReady = true }: AnalyticsSectionProps) {
+export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey, isClientContextReady = true, leaveBalanceDeltas = {} }: AnalyticsSectionProps) {
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -130,6 +131,23 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) return '0.0000';
     return numericValue.toFixed(4);
+  };
+
+  const renderLeaveDeltaBadge = (delta: unknown) => {
+    const numericValue = Number(delta);
+    if (!Number.isFinite(numericValue) || Math.abs(numericValue) < 0.00005) return null;
+    const isPositive = numericValue > 0;
+    return (
+      <div
+        className={cn(
+          'mt-1 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-black tracking-wide',
+          isPositive ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
+        )}
+      >
+        {isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+        <span>{isPositive ? `+${Math.abs(numericValue).toFixed(4)}` : `-${Math.abs(numericValue).toFixed(4)}`}</span>
+      </div>
+    );
   };
 
   if (loading && !data) {
@@ -371,7 +389,8 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
                         </div>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 ) : (
                   <tr>
                     <td colSpan={3} className="py-8 text-center text-slate-400 font-medium">No employees found</td>
@@ -409,12 +428,14 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {filteredLeave.length > 0 ? (
-                  filteredLeave.map((emp: any, idx: number) => (
+                  filteredLeave.map((emp: any, idx: number) => {
+                    const movement = leaveBalanceDeltas[String(emp.id)] || { annual: 0, sick: 0, family: 0 };
+                    return (
                     <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
                       <td className="py-4 px-6 text-sm font-bold text-slate-700 group-hover:text-slate-900">{emp.name}</td>
-                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.annual)}`}>{formatLeaveMetric(emp.annual)}</td>
-                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.sick)}`}>{formatLeaveMetric(emp.sick)}</td>
-                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.family)}`}>{formatLeaveMetric(emp.family)}</td>
+                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.annual)}`}><div className="flex flex-col items-center"><span>{formatLeaveMetric(emp.annual)}</span>{renderLeaveDeltaBadge(movement.annual)}</div></td>
+                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.sick)}`}><div className="flex flex-col items-center"><span>{formatLeaveMetric(emp.sick)}</span>{renderLeaveDeltaBadge(movement.sick)}</div></td>
+                      <td className={`py-4 px-6 text-sm font-bold text-center ${getLeaveValueClassName(emp.family)}`}><div className="flex flex-col items-center"><span>{formatLeaveMetric(emp.family)}</span>{renderLeaveDeltaBadge(movement.family)}</div></td>
                       <td className="py-4 px-6 text-right">
                         <button
                           type="button"
@@ -425,7 +446,8 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
                         </button>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 ) : (
                   <tr>
                     <td colSpan={5} className="py-8 text-center text-slate-400 font-medium">No employees found</td>
