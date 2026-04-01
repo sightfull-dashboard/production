@@ -325,6 +325,193 @@ async function getExistingLeaveOverlap(employeeId: string, startDate: string, en
   return (data || []) as any[];
 }
 
+
+const normalizeShiftLabel = (value: unknown) => String(value || '').trim().toLowerCase();
+
+const getRosterLeaveConfigFromShift = (shift: any): { type: LeaveTypeKey; isHalfDay: boolean; units: number } | null => {
+  const label = normalizeShiftLabel(shift?.label);
+  if (label === 'annual leave') return { type: 'annual', isHalfDay: false, units: 1 };
+  if (label === 'sick leave') return { type: 'sick', isHalfDay: false, units: 1 };
+  if (label === 'family leave' || label === 'family responsibility') return { type: 'family', isHalfDay: false, units: 1 };
+  if (label === 'unpaid leave') return { type: 'unpaid', isHalfDay: false, units: 1 };
+  if (label === 'half day') return { type: 'half_day', isHalfDay: true, units: 0.5 };
+  return null;
+};
+
+const enumerateDateRange = (startDate: string, endDate: string) => {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [] as string[];
+  const dates: string[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    dates.push(formatDateOnly(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+};
+
+const getRosterLeaveRequestId = (employeeId: string, type: LeaveTypeKey, startDate: string, endDate: string) =>
+  `roster_${employeeId}_${String(type).replace(/[^a-z0-9_]+/gi, '_')}_${startDate.replace(/-/g, '')}_${endDate.replace(/-/g, '')}`;
+
+async function buildRosterDerivedLeaveRequests(employeeId: string, clientId: string, client: any = supabaseAdmin) {
+  const { data: rosterRows, error: rosterError } = await client
+    .from('roster')
+    .select('employee_id,day_date,shift_id')
+    .eq('employee_id', employeeId)
+    .not('shift_id', 'is', null)
+    .order('day_date', { ascending: true });
+  if (rosterError) throw rosterError;
+
+  const rows = (rosterRows || []) as any[];
+  if (!rows.length) return [] as any[];
+
+  const shiftIds = Array.from(new Set(rows.map((row: any) => String(row.shift_id || '')).filter(Boolean)));
+  if (!shiftIds.length) return [] as any[];
+
+  const { data: shiftsData, error: shiftsError } = await client
+    .from('shifts')
+    .select('id,label')
+    .eq('client_id', clientId)
+    .in('id', shiftIds);
+  if (shiftsError) throw shiftsError;
+
+  const shiftMap = new Map((shiftsData || []).map((shift: any) => [String(shift.id), shift]));
+
+  const { data: manualLeaveRows, error: manualLeaveError } = await client
+    .from('leave_requests')
+    .select('id,start_date,end_date')
+    .eq('employee_id', employeeId)
+    .neq('source', 'roster')
+    .in('status', ['pending', 'approved']);
+  if (manualLeaveError) throw manualLeaveError;
+
+  const blockedDates = new Set<string>();
+  for (const request of (manualLeaveRows || []) as any[]) {
+    for (const date of enumerateDateRange(String(request.start_date || '').slice(0, 10), String(request.end_date || '').slice(0, 10))) {
+      blockedDates.add(date);
+    }
+  }
+
+  const entries: any[] = [];
+  let current: any = null;
+
+  const flushCurrent = () => {
+    if (!current) return;
+    entries.push({
+      id: getRosterLeaveRequestId(employeeId, current.type, current.start_date, current.end_date),
+      employee_id: employeeId,
+      type: current.type,
+      start_date: current.start_date,
+      end_date: current.end_date,
+      is_half_day: !!current.is_half_day,
+      status: 'approved',
+      notes: 'Created from roster assignment',
+      admin_notes: '',
+      days: roundLeaveAmount(current.days),
+      source: 'roster',
+      source_ref: `roster:${employeeId}:${current.type}:${current.start_date}:${current.end_date}`,
+      attachment_url: '',
+      updated_at: new Date().toISOString(),
+    });
+    current = null;
+  };
+
+  for (const row of rows) {
+    const dayDate = String(row.day_date || '').slice(0, 10);
+    if (!dayDate || blockedDates.has(dayDate)) {
+      flushCurrent();
+      continue;
+    }
+
+    const shift = shiftMap.get(String(row.shift_id || ''));
+    const leaveConfig = getRosterLeaveConfigFromShift(shift);
+    if (!leaveConfig) {
+      flushCurrent();
+      continue;
+    }
+
+    const entry = {
+      type: leaveConfig.type,
+      start_date: dayDate,
+      end_date: dayDate,
+      is_half_day: leaveConfig.isHalfDay,
+      days: leaveConfig.units,
+    };
+
+    if (!current) {
+      current = entry;
+      continue;
+    }
+
+    const previousEnd = new Date(`${current.end_date}T00:00:00`);
+    previousEnd.setDate(previousEnd.getDate() + 1);
+    const isAdjacent = formatDateOnly(previousEnd) === dayDate;
+    const canMerge = !current.is_half_day && !entry.is_half_day && current.type === entry.type && isAdjacent;
+
+    if (canMerge) {
+      current.end_date = dayDate;
+      current.days = roundLeaveAmount(Number(current.days || 0) + Number(entry.days || 0));
+    } else {
+      flushCurrent();
+      current = entry;
+    }
+  }
+
+  flushCurrent();
+  return entries;
+}
+
+async function syncRosterLeaveRecordsForEmployeeSupabase(employeeId: string, clientId: string) {
+  await reconcileEmployeeLeaveAccrualSupabase(employeeId);
+
+  const nextEntries = await buildRosterDerivedLeaveRequests(employeeId, clientId, supabaseAdmin);
+  const { data: existingRows, error: existingError } = await supabaseAdmin
+    .from('leave_requests')
+    .select('*')
+    .eq('employee_id', employeeId)
+    .eq('source', 'roster');
+  if (existingError) throw existingError;
+
+  const existing = (existingRows || []) as any[];
+  const sumTrackedDays = (rows: any[]) => {
+    const totals: Record<BalanceLeaveTypeKey, number> = { annual: 0, sick: 0, family: 0 };
+    for (const row of rows) {
+      if (String(row.status || 'approved') !== 'approved') continue;
+      const type = normalizeLeaveType(row.type);
+      if (!type) continue;
+      const trackedType = getBalanceTrackedLeaveType(type);
+      if (!trackedType) continue;
+      totals[trackedType] = roundLeaveAmount((totals[trackedType] || 0) + (Number(row.days) || 0));
+    }
+    return totals;
+  };
+
+  const previousTotals = sumTrackedDays(existing);
+  const nextTotals = sumTrackedDays(nextEntries);
+
+  if (nextEntries.length) {
+    const { error: upsertError } = await supabaseAdmin
+      .from('leave_requests')
+      .upsert(nextEntries, { onConflict: 'id' });
+    if (upsertError) throw upsertError;
+  }
+
+  const nextIds = new Set(nextEntries.map((row: any) => row.id));
+  const staleIds = existing.map((row: any) => row.id).filter((id: string) => !nextIds.has(id));
+  if (staleIds.length) {
+    const { error: deleteError } = await supabaseAdmin.from('leave_requests').delete().in('id', staleIds);
+    if (deleteError) throw deleteError;
+  }
+
+  for (const trackedType of ['annual', 'sick', 'family'] as BalanceLeaveTypeKey[]) {
+    const adjustment = roundLeaveAmount((previousTotals[trackedType] || 0) - (nextTotals[trackedType] || 0));
+    if (adjustment !== 0) {
+      await adjustEmployeeLeaveBalanceSupabase(employeeId, trackedType, adjustment);
+    }
+  }
+}
+
 async function fetchUserById(id: string) {
   const { data } = await supabaseAdmin.from('users').select('*').eq('id', id).single();
   return data as any;
@@ -975,6 +1162,19 @@ export function registerSupabaseCoreRoutes({
 
     const { data, error } = await dataClient.from('roster').upsert(payload, { onConflict: 'employee_id,day_date' }).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
+
+    let leaveSyncWarning: string | null = null;
+    try {
+      await syncRosterLeaveRecordsForEmployeeSupabase(payload.employee_id, tenant.clientId);
+    } catch (leaveSyncError: any) {
+      console.error('Failed to sync Supabase roster leave records:', leaveSyncError);
+      leaveSyncWarning = leaveSyncError?.message || 'Leave balances could not be synchronized.';
+    }
+
+    if (leaveSyncWarning) {
+      return res.json({ ...data, leave_sync_warning: leaveSyncWarning });
+    }
+
     res.json(data);
   }));
 
