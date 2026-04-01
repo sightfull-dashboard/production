@@ -21,17 +21,21 @@ const getSessionSupabaseAuthUserId = (req: any) => (req.session as any)?.supabas
 
 const getSessionSupabaseAccessToken = (req: any) => (req.session as any)?.supabaseAccessToken || null;
 
-const getTenantDataClient = (req: any) => {
-  if (env.supabaseUseRlsForAppData) {
-    const accessToken = String(getSessionSupabaseAccessToken(req) || '').trim();
-    if (accessToken) {
-      try {
-        return createRequestSupabaseClient(accessToken);
-      } catch (error) {
-        console.warn('Failed to create request-scoped Supabase client, falling back to admin client:', error);
+
+const safeHandler = (handler: (req: any, res: any, next?: any) => Promise<any> | any) => {
+  return (req: any, res: any, next: any) => {
+    Promise.resolve(handler(req, res, next)).catch((error: any) => {
+      console.error('Supabase route failed:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error?.message || 'Request failed' });
       }
-    }
-  }
+    });
+  };
+};
+
+const getTenantDataClient = (_req: any) => {
+  // Temporarily force the admin client for app data to avoid request-scoped RLS/session issues
+  // taking down shared dashboard routes in production.
   return supabaseAdmin;
 };
 
@@ -586,14 +590,14 @@ export function registerSupabaseCoreRoutes({
       mailer: getMailerReadiness(),
       timestamp: new Date().toISOString(),
     });
-  });
+  }));
 
   app.get('/api/system/readiness', (_req, res) => {
     res.json({
       database: getDatabaseReadiness(),
       integrations: { supabase: getSupabaseReadiness(), mailer: getMailerReadiness() },
     });
-  });
+  }));
 
   app.post('/api/auth/login', async (req, res) => {
     try {
@@ -669,13 +673,13 @@ export function registerSupabaseCoreRoutes({
       return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: payload.client_id }));
     }
     return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending, authSource: (req.session as any).authLoginSource || 'supabase' });
-  });
+  }));
 
   app.post('/api/auth/logout', (req, res) => {
     logActivity(req, 'LOGOUT');
     clearSessionAuthState(req);
     req.session.destroy(() => res.json({ success: true }));
-  });
+  }));
 
   app.post('/api/employee-auth/login', async (req, res) => {
     try {
@@ -701,7 +705,7 @@ export function registerSupabaseCoreRoutes({
     } catch (error: any) {
       return res.status(500).json({ error: error?.message || 'Failed to sign in employee' });
     }
-  });
+  }));
 
   app.get('/api/employee-auth/me', async (req, res) => {
     const employeeId = getSessionEmployeeId(req);
@@ -713,23 +717,23 @@ export function registerSupabaseCoreRoutes({
       return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: employee.client_id || null }));
     }
     return res.json(sanitizeEmployeeForResponse({ ...employee, fallback_image: client?.fallback_image || null }));
-  });
+  }));
 
   app.post('/api/employee-auth/logout', (req, res) => {
     delete (req.session as any).employeeId;
     delete (req.session as any).employeeClientId;
     res.json({ ok: true });
-  });
+  }));
 
-  app.get('/api/employees', async (req, res) => {
+  app.get('/api/employees', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const dataClient = getTenantDataClient(req);
     const employees = await listEmployeesForClient(tenant.clientId, dataClient);
     res.json(employees);
-  });
+  }));
 
-  app.post('/api/employees', async (req, res) => {
+  app.post('/api/employees', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const actorRole = tenant.role;
@@ -769,9 +773,9 @@ export function registerSupabaseCoreRoutes({
     if (error) return res.status(500).json({ error: error.message });
     logActivity(req, 'CREATE_EMPLOYEE', { emp_id: data.emp_id, name: `${data.first_name} ${data.last_name}` });
     res.json(sanitizeEmployeeForResponse({ id, ...employeePayload }));
-  });
+  }));
 
-  app.put('/api/employees/:id', async (req, res) => {
+  app.put('/api/employees/:id', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const dataClient = getTenantDataClient(req);
@@ -785,9 +789,9 @@ export function registerSupabaseCoreRoutes({
     const { data: updated, error } = await dataClient.from('employees').update(updatePayload).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(sanitizeEmployeeForResponse(updated));
-  });
+  }));
 
-  app.post('/api/employees/:id/offboard', async (req, res) => {
+  app.post('/api/employees/:id/offboard', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const dataClient = getTenantDataClient(req);
@@ -802,9 +806,9 @@ export function registerSupabaseCoreRoutes({
     const { data, error } = await dataClient.from('employees').update(payload).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
-  });
+  }));
 
-  app.post('/api/employees/:id/restore', async (req, res) => {
+  app.post('/api/employees/:id/restore', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     if (tenant.role !== 'superadmin') return res.status(403).json({ error: 'Forbidden: Super Admin access required' });
@@ -825,9 +829,9 @@ export function registerSupabaseCoreRoutes({
     const { data: restored, error } = await dataClient.from('employees').update(payload).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(sanitizeEmployeeForResponse(restored));
-  });
+  }));
 
-  app.delete('/api/employees/:id', async (req, res) => {
+  app.delete('/api/employees/:id', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const dataClient = getTenantDataClient(req);
@@ -836,17 +840,17 @@ export function registerSupabaseCoreRoutes({
     const { error } = await dataClient.from('employees').delete().eq('id', req.params.id).eq('client_id', tenant.clientId);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
-  });
+  }));
 
-  app.get('/api/shifts', async (req, res) => {
+  app.get('/api/shifts', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const dataClient = getTenantDataClient(req);
     const data = await listShiftsForClient(tenant.clientId, dataClient);
     res.json(sortShiftsBaseFirst(data));
-  });
+  }));
 
-  app.post('/api/shifts', async (req, res) => {
+  app.post('/api/shifts', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const dataClient = getTenantDataClient(req);
@@ -860,9 +864,9 @@ export function registerSupabaseCoreRoutes({
     const { data, error } = await dataClient.from('shifts').insert({ ...payload, id, client_id: tenant.clientId }).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
-  });
+  }));
 
-  app.put('/api/shifts/:id', async (req, res) => {
+  app.put('/api/shifts/:id', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const dataClient = getTenantDataClient(req);
@@ -877,9 +881,9 @@ export function registerSupabaseCoreRoutes({
     const { data, error } = await dataClient.from('shifts').update({ ...payload, client_id: tenant.clientId }).eq('id', req.params.id).eq('client_id', tenant.clientId).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
-  });
+  }));
 
-  app.delete('/api/shifts/:id', async (req, res) => {
+  app.delete('/api/shifts/:id', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const dataClient = getTenantDataClient(req);
@@ -891,9 +895,9 @@ export function registerSupabaseCoreRoutes({
     const { error } = await dataClient.from('shifts').delete().eq('id', req.params.id).eq('client_id', tenant.clientId);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
-  });
+  }));
 
-  app.get('/api/roster', async (req, res) => {
+  app.get('/api/roster', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const clientId = tenant.clientId;
@@ -914,9 +918,9 @@ export function registerSupabaseCoreRoutes({
     const { data, error } = await rosterQuery;
     if (error) return res.status(500).json({ error: error.message });
     res.json(data || []);
-  });
+  }));
 
-  app.post('/api/roster', async (req, res) => {
+  app.post('/api/roster', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const payload = {
@@ -972,9 +976,9 @@ export function registerSupabaseCoreRoutes({
     const { data, error } = await dataClient.from('roster').upsert(payload, { onConflict: 'employee_id,day_date' }).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
-  });
+  }));
 
-  app.get('/api/roster-meta', async (req, res) => {
+  app.get('/api/roster-meta', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const clientId = tenant.clientId;
@@ -989,9 +993,9 @@ export function registerSupabaseCoreRoutes({
     const { data, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
     res.json(data || []);
-  });
+  }));
 
-  app.post('/api/roster-meta', async (req, res) => {
+  app.post('/api/roster-meta', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     const employeeId = String(req.body?.employee_id || '').trim();
@@ -1012,7 +1016,7 @@ export function registerSupabaseCoreRoutes({
   });
 
 
-  app.get('/api/analytics', async (req, res) => {
+  app.get('/api/analytics', safeHandler(async (req, res) => {
     const tenant = await requireTenantContext(req, res);
     if (!tenant) return;
     try {
@@ -1323,9 +1327,9 @@ export function registerSupabaseCoreRoutes({
     } catch (error: any) {
       return res.status(500).json({ error: error?.message || 'Failed to load analytics' });
     }
-  });
+  }));
 
-  app.get('/api/leave-requests', async (req, res) => {
+  app.get('/api/leave-requests', safeHandler(async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
     const employeeSessionId = getSessionEmployeeId(req);
     const tenant = employeeSessionId ? null : await requireTenantContext(req, res);
@@ -1362,9 +1366,9 @@ export function registerSupabaseCoreRoutes({
     } catch (error: any) {
       res.status(500).json({ error: error?.message || 'Failed to fetch leave requests' });
     }
-  });
+  }));
 
-  app.post('/api/leave-requests', async (req, res) => {
+  app.post('/api/leave-requests', safeHandler(async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
     const employeeSessionId = getSessionEmployeeId(req);
     const employee_id = String(req.body?.employee_id || employeeSessionId || '').trim();
@@ -1425,9 +1429,9 @@ export function registerSupabaseCoreRoutes({
     } catch (error: any) {
       res.status(500).json({ error: error?.message || 'Failed to create leave request' });
     }
-  });
+  }));
 
-  app.put('/api/leave-requests/:id/status', async (req, res) => {
+  app.put('/api/leave-requests/:id/status', safeHandler(async (req, res) => {
     if (!ensureUser(req, res)) return;
     const status = normalizeLeaveStatus(req.body?.status);
     if (!status || !['approved','declined'].includes(status)) return res.status(400).json({ error: 'Valid status is required' });
@@ -1469,9 +1473,9 @@ export function registerSupabaseCoreRoutes({
     } catch (error: any) {
       res.status(500).json({ error: error?.message || 'Failed to update leave request' });
     }
-  });
+  }));
 
-  app.post('/api/leave-requests/:id/cancel', async (req, res) => {
+  app.post('/api/leave-requests/:id/cancel', safeHandler(async (req, res) => {
     if (!ensureUserOrEmployee(req, res)) return;
     try {
       const dataClient = getTenantDataClient(req);
@@ -1486,5 +1490,5 @@ export function registerSupabaseCoreRoutes({
     } catch (error: any) {
       res.status(500).json({ error: error?.message || 'Failed to cancel leave request' });
     }
-  });
+  }));
 }

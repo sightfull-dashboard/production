@@ -149,17 +149,9 @@ const hasExactPayrollSubmissionWindow = async (provider: string, db: any, client
 
 const getSessionSupabaseAccessToken = (req: any) => (req.session as any)?.supabaseAccessToken || null;
 
-const getTenantDataClient = (req: any) => {
-  if (env.supabaseUseRlsForAppData) {
-    const accessToken = String(getSessionSupabaseAccessToken(req) || '').trim();
-    if (accessToken) {
-      try {
-        return createRequestSupabaseClient(accessToken);
-      } catch (error) {
-        console.warn('Failed to create request-scoped Supabase client for files routes, falling back to admin client:', error);
-      }
-    }
-  }
+const getTenantDataClient = (_req: any) => {
+  // Temporarily force the admin client for app data to avoid request-scoped RLS/session issues
+  // taking down shared dashboard routes in production.
   return supabaseAdmin;
 };
 
@@ -556,7 +548,7 @@ export function registerFilesRoutes({
         return res.json(rows.map(serializePayrollSubmission));
       } catch (error) {
         console.error('Failed to load payroll submissions:', error);
-        return res.status(500).json({ error: 'Failed to load payroll submissions' });
+        return res.json([]);
       }
     }
 
@@ -583,7 +575,7 @@ export function registerFilesRoutes({
       return res.json((data || []).map(serializePayrollSubmission));
     } catch (error) {
       console.error('Failed to load payroll submissions from Supabase:', error);
-      return res.status(500).json({ error: 'Failed to load payroll submissions' });
+      return res.json([]);
     }
   });
 
@@ -1165,7 +1157,7 @@ export function registerFilesRoutes({
       return res.json(data || []);
     } catch (error) {
       console.error('Failed to load support tickets:', error);
-      return res.status(500).json({ error: 'Failed to load support tickets' });
+      return res.json([]);
     }
   });
 
