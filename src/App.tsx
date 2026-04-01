@@ -1730,7 +1730,7 @@ export default function App() {
               {employeeSection === 'my-leave' && <MyLeave employee={employeeAuth.employee} requests={requests.filter(req => req.employee_id === employeeAuth.employee.id)} onCancelRequest={async (id) => { await appService.cancelLeaveRequest(id); await fetchLeaveRequests(employeeAuth.employee.id); toast.success('Leave request cancelled'); }} />}
               {employeeSection === 'calendar' && <EmployeeCalendar employee={employeeAuth.employee} teamLeave={requests.filter(req => req.status === 'approved')} />}
               {employeeSection === 'documents' && <EmployeeDocuments employee={employeeAuth.employee} />}
-              {employeeSection === 'profile' && <EmployeeProfile employee={employeeAuth.employee} onLogout={handleLogout} />}
+              {employeeSection === 'profile' && <EmployeeProfile employee={employeeAuth.employee} leaveRequests={requests.filter(req => req.employee_id === employeeAuth.employee.id)} onLogout={handleLogout} />}
             </Suspense>
           </motion.div>
         </main>

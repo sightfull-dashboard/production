@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   User, 
   Mail, 
   Phone, 
   MapPin, 
   Calendar, 
+  CalendarDays,
   Shield, 
   Lock, 
   Bell, 
@@ -14,26 +15,86 @@ import {
   LogOut,
   Briefcase,
   Building2,
-  CreditCard
+  CreditCard,
+  Clock3,
+  MinusCircle,
+  PlusCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Employee } from '../../types';
+import { Employee, LeaveRequest, LeaveType } from '../../types';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
+import { format, parseISO } from 'date-fns';
 
 interface EmployeeProfileProps {
   employee: Employee;
+  leaveRequests?: LeaveRequest[];
   onLogout: () => void;
 }
 
-export const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employee, onLogout }) => {
-  const [activeTab, setActiveTab] = useState<'personal' | 'employment' | 'settings'>('personal');
+export const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employee, leaveRequests = [], onLogout }) => {
+  const [activeTab, setActiveTab] = useState<'personal' | 'employment' | 'leave' | 'settings'>('personal');
   const [isEditing, setIsEditing] = useState(false);
 
   const handleSave = () => {
     setIsEditing(false);
     toast.success('Profile updated successfully');
   };
+
+  const leaveTypeMeta: Record<LeaveType, { label: string; badge: string }> = {
+    annual: { label: 'Annual Leave', badge: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+    sick: { label: 'Sick Leave', badge: 'bg-amber-50 text-amber-700 border-amber-100' },
+    family: { label: 'Family Responsibility', badge: 'bg-rose-50 text-rose-700 border-rose-100' },
+    unpaid: { label: 'Unpaid Leave', badge: 'bg-slate-100 text-slate-700 border-slate-200' },
+    half_day: { label: 'Half Day', badge: 'bg-sky-50 text-sky-700 border-sky-100' },
+  };
+
+  const sortedLeaveRequests = useMemo(
+    () => [...leaveRequests].sort((a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime()),
+    [leaveRequests]
+  );
+
+  const upcomingLeave = useMemo(
+    () =>
+      sortedLeaveRequests.filter(
+        (request) =>
+          ['approved', 'pending'].includes(request.status) &&
+          new Date(request.end_date).getTime() >= new Date(new Date().toDateString()).getTime()
+      ),
+    [sortedLeaveRequests]
+  );
+
+  const balanceTrendMeta = useMemo(() => {
+    const requestsTaken = sortedLeaveRequests
+      .filter((request) => request.status === 'approved')
+      .reduce(
+        (acc, request) => {
+          const amount = Number(request.days ?? (request.is_half_day ? 0.5 : 1));
+          switch (request.type) {
+            case 'annual':
+            case 'half_day':
+              acc.annual += amount;
+              break;
+            case 'sick':
+              acc.sick += amount;
+              break;
+            case 'family':
+              acc.family += amount;
+              break;
+            default:
+              break;
+          }
+          return acc;
+        },
+        { annual: 0, sick: 0, family: 0 }
+      );
+
+    return [
+      { key: 'annual', label: 'Annual Leave', value: Number(employee.annual_leave || 0), used: requestsTaken.annual, icon: CalendarDays, tone: 'emerald' },
+      { key: 'sick', label: 'Sick Leave', value: Number(employee.sick_leave || 0), used: requestsTaken.sick, icon: PlusCircle, tone: 'amber' },
+      { key: 'family', label: 'Family Leave', value: Number(employee.family_leave || 0), used: requestsTaken.family, icon: MinusCircle, tone: 'rose' },
+    ];
+  }, [employee.annual_leave, employee.sick_leave, employee.family_leave, sortedLeaveRequests]);
 
   return (
     <div className="space-y-10">
@@ -51,7 +112,7 @@ export const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employee, onLo
             <h2 className="text-4xl font-black text-slate-800 tracking-tight">{employee.first_name} {employee.last_name}</h2>
             <div className="flex flex-wrap items-center gap-4">
               <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black rounded-lg uppercase tracking-widest border border-emerald-200">
-                {employee.role || 'Employee'}
+                {employee.job_title || 'Employee'}
               </span>
               <span className="text-slate-400 font-bold text-sm flex items-center gap-1.5">
                 <Building2 className="w-4 h-4" />
@@ -59,7 +120,7 @@ export const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employee, onLo
               </span>
               <span className="text-slate-400 font-bold text-sm flex items-center gap-1.5">
                 <Calendar className="w-4 h-4" />
-                Joined {employee.hire_date || 'Jan 2024'}
+                Joined {employee.start_date ? format(parseISO(employee.start_date), 'MMM yyyy') : 'Jan 2024'}
               </span>
             </div>
           </div>
@@ -92,6 +153,7 @@ export const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employee, onLo
           {[
             { id: 'personal', label: 'Personal Details', icon: User },
             { id: 'employment', label: 'Employment Info', icon: Briefcase },
+            { id: 'leave', label: 'Leave Management', icon: CalendarDays },
             { id: 'settings', label: 'Account Settings', icon: Shield },
           ].map((tab) => (
             <button
@@ -218,7 +280,7 @@ export const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employee, onLo
                       <div className="space-y-4">
                         <div>
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Position</p>
-                          <p className="font-black text-slate-800 text-lg">{employee.role || 'Senior Operations Specialist'}</p>
+                          <p className="font-black text-slate-800 text-lg">{employee.job_title || 'Senior Operations Specialist'}</p>
                         </div>
                         <div>
                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Department</p>
@@ -253,6 +315,141 @@ export const EmployeeProfile: React.FC<EmployeeProfileProps> = ({ employee, onLo
                         </div>
                       </div>
                     </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'leave' && (
+              <motion.div
+                key="leave"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-8"
+              >
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {balanceTrendMeta.map((item) => {
+                    const Icon = item.icon;
+                    const isNegative = item.value < 0;
+                    return (
+                      <div key={item.key} className="bg-white rounded-[32px] p-8 shadow-xl shadow-slate-200/40 border border-slate-100 space-y-5">
+                        <div className="flex items-center gap-4">
+                          <div className={cn(
+                            "w-14 h-14 rounded-[20px] flex items-center justify-center",
+                            item.tone === 'emerald' && "bg-emerald-100 text-emerald-600",
+                            item.tone === 'amber' && "bg-amber-100 text-amber-600",
+                            item.tone === 'rose' && "bg-rose-100 text-rose-600",
+                          )}>
+                            <Icon className="w-7 h-7" />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{item.label}</p>
+                            <p className={cn("text-3xl font-black tracking-tight", isNegative ? "text-rose-600" : "text-slate-800")}>
+                              {item.value.toFixed(4)}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="rounded-[24px] bg-slate-50 border border-slate-100 px-5 py-4">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Approved days used</p>
+                          <p className="text-sm font-black text-slate-700">{item.used.toFixed(2)} days</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="bg-white rounded-[40px] p-10 shadow-xl shadow-slate-200/50 border border-slate-100 space-y-8">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                      <h3 className="text-2xl font-black text-slate-800 tracking-tight">Upcoming Leave</h3>
+                      <p className="text-sm text-slate-500 font-bold">Pending and approved leave booked from today onward.</p>
+                    </div>
+                    <span className="px-4 py-2 rounded-2xl bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest">
+                      {upcomingLeave.length} upcoming entries
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {upcomingLeave.length === 0 ? (
+                      <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50 px-6 py-8 text-center text-sm font-bold text-slate-500">
+                        No upcoming leave booked yet.
+                      </div>
+                    ) : (
+                      upcomingLeave.slice(0, 6).map((request) => (
+                        <div key={request.id} className="rounded-[28px] border border-slate-100 bg-slate-50 px-6 py-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <span className={cn("inline-flex items-center px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border", leaveTypeMeta[request.type]?.badge || 'bg-slate-100 text-slate-700 border-slate-200')}>
+                                {leaveTypeMeta[request.type]?.label || request.type}
+                              </span>
+                              <span className={cn(
+                                "inline-flex items-center px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border",
+                                request.status === 'approved' ? "bg-emerald-50 text-emerald-700 border-emerald-100" : "bg-amber-50 text-amber-700 border-amber-100"
+                              )}>
+                                {request.status}
+                              </span>
+                            </div>
+                            <p className="text-sm font-black text-slate-800">
+                              {format(parseISO(request.start_date), 'MMM d, yyyy')} – {format(parseISO(request.end_date), 'MMM d, yyyy')}
+                            </p>
+                            {request.notes ? (
+                              <p className="text-sm text-slate-500 font-medium">{request.notes}</p>
+                            ) : null}
+                          </div>
+                          <div className="text-sm font-black text-slate-500">
+                            {Number(request.days ?? (request.is_half_day ? 0.5 : 1)).toFixed(2)} day(s)
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-[40px] p-10 shadow-xl shadow-slate-200/50 border border-slate-100 space-y-8">
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-800 tracking-tight">Leave History</h3>
+                    <p className="text-sm text-slate-500 font-bold">All leave requests linked to your employee record.</p>
+                  </div>
+                  <div className="space-y-3">
+                    {sortedLeaveRequests.length === 0 ? (
+                      <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50 px-6 py-8 text-center text-sm font-bold text-slate-500">
+                        No leave history available yet.
+                      </div>
+                    ) : (
+                      sortedLeaveRequests.map((request) => (
+                        <div key={request.id} className="rounded-[28px] border border-slate-100 bg-white px-6 py-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <span className={cn("inline-flex items-center px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border", leaveTypeMeta[request.type]?.badge || 'bg-slate-100 text-slate-700 border-slate-200')}>
+                                {leaveTypeMeta[request.type]?.label || request.type}
+                              </span>
+                              <span className={cn(
+                                "inline-flex items-center px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border",
+                                request.status === 'approved' && "bg-emerald-50 text-emerald-700 border-emerald-100",
+                                request.status === 'pending' && "bg-amber-50 text-amber-700 border-amber-100",
+                                request.status === 'declined' && "bg-rose-50 text-rose-700 border-rose-100",
+                                request.status === 'cancelled' && "bg-slate-100 text-slate-700 border-slate-200",
+                              )}>
+                                {request.status}
+                              </span>
+                              {request.source === 'roster' ? (
+                                <span className="inline-flex items-center px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border bg-indigo-50 text-indigo-700 border-indigo-100">
+                                  From roster
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="text-sm font-black text-slate-800">
+                              {format(parseISO(request.start_date), 'MMM d, yyyy')} – {format(parseISO(request.end_date), 'MMM d, yyyy')}
+                            </p>
+                            {request.notes ? <p className="text-sm text-slate-500 font-medium">{request.notes}</p> : null}
+                          </div>
+                          <div className="flex items-center gap-3 text-sm font-black text-slate-500">
+                            <Clock3 className="w-4 h-4" />
+                            {Number(request.days ?? (request.is_half_day ? 0.5 : 1)).toFixed(2)} day(s)
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </motion.div>
