@@ -1094,7 +1094,6 @@ export function registerFilesRoutes({
       return res.status(403).json({ error: 'Only super admins can delete payroll submissions' });
     }
 
-    const dataClient = getTenantDataClient(req);
     const { error: deleteError } = await dataClient
       .from('payroll_submissions')
       .delete()
