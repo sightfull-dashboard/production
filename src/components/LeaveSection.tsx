@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   CalendarDays, 
   CheckCircle, 
@@ -30,6 +30,7 @@ import {
 } from 'date-fns';
 import { Employee, LeaveRequest, LeaveType } from '../types';
 import { cn } from '../lib/utils';
+import { normalizeLeaveRequestsForDisplay } from '../lib/leaveDisplay';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
 import { appService } from '../services/appService';
@@ -186,6 +187,8 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
     }
   };
 
+  const displayRequests = useMemo(() => normalizeLeaveRequestsForDisplay(requests), [requests]);
+
   const filteredEmployees = employees.filter(emp => 
     `${emp.first_name} ${emp.last_name}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
     emp.emp_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -197,13 +200,13 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
   const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 });
   const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
   const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
-  const visibleCalendarRequests = requests
+  const visibleCalendarRequests = displayRequests
     .filter((request) => ['approved', 'pending'].includes(request.status))
     .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
 
   // If an employee is selected, show their detailed view
   if (selectedEmployee) {
-    const employeeRequests = requests.filter(r => r.employee_id === selectedEmployee.id);
+    const employeeRequests = displayRequests.filter(r => r.employee_id === selectedEmployee.id);
     const pendingCount = employeeRequests.filter(r => r.status === 'pending').length;
 
     return (
@@ -521,7 +524,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredEmployees.map(emp => {
-                  const empRequests = requests.filter(r => r.employee_id === emp.id);
+                  const empRequests = displayRequests.filter(r => r.employee_id === emp.id);
                   const pendingCount = empRequests.filter(r => r.status === 'pending').length;
                   
                   return (
@@ -581,16 +584,16 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
           <div className="p-6 border-b border-slate-100 flex items-center justify-between">
             <h3 className="text-lg font-black text-slate-800">Pending Leave Requests</h3>
             <span className="px-3 py-1 bg-amber-100 text-amber-700 rounded-lg text-[10px] font-black uppercase tracking-widest">
-              {requests.filter(r => r.status === 'pending').length} Pending
+              {displayRequests.filter(r => r.status === 'pending').length} Pending
             </span>
           </div>
           <div className="divide-y divide-slate-100">
-            {requests.filter(r => r.status === 'pending').length === 0 ? (
+            {displayRequests.filter(r => r.status === 'pending').length === 0 ? (
               <div className="p-8 text-center text-slate-500 font-medium">
                 No pending leave requests.
               </div>
             ) : (
-              requests.filter(r => r.status === 'pending').map(req => {
+              displayRequests.filter(r => r.status === 'pending').map(req => {
                 const emp = employees.find(e => e.id === req.employee_id);
                 return (
                   <div key={req.id} className="p-6 hover:bg-slate-50 transition-colors">

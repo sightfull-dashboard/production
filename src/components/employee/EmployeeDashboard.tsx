@@ -4,6 +4,7 @@ import { format, isAfter, parseISO } from 'date-fns';
 import { Employee, LeaveRequest, RosterAssignment, Shift } from '../../types';
 import { BrandedState } from '../BrandedStates';
 import { cn } from '../../lib/utils';
+import { normalizeLeaveRequestsForDisplay } from '../../lib/leaveDisplay';
 
 interface Props {
   employee: Employee;
@@ -28,7 +29,7 @@ const StatCard = ({ label, value, total, color, icon: Icon }: any) => {
 };
 
 export const EmployeeDashboard: React.FC<Props> = ({ employee, requests, roster, shifts, onApplyLeave }) => {
-  const employeeRequests = requests.filter(r => r.employee_id === employee.id);
+  const employeeRequests = normalizeLeaveRequestsForDisplay(requests).filter(r => r.employee_id === employee.id);
   const pendingRequests = employeeRequests.filter(r => r.status === 'pending').length;
   const upcomingLeave = employeeRequests
     .filter(r => r.status === 'approved' && isAfter(parseISO(r.end_date), new Date()))
@@ -36,7 +37,7 @@ export const EmployeeDashboard: React.FC<Props> = ({ employee, requests, roster,
     .map(r => ({
     type: r.type === 'half_day' ? 'Half Day' : r.type === 'unpaid' ? 'Unpaid Leave' : r.type === 'family' ? 'Family Responsibility' : `${r.type.charAt(0).toUpperCase() + r.type.slice(1)} Leave`,
     date: `${format(parseISO(r.start_date), 'dd MMM')} - ${format(parseISO(r.end_date), 'dd MMM yyyy')}`,
-    days: r.is_half_day ? '0.5' : '1+'
+    days: Number(r.days ?? (r.is_half_day ? 0.5 : 1)).toFixed(2)
   }));
 
   const nextAssignment = roster
