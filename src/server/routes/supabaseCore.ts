@@ -1013,7 +1013,7 @@ export function registerSupabaseCoreRoutes({
     const { data, error } = await dataClient.from('roster_meta').upsert(base, { onConflict: 'employee_id,week_start' }).select('*').single();
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
-  });
+  }));
 
 
   app.get('/api/analytics', safeHandler(async (req, res) => {
