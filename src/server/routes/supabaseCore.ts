@@ -1228,8 +1228,12 @@ export function registerSupabaseCoreRoutes({
       const totalEmployees = employees.length;
       const activeCount = activeEmployees.length;
       const offboardedCount = totalEmployees - activeCount;
-      const avgSalary = activeCount > 0
-        ? activeEmployees.reduce((sum: number, e: any) => sum + (Number(e.pay_rate) || 0), 0) / activeCount
+      const activeWorkedThisMonth = Object.values(employeeStats).filter((employee: any) => {
+        const employeeRecord = employees.find((sourceEmployee: any) => sourceEmployee.id === employee.id);
+        return employee.amount > 0 && employeeRecord && employeeRecord.status !== 'offboarded';
+      });
+      const avgSalary = activeWorkedThisMonth.length > 0
+        ? currentTotal / activeWorkedThisMonth.length
         : 0;
       const nonZeroWeeks = Object.values(weeklyData).filter((w) => w.amount > 0);
       const avgWeeklyBill = nonZeroWeeks.length > 0

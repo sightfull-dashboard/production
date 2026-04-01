@@ -54,6 +54,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
   const [month, setMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [salaryShareSearch, setSalaryShareSearch] = useState('');
   const [leaveSearch, setLeaveSearch] = useState('');
 
   useEffect(() => {
@@ -82,7 +83,14 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(amount);
+    const numericAmount = Number(amount) || 0;
+    return new Intl.NumberFormat('en-ZA', {
+      style: 'currency',
+      currency: 'ZAR',
+      currencyDisplay: 'narrowSymbol',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(numericAmount);
   };
 
   const getLeaveValueClassName = (value: unknown) => {
@@ -107,9 +115,13 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
     );
   }
 
-  const filteredLeave = data?.leaveAnalytics?.filter((e: any) => 
-    e.name.toLowerCase().includes(leaveSearch.toLowerCase())
-  ) || [];
+  const filteredEmployeeShare = (data?.employeeShare || []).filter((employee: any) =>
+    String(employee.name || '').toLowerCase().includes(salaryShareSearch.trim().toLowerCase())
+  );
+
+  const filteredLeave = (data?.leaveAnalytics || []).filter((employee: any) =>
+    String(employee.name || '').toLowerCase().includes(leaveSearch.trim().toLowerCase())
+  );
 
   const currentTotal = data?.kpis?.currentTotal || 0;
   const prevTotal = data?.kpis?.prevTotal || 0;
@@ -208,7 +220,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
           <h4 className="font-bold text-slate-800 mb-6">Shifts vs Salary Bill (Weekly)</h4>
           <div className="flex-1 min-h-[320px] min-w-0">
             {data?.weeklyChart?.length > 0 ? (
-              <SafeResponsiveChart minHeight={300}>
+              <SafeResponsiveChart minHeight={300} className="analytics-chart-shell">
                 <ComposedChart data={data.weeklyChart} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorAmount" x1="0" y1="0" x2="0" y2="1">
@@ -218,16 +230,22 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                   <XAxis dataKey="week" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} dy={10} />
-                  <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} dx={-10} />
-                  <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} dx={10} />
+                  <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} dx={-10} allowDecimals={false} />
+                  <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} dx={10} tickFormatter={(value: number) => formatCurrency(value)} width={88} />
                   <Tooltip 
                     contentStyle={{ borderRadius: '16px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
                     itemStyle={{ fontWeight: 600 }}
-                    formatter={(value: number, name: string) => [name === 'amount' ? formatCurrency(value) : value, name === 'amount' ? 'Salary Bill' : 'Shifts']}
+                    formatter={(value: number, _name: string, item: any) => {
+                      const dataKey = String(item?.dataKey || '');
+                      if (dataKey === 'amount') {
+                        return [formatCurrency(value), 'Salary Bill'];
+                      }
+                      return [Number(value || 0).toFixed(0), 'Shifts Count'];
+                    }}
                   />
                   <Legend wrapperStyle={{ paddingTop: '20px' }} iconType="circle" />
                   <Bar yAxisId="left" dataKey="shifts" name="Shifts Count" fill="#e2e8f0" radius={[6, 6, 6, 6]} barSize={32} />
-                  <Area yAxisId="right" type="monotone" dataKey="amount" name="Salary Bill" stroke="#4f46e5" strokeWidth={3} fillOpacity={1} fill="url(#colorAmount)" activeDot={{ r: 6, strokeWidth: 0, fill: '#4f46e5' }} />
+                  <Area yAxisId="right" type="monotone" dataKey="amount" name="Salary Bill" stroke="#4f46e5" strokeWidth={3} fillOpacity={1} fill="url(#colorAmount)" activeDot={{ r: 5, stroke: 'none', fill: '#4f46e5' }} />
                 </ComposedChart>
               </SafeResponsiveChart>
             ) : (
@@ -242,7 +260,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
             {data?.breakdown?.length > 0 ? (
               <>
                 <div className="w-1/2 h-full min-w-0 min-h-[280px]">
-                  <SafeResponsiveChart minHeight={300}>
+                  <SafeResponsiveChart minHeight={300} className="analytics-chart-shell">
                     <PieChart>
                       <Pie
                         data={data.breakdown}
@@ -291,21 +309,31 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
       {/* Tables Row */}
       <div className="grid grid-cols-1 gap-6">
         <Card className="p-0 overflow-hidden flex flex-col h-[420px]">
-          <div className="p-6 pb-4 border-b border-slate-100">
+          <div className="p-6 pb-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <h4 className="font-bold text-slate-800">Employees & Salary Share</h4>
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input 
+                type="text" 
+                placeholder="Search employee..." 
+                value={salaryShareSearch}
+                onChange={(e) => setSalaryShareSearch(e.target.value)}
+                className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 w-full sm:w-48 transition-all"
+              />
+            </div>
           </div>
           <div className="overflow-y-auto overflow-x-auto hide-horizontal-scrollbar flex-1">
             <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-50/50">
+              <thead className="bg-slate-50/95">
                 <tr>
-                  <th className="py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Employee Name</th>
-                  <th className="py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Salary Amount</th>
-                  <th className="py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">% of Total</th>
+                  <th className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Employee Name</th>
+                  <th className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Salary Amount</th>
+                  <th className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">% of Total</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {data?.employeeShare?.length > 0 ? (
-                  data.employeeShare.map((emp: any, idx: number) => (
+                {filteredEmployeeShare.length > 0 ? (
+                  filteredEmployeeShare.map((emp: any, idx: number) => (
                     <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
                       <td className="py-4 px-6 text-sm font-bold text-slate-700 group-hover:text-slate-900">{emp.name}</td>
                       <td className="py-4 px-6 text-sm font-black text-slate-900 text-right">{formatCurrency(emp.amount)}</td>
@@ -321,7 +349,7 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={3} className="py-8 text-center text-slate-400 font-medium">No data available</td>
+                    <td colSpan={3} className="py-8 text-center text-slate-400 font-medium">No employees found</td>
                   </tr>
                 )}
               </tbody>
@@ -345,13 +373,13 @@ export function AnalyticsSection({ onViewLeaveEmployeeProfile, clientContextKey,
           </div>
           <div className="overflow-y-auto overflow-x-auto hide-horizontal-scrollbar flex-1">
             <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-50/50">
+              <thead className="bg-slate-50/95">
                 <tr>
-                  <th className="py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Employee Name</th>
-                  <th className="py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Annual</th>
-                  <th className="py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Sick</th>
-                  <th className="py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Family</th>
-                  <th className="py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Action</th>
+                  <th className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Employee Name</th>
+                  <th className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Annual</th>
+                  <th className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Sick</th>
+                  <th className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Family</th>
+                  <th className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur py-3 px-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">

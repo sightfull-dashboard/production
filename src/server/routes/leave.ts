@@ -475,8 +475,10 @@ export function registerLeaveRoutes({
     const activeCount = activeEmployees.length;
     const offboardedCount = totalEmployees - activeCount;
 
-    const avgSalary = activeCount > 0
-      ? activeEmployees.reduce((sum: number, e: any) => sum + (e.pay_rate || 0), 0) / activeCount
+    const activeWorkedThisMonth = Object.entries(employeeStats)
+      .filter(([employeeId, employee]: any) => activeEmployees.some((activeEmployee: any) => activeEmployee.id === employeeId) && (employee.amount || 0) > 0);
+    const avgSalary = activeWorkedThisMonth.length > 0
+      ? currentTotal / activeWorkedThisMonth.length
       : 0;
 
     const nonZeroWeeks = Object.values(weeklyData).filter((w) => w.amount > 0);

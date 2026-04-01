@@ -101,3 +101,10 @@ input[type=number] {
   height: var(--dashboard-table-card-height, calc(100dvh - 210px));
   min-height: 0;
 }
+
+
+.analytics-chart-shell :where(svg, svg *, .recharts-wrapper, .recharts-wrapper *, .recharts-surface, .recharts-sector, .recharts-dot, .recharts-rectangle):focus,
+.analytics-chart-shell :where(svg, svg *, .recharts-wrapper, .recharts-wrapper *, .recharts-surface, .recharts-sector, .recharts-dot, .recharts-rectangle):focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
