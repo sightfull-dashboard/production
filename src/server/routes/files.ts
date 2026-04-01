@@ -1,6 +1,6 @@
 import express, { type Express, type Request } from 'express';
 import path from 'node:path';
-import { supabaseAdmin } from '../integrations/supabase';
+import { createRequestSupabaseClient, supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, resolveDownloadUrl, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
 import { enqueueBackgroundJob, getBackgroundJobById, listRecentBackgroundJobs } from '../utils/backgroundJobs';
@@ -40,9 +40,9 @@ const fetchSupabaseUserById = async (id: string | null | undefined) => {
   return data as any;
 };
 
-const fetchSupabaseClientById = async (id: string | null | undefined) => {
+const fetchSupabaseClientById = async (id: string | null | undefined, client: any = supabaseAdmin) => {
   if (!id) return null;
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await client
     .from('clients')
     .select('id, name, payroll_email, payroll_cc')
     .eq('id', id)
@@ -51,10 +51,10 @@ const fetchSupabaseClientById = async (id: string | null | undefined) => {
   return data as any;
 };
 
-const fetchSupabaseClientByName = async (name: string | null | undefined) => {
+const fetchSupabaseClientByName = async (name: string | null | undefined, client: any = supabaseAdmin) => {
   const normalized = String(name || '').trim();
   if (!normalized) return null;
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await client
     .from('clients')
     .select('id, name, payroll_email, payroll_cc')
     .eq('name', normalized)
@@ -63,9 +63,9 @@ const fetchSupabaseClientByName = async (name: string | null | undefined) => {
   return data as any;
 };
 
-const fetchSupabaseFileById = async (id: string | null | undefined) => {
+const fetchSupabaseFileById = async (id: string | null | undefined, client: any = supabaseAdmin) => {
   if (!id) return null;
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await client
     .from('files')
     .select('*')
     .eq('id', id)
@@ -112,13 +112,13 @@ const countInclusivePeriodDays = (startIso: string, endIso: string) => {
   return Math.floor(diffMs / 86400000) + 1;
 };
 
-const hasPriorPayrollSubmission = async (provider: string, db: any, clientId: string, currentPeriodStart: string) => {
+const hasPriorPayrollSubmission = async (provider: string, db: any, clientId: string, currentPeriodStart: string, client: any = supabaseAdmin) => {
   if (provider !== 'supabase') {
     const row = db.prepare(`SELECT id FROM payroll_submissions WHERE client_id = ? AND period_end < ? LIMIT 1`).get(clientId, currentPeriodStart) as any;
     return Boolean(row?.id);
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await client
     .from('payroll_submissions')
     .select('id')
     .eq('client_id', clientId)
@@ -129,13 +129,13 @@ const hasPriorPayrollSubmission = async (provider: string, db: any, clientId: st
   return Boolean((data || [])[0]?.id);
 };
 
-const hasExactPayrollSubmissionWindow = async (provider: string, db: any, clientId: string, periodStart: string, periodEnd: string) => {
+const hasExactPayrollSubmissionWindow = async (provider: string, db: any, clientId: string, periodStart: string, periodEnd: string, client: any = supabaseAdmin) => {
   if (provider !== 'supabase') {
     const row = db.prepare(`SELECT id FROM payroll_submissions WHERE client_id = ? AND period_start = ? AND period_end = ? LIMIT 1`).get(clientId, periodStart, periodEnd) as any;
     return Boolean(row?.id);
   }
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await client
     .from('payroll_submissions')
     .select('id')
     .eq('client_id', clientId)
@@ -145,6 +145,22 @@ const hasExactPayrollSubmissionWindow = async (provider: string, db: any, client
 
   if (error) throw error;
   return Boolean((data || [])[0]?.id);
+};
+
+const getSessionSupabaseAccessToken = (req: any) => (req.session as any)?.supabaseAccessToken || null;
+
+const getTenantDataClient = (req: any) => {
+  if (env.supabaseUseRlsForAppData) {
+    const accessToken = String(getSessionSupabaseAccessToken(req) || '').trim();
+    if (accessToken) {
+      try {
+        return createRequestSupabaseClient(accessToken);
+      } catch (error) {
+        console.warn('Failed to create request-scoped Supabase client for files routes, falling back to admin client:', error);
+      }
+    }
+  }
+  return supabaseAdmin;
 };
 
 const uploadBinaryLimit = `${env.directUploadLimitMb}mb`;
@@ -225,6 +241,7 @@ export function registerFilesRoutes({
         return res.status(201).json(hydrateFileRow(row));
       }
 
+      const dataClient = getTenantDataClient(req);
       const uploadedAsset = await uploadBinaryFileToSupabaseStorage({
         bucket: env.supabaseBucketVaultFiles,
         fileName: name,
@@ -247,7 +264,7 @@ export function registerFilesRoutes({
         password: null,
         uploaded_by: (req.session as any)?.userId || null,
       };
-      const { data, error } = await supabaseAdmin.from('files').insert(payload).select('*').single();
+      const { data, error } = await dataClient.from('files').insert(payload).select('*').single();
       if (error) throw error;
       logActivity(req, 'UPLOAD_FILE', { fileId: id, name, type: 'file', employeeId: ownerEmployeeId, clientId: ownerClientId, transport: 'binary' });
       return res.status(201).json(hydrateFileRow({ ...data, size: data.size_bytes, extension: data.mime_type, url: data.public_url || data.storage_path || null }));
@@ -297,7 +314,8 @@ export function registerFilesRoutes({
         return res.json(rows.map(hydrateFileRow));
       }
 
-      let query = supabaseAdmin.from('files').select('*').order('type', { ascending: false }).order('name', { ascending: true });
+      const dataClient = getTenantDataClient(req);
+      let query = dataClient.from('files').select('*').order('type', { ascending: false }).order('name', { ascending: true });
       if (employeeId) {
         query = query.eq('employee_id', employeeId);
       } else if (sessionEmployeeId) {
@@ -354,8 +372,9 @@ export function registerFilesRoutes({
         return res.status(201).json(hydrateFileRow(row));
       }
 
+      const dataClient = getTenantDataClient(req);
       if (parent_id) {
-        const { data: parent } = await supabaseAdmin.from('files').select('id,type').eq('id', parent_id).single();
+        const { data: parent } = await dataClient.from('files').select('id,type').eq('id', parent_id).single();
         if (!parent || parent.type !== 'folder') return res.status(400).json({ error: 'Parent folder not found' });
       }
       const id = Math.random().toString(36).substr(2, 9);
@@ -382,7 +401,7 @@ export function registerFilesRoutes({
         password: password || null,
         uploaded_by: (req.session as any)?.userId || null,
       };
-      const { data, error } = await supabaseAdmin.from('files').insert(payload).select('*').single();
+      const { data, error } = await dataClient.from('files').insert(payload).select('*').single();
       if (error) throw error;
       logActivity(req, type === 'folder' ? 'CREATE_FOLDER' : 'UPLOAD_FILE', { fileId: id, name, type, employeeId: ownerEmployeeId, clientId: ownerClientId });
       return res.status(201).json(hydrateFileRow({ ...data, size: data.size_bytes, extension: data.mime_type, url: data.public_url || data.storage_path || null }));
@@ -416,7 +435,8 @@ export function registerFilesRoutes({
         return res.json({ success: true });
       }
 
-      const { data: existing, error: fetchError } = await supabaseAdmin.from('files').select('*').eq('id', req.params.id).single();
+      const dataClient = getTenantDataClient(req);
+      const { data: existing, error: fetchError } = await dataClient.from('files').select('*').eq('id', req.params.id).single();
       if (fetchError || !existing) return res.status(404).json({ error: 'File not found' });
       if (existing.employee_id && !canAccessEmployeeFiles(req, existing.employee_id)) return res.status(403).json({ error: 'Forbidden' });
       const actorClientId = getActorClientId(req);
@@ -424,11 +444,11 @@ export function registerFilesRoutes({
       if (actorClientId && sessionRole !== 'superadmin' && existing.client_id && existing.client_id !== actorClientId) return res.status(403).json({ error: 'Forbidden' });
 
       const removeRecursively = async (fileId: string) => {
-        const { data: children } = await supabaseAdmin.from('files').select('id').eq('parent_id', fileId);
+        const { data: children } = await dataClient.from('files').select('id').eq('parent_id', fileId);
         for (const child of children || []) await removeRecursively(child.id);
-        const row = await fetchSupabaseFileById(fileId);
+        const row = await fetchSupabaseFileById(fileId, dataClient);
         await deleteStoredObjectIfPresent({ storageBucket: row?.storage_bucket, storagePath: row?.storage_path });
-        await supabaseAdmin.from('files').delete().eq('id', fileId);
+        await dataClient.from('files').delete().eq('id', fileId);
       };
       await removeRecursively(req.params.id);
       logActivity(req, 'DELETE_FILE', { fileId: req.params.id, name: existing.name, employeeId: existing.employee_id || null, clientId: existing.client_id || null });
@@ -441,9 +461,10 @@ export function registerFilesRoutes({
 
   app.get('/api/files/:id/download', ensureFileAccess, async (req, res) => {
     try {
+      const dataClient = getTenantDataClient(req);
       const existing = env.databaseProvider !== 'supabase'
         ? db.prepare('SELECT * FROM files WHERE id = ?').get(req.params.id) as any
-        : await fetchSupabaseFileById(req.params.id);
+        : await fetchSupabaseFileById(req.params.id, dataClient);
       if (!existing) return res.status(404).json({ error: 'File not found' });
       if (existing.employee_id && !canAccessEmployeeFiles(req, existing.employee_id)) {
         return res.status(403).json({ error: 'Forbidden' });
@@ -543,7 +564,8 @@ export function registerFilesRoutes({
       const user = await fetchSupabaseUserById(sessionUserId);
       const scopedClientId = getEffectiveClientId(null, req) || user?.client_id || null;
 
-      let query = supabaseAdmin
+      const dataClient = getTenantDataClient(req);
+      let query = dataClient
         .from('payroll_submissions')
         .select('*')
         .order('submitted_at', { ascending: false });
@@ -588,6 +610,7 @@ export function registerFilesRoutes({
       ? (sessionUserId ? db.prepare("SELECT id, email, client_id FROM users WHERE id = ?").get(sessionUserId) as any : null)
       : await fetchSupabaseUserById(sessionUserId);
     const effectiveClientId = getEffectiveClientId(env.databaseProvider !== 'supabase' ? db : null, req) || user?.client_id || null;
+    const dataClient = env.databaseProvider === 'supabase' ? getTenantDataClient(req) : null;
     const client = env.databaseProvider !== 'supabase'
       ? (effectiveClientId
           ? db.prepare("SELECT id, name, payroll_email, payroll_cc FROM clients WHERE id = ?").get(effectiveClientId) as any
@@ -595,8 +618,8 @@ export function registerFilesRoutes({
               ? db.prepare("SELECT id, name, payroll_email, payroll_cc FROM clients WHERE name = ?").get(clientNameFromBody) as any
               : null))
       : (effectiveClientId
-          ? await fetchSupabaseClientById(effectiveClientId)
-          : await fetchSupabaseClientByName(clientNameFromBody));
+          ? await fetchSupabaseClientById(effectiveClientId, dataClient)
+          : await fetchSupabaseClientByName(clientNameFromBody, dataClient));
 
     const startDate = new Date(`${periodStart}T00:00:00`);
     const endDate = new Date(`${periodEnd}T00:00:00`);
@@ -609,7 +632,8 @@ export function registerFilesRoutes({
         if (periodDays > 0) {
           const previousPeriodEnd = addDaysToIsoDate(periodStart, -1);
           const previousPeriodStart = addDaysToIsoDate(periodStart, -periodDays);
-          const hasAnyEarlierSubmission = await hasPriorPayrollSubmission(env.databaseProvider, db, client.id, periodStart);
+          const tenantDataClient = getTenantDataClient(req);
+          const hasAnyEarlierSubmission = await hasPriorPayrollSubmission(env.databaseProvider, db, client.id, periodStart, dataClient);
           if (hasAnyEarlierSubmission) {
             const hasImmediatePreviousSubmission = await hasExactPayrollSubmissionWindow(
               env.databaseProvider,
@@ -617,6 +641,7 @@ export function registerFilesRoutes({
               client.id,
               previousPeriodStart,
               previousPeriodEnd,
+              tenantDataClient,
             );
             if (!hasImmediatePreviousSubmission) {
               return res.status(400).json({
@@ -646,7 +671,8 @@ export function registerFilesRoutes({
           if (missingAssignments.length > 0) break;
         }
       } else {
-        const { data: employeeRows, error: employeeError } = await supabaseAdmin
+        const tenantDataClient = getTenantDataClient(req);
+        const { data: employeeRows, error: employeeError } = await tenantDataClient
           .from('employees')
           .select('id, first_name, last_name, status')
           .eq('client_id', client.id);
@@ -657,7 +683,7 @@ export function registerFilesRoutes({
         const activeEmployees = (employeeRows || []).filter((emp: any) => String(emp.status || 'active').toLowerCase() !== 'offboarded');
         const employeeIds = activeEmployees.map((emp: any) => emp.id);
         const { data: rosterRows, error: rosterError } = employeeIds.length
-          ? await supabaseAdmin
+          ? await tenantDataClient
               .from('roster')
               .select('employee_id, day_date, shift_id')
               .in('employee_id', employeeIds)
@@ -712,7 +738,7 @@ export function registerFilesRoutes({
         totalHours, totalPay, JSON.stringify(employeeBreakdown),
       );
     } else {
-      const { error: insertError } = await supabaseAdmin.from('payroll_submissions').insert({
+      const { error: insertError } = await dataClient.from('payroll_submissions').insert({
         id,
         client_id: clientId,
         client_name: clientName,
@@ -901,7 +927,8 @@ export function registerFilesRoutes({
     if (env.databaseProvider !== 'supabase') {
       row = db.prepare("SELECT * FROM payroll_submissions WHERE id = ?").get(id) as any;
     } else {
-      const { data, error } = await supabaseAdmin.from('payroll_submissions').select('*').eq('id', id).single();
+      const dataClient = getTenantDataClient(req);
+      const { data, error } = await dataClient.from('payroll_submissions').select('*').eq('id', id).single();
       if (error) {
         console.error('Failed to fetch inserted payroll submission from Supabase:', error);
         return res.status(201).json({ id, clientName, submittedBy, submittedAt, periodStart, periodEnd, period, employeeCount, status: submissionStatus, totalHours, totalPay, employeeBreakdown, mail: mailResult });
@@ -975,7 +1002,8 @@ export function registerFilesRoutes({
       return res.json(serializePayrollSubmission(row));
     }
 
-    const { data: existing, error: fetchError } = await supabaseAdmin
+    const dataClient = getTenantDataClient(req);
+    const { data: existing, error: fetchError } = await dataClient
       .from('payroll_submissions')
       .select('*')
       .eq('id', id)
@@ -993,7 +1021,7 @@ export function registerFilesRoutes({
     const processedByEmail = nextStatus === 'processed' ? (actingUser?.email || existing.processed_by_email || null) : null;
     const processedAt = nextStatus === 'processed' ? new Date().toISOString() : null;
 
-    const { data: updated, error: updateError } = await supabaseAdmin
+    const { data: updated, error: updateError } = await dataClient
       .from('payroll_submissions')
       .update({
         status: nextStatus,
@@ -1051,7 +1079,8 @@ export function registerFilesRoutes({
       return res.json({ success: true });
     }
 
-    const { data: existing, error: fetchError } = await supabaseAdmin
+    const dataClient = getTenantDataClient(req);
+    const { data: existing, error: fetchError } = await dataClient
       .from('payroll_submissions')
       .select('*')
       .eq('id', id)
@@ -1065,7 +1094,8 @@ export function registerFilesRoutes({
       return res.status(403).json({ error: 'Only super admins can delete payroll submissions' });
     }
 
-    const { error: deleteError } = await supabaseAdmin
+    const dataClient = getTenantDataClient(req);
+    const { error: deleteError } = await dataClient
       .from('payroll_submissions')
       .delete()
       .eq('id', id);
@@ -1112,7 +1142,8 @@ export function registerFilesRoutes({
     }
 
     try {
-      let query = supabaseAdmin.from('support_tickets').select('*').order('updated_at', { ascending: false }).order('created_at', { ascending: false });
+      const dataClient = getTenantDataClient(req);
+      let query = dataClient.from('support_tickets').select('*').order('updated_at', { ascending: false }).order('created_at', { ascending: false });
       const scopedClientId = getEffectiveClientId(null, req) || actingUser?.client_id || null;
       if (sessionRole === 'superadmin' && !scopedClientId) {
         const { data, error } = await query;
@@ -1160,7 +1191,8 @@ export function registerFilesRoutes({
         return res.json(ticket);
       }
 
-      const { data, error } = await supabaseAdmin.from('support_tickets').insert({
+      const dataClient = getTenantDataClient(req);
+      const { data, error } = await dataClient.from('support_tickets').insert({
         id, client_id: clientId, client_name: clientName, user_id: userId, user_email: userEmail,
         subject, message, status: 'open', priority, admin_notes: '',
       }).select('*').single();
@@ -1200,7 +1232,8 @@ export function registerFilesRoutes({
         return res.json(ticket);
       }
 
-      const { data: existing, error: fetchError } = await supabaseAdmin.from('support_tickets').select('*').eq('id', req.params.id).single();
+      const dataClient = getTenantDataClient(req);
+      const { data: existing, error: fetchError } = await dataClient.from('support_tickets').select('*').eq('id', req.params.id).single();
       if (fetchError || !existing) return res.status(404).json({ error: 'Support ticket not found' });
       const canEdit = sessionRole === 'superadmin'
         || (sessionRole === 'staff' && canAccessAssignedClient(actingUser, existing.client_id, 'view_tickets'));
@@ -1210,7 +1243,7 @@ export function registerFilesRoutes({
         return res.status(403).json({ error: 'Forbidden' });
       }
 
-      const { data, error } = await supabaseAdmin.from('support_tickets').update({
+      const { data, error } = await dataClient.from('support_tickets').update({
         status: nextStatus,
         priority: req.body.priority ?? existing.priority,
         admin_notes: req.body.admin_notes ?? existing.admin_notes ?? '',
@@ -1249,18 +1282,19 @@ export function registerFilesRoutes({
         return res.json({ success: true });
       }
 
-      const { data: existing, error: fetchError } = await supabaseAdmin.from('support_tickets').select('*').eq('id', req.params.id).single();
+      const dataClient = getTenantDataClient(req);
+      const { data: existing, error: fetchError } = await dataClient.from('support_tickets').select('*').eq('id', req.params.id).single();
       if (fetchError || !existing) return res.status(404).json({ error: 'Support ticket not found' });
       const canDelete = sessionRole === 'superadmin';
       if (!canDelete) return res.status(403).json({ error: 'Only super admins can delete support tickets' });
 
-      const { error: commentsDeleteError } = await supabaseAdmin.from('support_ticket_comments').delete().eq('ticket_id', req.params.id);
+      const { error: commentsDeleteError } = await dataClient.from('support_ticket_comments').delete().eq('ticket_id', req.params.id);
       if (commentsDeleteError) {
         console.error('Failed to delete support ticket comments:', commentsDeleteError);
         return res.status(500).json({ error: 'Failed to delete support ticket comments' });
       }
 
-      const { error: deleteError } = await supabaseAdmin.from('support_tickets').delete().eq('id', req.params.id);
+      const { error: deleteError } = await dataClient.from('support_tickets').delete().eq('id', req.params.id);
       if (deleteError) {
         console.error('Failed to delete support ticket:', deleteError);
         return res.status(500).json({ error: 'Failed to delete support ticket' });
@@ -1284,9 +1318,10 @@ export function registerFilesRoutes({
       if (!actingUser || !['superadmin','staff'].includes(String(sessionRole || '').toLowerCase())) {
         return res.status(403).json({ error: 'Forbidden' });
       }
+      const dataClient = getTenantDataClient(req);
       const ticket = env.databaseProvider !== 'supabase'
         ? db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(req.params.id) as any
-        : await supabaseAdmin.from('support_tickets').select('*').eq('id', req.params.id).maybeSingle().then(({ data }) => data as any);
+        : await dataClient.from('support_tickets').select('*').eq('id', req.params.id).maybeSingle().then(({ data }) => data as any);
       if (!ticket) return res.status(404).json({ error: 'Support ticket not found' });
       if (!canAccessAssignedClient(actingUser, ticket.client_id, 'view_tickets')) {
         return res.status(403).json({ error: 'Forbidden' });
@@ -1295,7 +1330,7 @@ export function registerFilesRoutes({
         const rows = db.prepare("SELECT * FROM support_ticket_comments WHERE ticket_id = ? ORDER BY datetime(created_at) ASC").all(req.params.id) as any[];
         return res.json(rows.map((row) => ({ ...row, tagged_users: parseJsonArray(row.tagged_users) })));
       }
-      const { data, error } = await supabaseAdmin.from('support_ticket_comments').select('*').eq('ticket_id', req.params.id).order('created_at', { ascending: true });
+      const { data, error } = await dataClient.from('support_ticket_comments').select('*').eq('ticket_id', req.params.id).order('created_at', { ascending: true });
       if (error) throw error;
       return res.json((data || []).map((row: any) => ({ ...row, tagged_users: parseJsonArray(row.tagged_users) })));
     } catch (error) {
@@ -1314,9 +1349,10 @@ export function registerFilesRoutes({
       if (!actingUser || !['superadmin','staff'].includes(String(sessionRole || '').toLowerCase())) {
         return res.status(403).json({ error: 'Forbidden' });
       }
+      const dataClient = getTenantDataClient(req);
       const ticket = env.databaseProvider !== 'supabase'
         ? db.prepare("SELECT * FROM support_tickets WHERE id = ?").get(req.params.id) as any
-        : await supabaseAdmin.from('support_tickets').select('*').eq('id', req.params.id).maybeSingle().then(({ data }) => data as any);
+        : await dataClient.from('support_tickets').select('*').eq('id', req.params.id).maybeSingle().then(({ data }) => data as any);
       if (!ticket) return res.status(404).json({ error: 'Support ticket not found' });
       if (!canAccessAssignedClient(actingUser, ticket.client_id, 'view_tickets')) {
         return res.status(403).json({ error: 'Forbidden' });
@@ -1344,9 +1380,9 @@ export function registerFilesRoutes({
         logActivity(req, 'CREATE_SUPPORT_TICKET_COMMENT', { ticketId: req.params.id, clientId: ticket.client_id, taggedUsersCount: payload.tagged_users.length });
         return res.status(201).json(payload);
       }
-      const { data, error } = await supabaseAdmin.from('support_ticket_comments').insert(payload).select('*').single();
+      const { data, error } = await dataClient.from('support_ticket_comments').insert(payload).select('*').single();
       if (error) throw error;
-      await supabaseAdmin.from('support_tickets').update({ updated_at: new Date().toISOString(), status: ticket.status === 'open' ? 'in_progress' : ticket.status }).eq('id', req.params.id);
+      await dataClient.from('support_tickets').update({ updated_at: new Date().toISOString(), status: ticket.status === 'open' ? 'in_progress' : ticket.status }).eq('id', req.params.id);
       logActivity(req, 'CREATE_SUPPORT_TICKET_COMMENT', { ticketId: req.params.id, clientId: ticket.client_id, taggedUsersCount: payload.tagged_users.length });
       return res.status(201).json({ ...data, tagged_users: parseJsonArray((data as any).tagged_users) });
     } catch (error) {

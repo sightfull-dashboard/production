@@ -1,6 +1,6 @@
 import express, { type Express, type Request } from 'express';
 import path from 'node:path';
-import { supabaseAdmin } from '../integrations/supabase';
+import { createRequestSupabaseClient, supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import bcrypt from 'bcryptjs';
 import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
@@ -52,6 +52,22 @@ const parseJsonArray = (value: any) => Array.isArray(value) ? value : (() => {
 
 const getPermissions = (row: any) => parseJsonArray(row?.permissions).map((value: any) => String(value)).filter(Boolean);
 const getAssignedClients = (row: any) => parseJsonArray(row?.assigned_clients).map((value: any) => String(value)).filter(Boolean);
+
+const getSessionSupabaseAccessToken = (req: any) => (req.session as any)?.supabaseAccessToken || null;
+const getRequestDataClient = (req: any) => {
+  if (env.supabaseUseRlsForAppData) {
+    const accessToken = String(getSessionSupabaseAccessToken(req) || '').trim();
+    if (accessToken) {
+      try {
+        return createRequestSupabaseClient(accessToken);
+      } catch (error) {
+        console.warn('Failed to create request-scoped Supabase client for admin routes, falling back to admin client:', error);
+      }
+    }
+  }
+  return supabaseAdmin;
+};
+
 const isInternalRoleValue = (role: unknown) => ['superadmin', 'staff'].includes(String(role || '').toLowerCase());
 const hasInternalPermission = (row: any, permission?: string | null) => {
   const role = String(row?.role || '').toLowerCase();
@@ -280,7 +296,8 @@ export function registerAdminRoutes({
         }
       }
 
-      const { data, error } = await supabaseAdmin
+      const dataClient = getRequestDataClient(req);
+      const { data, error } = await dataClient
         .from('internal_notifications')
         .select('*')
         .eq('user_id', actor.id)
@@ -313,7 +330,8 @@ export function registerAdminRoutes({
       }
 
       const now = new Date().toISOString();
-      const { data, error } = await supabaseAdmin
+      const dataClient = getRequestDataClient(req);
+      const { data, error } = await dataClient
         .from('internal_notifications')
         .update({ is_read: true, read_at: now, updated_at: now })
         .eq('user_id', actor.id)
@@ -342,7 +360,8 @@ export function registerAdminRoutes({
       }
 
       const now = new Date().toISOString();
-      const { data, error } = await supabaseAdmin
+      const dataClient = getRequestDataClient(req);
+      const { data, error } = await dataClient
         .from('internal_notifications')
         .update({ is_read: true, read_at: now, updated_at: now })
         .eq('id', req.params.id)
@@ -371,7 +390,8 @@ export function registerAdminRoutes({
         }
       }
 
-      const { error } = await supabaseAdmin
+      const dataClient = getRequestDataClient(req);
+      const { error } = await dataClient
         .from('internal_notifications')
         .delete()
         .eq('id', req.params.id)
