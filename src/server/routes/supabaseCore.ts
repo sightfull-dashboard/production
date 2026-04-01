@@ -21,20 +21,6 @@ const getSessionSupabaseAuthUserId = (req: any) => (req.session as any)?.supabas
 
 const getSessionSupabaseAccessToken = (req: any) => (req.session as any)?.supabaseAccessToken || null;
 
-const decodeJwtClaimsForDebug = (token: string | null | undefined) => {
-  const raw = String(token || '').trim();
-  if (!raw) return null;
-  const parts = raw.split('.');
-  if (parts.length < 2) return null;
-  try {
-    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
-    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
-  } catch {
-    return null;
-  }
-};
-
 const getTenantDataClient = (req: any) => {
   if (env.supabaseUseRlsForAppData) {
     const accessToken = String(getSessionSupabaseAccessToken(req) || '').trim();
@@ -666,65 +652,6 @@ export function registerSupabaseCoreRoutes({
     }
   });
 
-  app.get('/api/auth/claims-debug', async (req, res) => {
-    const accessToken = getSessionSupabaseAccessToken(req);
-    const sessionAuthUserId = getSessionSupabaseAuthUserId(req);
-    const sessionUserId = getSessionUserId(req);
-    const tokenClaims = decodeJwtClaimsForDebug(accessToken);
-    let authUser: any = null;
-    let authError: string | null = null;
-
-    if (accessToken) {
-      try {
-        const rlsClient = createRequestSupabaseClient(accessToken);
-        const { data, error } = await rlsClient.auth.getUser(accessToken);
-        if (error) authError = error.message;
-        authUser = data?.user || null;
-      } catch (error: any) {
-        authError = error?.message || 'Failed to resolve auth user';
-      }
-    }
-
-    const appUserBySession = sessionUserId ? await fetchUserById(sessionUserId) : null;
-    const appUserByAuth = sessionAuthUserId ? await fetchUserByAuthUserId(String(sessionAuthUserId)) : null;
-
-    return res.json({
-      hasAccessToken: !!accessToken,
-      authLoginSource: (req.session as any)?.authLoginSource || null,
-      session: {
-        userId: sessionUserId || null,
-        userRole: getSessionRole(req),
-        userClientId: (req.session as any)?.userClientId || null,
-        supabaseAuthUserId: sessionAuthUserId || null,
-      },
-      tokenClaims,
-      authUser: authUser ? {
-        id: authUser.id,
-        email: authUser.email || null,
-        role: authUser.role || null,
-        app_metadata: authUser.app_metadata || {},
-        user_metadata: authUser.user_metadata || {},
-      } : null,
-      authError,
-      appUserBySession: appUserBySession ? {
-        id: appUserBySession.id,
-        email: appUserBySession.email,
-        role: appUserBySession.role,
-        client_id: appUserBySession.client_id || null,
-        auth_user_id: appUserBySession.auth_user_id || null,
-        assigned_clients: appUserBySession.assigned_clients || [],
-      } : null,
-      appUserByAuth: appUserByAuth ? {
-        id: appUserByAuth.id,
-        email: appUserByAuth.email,
-        role: appUserByAuth.role,
-        client_id: appUserByAuth.client_id || null,
-        auth_user_id: appUserByAuth.auth_user_id || null,
-        assigned_clients: appUserByAuth.assigned_clients || [],
-      } : null,
-      rlsModeEnabled: !!env.supabaseUseRlsForAppData,
-    });
-  });
 
   app.get('/api/auth/me', async (req, res) => {
     let user = getSessionUserId(req) ? await fetchUserById(getSessionUserId(req)) : null;
