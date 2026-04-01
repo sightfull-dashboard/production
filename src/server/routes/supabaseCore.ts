@@ -1,7 +1,6 @@
-import bcrypt from 'bcryptjs';
 import type { Express } from 'express';
 import { createRequestSupabaseClient, supabaseAdmin } from '../integrations/supabase';
-import { linkAppUserToAuthUser, signInWithSupabasePassword, syncSupabaseAuthUser } from '../utils/supabaseAuth';
+import { linkAppUserToAuthUser, signInWithSupabasePassword } from '../utils/supabaseAuth';
 import { env } from '../config/env';
 import { sortShiftsBaseFirst, doesShiftStartOverlapPrevious, formatShiftTimeLabel } from '../../lib/shifts';
 import { hashSecret, sanitizeEmployeeForResponse, sanitizeEmployeesForResponse, shouldUpgradeLegacySecret, verifySecret } from '../utils/security';
@@ -57,7 +56,7 @@ const clearSessionAuthState = (req: any) => {
   delete (req.session as any).authLoginSource;
 };
 
-const applyUserSession = (req: any, user: any, allowedSuperAdminEmails: Set<string>, authSession?: { access_token?: string | null; refresh_token?: string | null; user?: { id?: string | null } | null } | null, authSource: 'supabase' | 'legacy' = 'legacy') => {
+const applyUserSession = (req: any, user: any, allowedSuperAdminEmails: Set<string>, authSession?: { access_token?: string | null; refresh_token?: string | null; user?: { id?: string | null } | null } | null, authSource: 'supabase' = 'supabase') => {
   const normalizedEmail = String(user?.email || '').trim().toLowerCase();
   const effectiveRole = allowedSuperAdminEmails.has(normalizedEmail) ? 'superadmin' : user?.role;
   (req.session as any).userId = user.id;
@@ -617,47 +616,28 @@ export function registerSupabaseCoreRoutes({
       if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
 
       let user = await fetchUserByEmail(email);
-      let authSession: any = null;
-      let authSource: 'supabase' | 'legacy' = 'legacy';
-
       const supabaseLogin = await signInWithSupabasePassword(email, password).catch((error) => ({ session: null, user: null, error }));
-      if (supabaseLogin?.session && supabaseLogin?.user) {
-        authSession = supabaseLogin.session;
-        authSource = 'supabase';
-        user = user || await fetchUserByAuthUserId(String(supabaseLogin.user.id));
-        user = user || await fetchUserByEmail(String(supabaseLogin.user.email || email));
-        if (user && !user.auth_user_id) {
-          try {
-            await linkAppUserToAuthUser(String(user.id), String(supabaseLogin.user.id));
-            user = { ...user, auth_user_id: String(supabaseLogin.user.id) };
-          } catch (linkError) {
-            console.warn('Failed to link app user to Supabase Auth user during login:', linkError);
-          }
-        }
-      }
+      const authSession = supabaseLogin?.session || null;
 
-      if (!user) {
-        logActivity(req, 'LOGIN_FAILED', { email });
+      if (!authSession || !supabaseLogin?.user) {
+        logActivity(req, 'LOGIN_FAILED', { email, reason: 'supabase_auth_invalid_credentials' });
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      if (!authSession) {
-        if (!bcrypt.compareSync(password, user.password)) {
-          logActivity(req, 'LOGIN_FAILED', { email });
-          return res.status(401).json({ error: 'Invalid credentials' });
-        }
+      user = user || await fetchUserByAuthUserId(String(supabaseLogin.user.id));
+      user = user || await fetchUserByEmail(String(supabaseLogin.user.email || email));
+
+      if (!user) {
+        logActivity(req, 'LOGIN_FAILED', { email, reason: 'app_user_not_found_for_auth_user' });
+        return res.status(403).json({ error: 'Your account is not linked to an application user. Please contact support.' });
+      }
+
+      if (user && !user.auth_user_id) {
         try {
-          const syncResult = await syncSupabaseAuthUser(user, { password, email: user.email, name: user.name, emailConfirm: true });
-          if (syncResult.authUserId && syncResult.authUserId !== user.auth_user_id) {
-            user = { ...user, auth_user_id: syncResult.authUserId };
-          }
-          const migratedLogin = await signInWithSupabasePassword(String(user.email || email), password);
-          if (migratedLogin?.session) {
-            authSession = migratedLogin.session;
-            authSource = 'supabase';
-          }
-        } catch (migrationError) {
-          console.warn('Supabase Auth migration fallback failed during legacy login:', migrationError);
+          await linkAppUserToAuthUser(String(user.id), String(supabaseLogin.user.id));
+          user = { ...user, auth_user_id: String(supabaseLogin.user.id) };
+        } catch (linkError) {
+          console.warn('Failed to link app user to Supabase Auth user during login:', linkError);
         }
       }
 
@@ -665,7 +645,7 @@ export function registerSupabaseCoreRoutes({
         return res.status(403).json({ error: 'Account not verified yet.' });
       }
 
-      const effectiveRole = applyUserSession(req, user, allowedSuperAdminEmails, authSession ? { ...authSession, user: authSession.user || { id: user.auth_user_id || null } } : null, authSession ? authSource : 'legacy');
+      const effectiveRole = applyUserSession(req, user, allowedSuperAdminEmails, { ...authSession, user: authSession.user || { id: user.auth_user_id || null } }, 'supabase');
       await supabaseAdmin
         .from('users')
         .update({
@@ -679,7 +659,7 @@ export function registerSupabaseCoreRoutes({
       if (payload?.role !== 'superadmin' && payload?.client_id && payload?.clientStatus === 'deactivated') {
         return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: payload.client_id }));
       }
-      logActivity(req, 'LOGIN_SUCCESS', { email: user.email, role: payload?.role, client_id: payload?.client_id || null, authSource: (req.session as any).authLoginSource || 'legacy' });
+      logActivity(req, 'LOGIN_SUCCESS', { email: user.email, role: payload?.role, client_id: payload?.client_id || null, authSource: (req.session as any).authLoginSource || 'supabase' });
       return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending });
     } catch (error: any) {
       return res.status(500).json({ error: error?.message || 'Login failed' });
@@ -761,7 +741,7 @@ export function registerSupabaseCoreRoutes({
     if (payload?.role !== 'superadmin' && payload?.client_id && payload?.clientStatus === 'deactivated') {
       return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: payload.client_id }));
     }
-    return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending, authSource: (req.session as any).authLoginSource || 'legacy' });
+    return res.json({ ...payload, mfaPending: !!(req.session as any).mfaPending, authSource: (req.session as any).authLoginSource || 'supabase' });
   });
 
   app.post('/api/auth/logout', (req, res) => {
