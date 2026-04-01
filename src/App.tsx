@@ -490,6 +490,10 @@ export default function App() {
       setAuth({ user: null, loading: false });
       try {
         const employee = await appService.getEmployeeSession();
+        if (!employee) {
+          clearEmployeeAuth();
+          return;
+        }
         setEmployeeAuth({ employee, loading: false });
       } catch (err) {
         clearEmployeeAuth();
@@ -500,6 +504,11 @@ export default function App() {
     clearEmployeeAuth();
     try {
       const user = await appService.getAuthUser();
+      if (!user) {
+        resetDashboardState();
+        setAuth({ user: null, loading: false });
+        return;
+      }
       const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
       const restoredClient = isInternalRole(normalizedUser.role) ? await restoreStoredSuperAdminClient() : null;
       setAuth({ user: normalizedUser, loading: false });
@@ -1740,6 +1749,10 @@ export default function App() {
     const handleMfaComplete = async () => {
       try {
         const user = await appService.getAuthUser();
+        if (!user) {
+          setAuth({ user: null, loading: false });
+          return;
+        }
         const normalizedUser = { ...user, role: normalizeUserRole(user.role) ?? 'user' } as any;
         setAuth({ user: normalizedUser, loading: false });
       } catch (error) {

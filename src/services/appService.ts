@@ -37,11 +37,11 @@ export const appService = {
   markAllInternalNotificationsRead: () => apiPost<{ updated: number }>('/api/internal-notifications/read-all'),
   dismissInternalNotification: (id: string) => apiDelete<{ success: boolean }>(`/api/internal-notifications/${id}`),
 
-  getAuthUser: () => apiGet<User>('/api/auth/me'),
+  getAuthUser: () => apiGet<User | null>('/api/auth/me'),
   login: (email: string, password: string) => apiPost<User>('/api/auth/login', { email, password }),
   logout: () => apiPost('/api/auth/logout'),
 
-  getEmployeeSession: () => apiGet<Employee>('/api/employee-auth/me'),
+  getEmployeeSession: () => apiGet<Employee | null>('/api/employee-auth/me'),
   loginEmployee: (identifier: string, pin: string) => apiPost<Employee>('/api/employee-auth/login', { identifier, pin }),
   logoutEmployee: () => apiPost('/api/employee-auth/logout'),
 };

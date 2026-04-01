@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell, LineChart, Line, ComposedChart, Area
 } from 'recharts';
 import { Loader2, TrendingUp, TrendingDown, Users, CalendarDays, Search, ChevronRight, Banknote, Activity, Wallet, History } from 'lucide-react';
@@ -19,26 +19,51 @@ const COLORS = ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 
 const SafeResponsiveChart = ({ children, minHeight = 300, className = '' }: { children: React.ReactNode; minHeight?: number; className?: string }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [ready, setReady] = useState(false);
+  const frameRef = useRef<number | null>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: minHeight });
 
   useLayoutEffect(() => {
     const node = containerRef.current;
     if (!node) return;
 
     const update = () => {
-      const rect = node.getBoundingClientRect();
-      setReady(rect.width > 0 && rect.height > 0);
+      if (frameRef.current != null) {
+        cancelAnimationFrame(frameRef.current);
+      }
+      frameRef.current = requestAnimationFrame(() => {
+        const rect = node.getBoundingClientRect();
+        const nextWidth = Math.max(0, Math.floor(rect.width));
+        const nextHeight = Math.max(minHeight, Math.floor(rect.height || minHeight));
+        setDimensions((prev) => (
+          prev.width === nextWidth && prev.height === nextHeight
+            ? prev
+            : { width: nextWidth, height: nextHeight }
+        ));
+      });
     };
 
     update();
     const observer = new ResizeObserver(update);
     observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
+    return () => {
+      observer.disconnect();
+      if (frameRef.current != null) {
+        cancelAnimationFrame(frameRef.current);
+      }
+    };
+  }, [minHeight]);
+
+  const isReady = dimensions.width > 16 && dimensions.height > 16;
+  const chart = React.isValidElement(children)
+    ? React.cloneElement(children as React.ReactElement<any>, {
+        width: dimensions.width,
+        height: dimensions.height,
+      })
+    : children;
 
   return (
     <div ref={containerRef} className={cn('w-full h-full min-w-0', className)} style={{ minHeight }}>
-      {ready ? <ResponsiveContainer width="100%" height="100%">{children}</ResponsiveContainer> : <div className="h-full min-h-[300px]" />}
+      {isReady ? chart : <div className="h-full" style={{ minHeight }} />}
     </div>
   );
 };

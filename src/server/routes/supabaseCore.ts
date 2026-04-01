@@ -667,7 +667,7 @@ export function registerSupabaseCoreRoutes({
         (req.session as any).userClientId = user.client_id || null;
       }
     }
-    if (!user) return res.status(401).json({ error: 'Not authenticated' });
+    if (!user) return res.json(null);
     const payload = await buildAuthResponse(user, allowedSuperAdminEmails, mergeDefinitions, baseRosterDefinitions);
     if (payload?.role !== 'superadmin' && payload?.client_id && payload?.clientStatus === 'deactivated') {
       return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: payload.client_id }));
@@ -709,9 +709,9 @@ export function registerSupabaseCoreRoutes({
 
   app.get('/api/employee-auth/me', async (req, res) => {
     const employeeId = getSessionEmployeeId(req);
-    if (!employeeId) return res.status(401).json({ error: 'Not authenticated' });
+    if (!employeeId) return res.json(null);
     const employee = await fetchEmployeeById(employeeId);
-    if (!employee || employee.status === 'offboarded') return res.status(401).json({ error: 'Employee not found' });
+    if (!employee || employee.status === 'offboarded') return res.json(null);
     const client = await fetchClientById(employee.client_id);
     if (isClientDeactivated(client)) {
       return req.session.destroy(() => res.status(423).json({ error: 'This client dashboard has been deactivated.', clientDeactivated: true, clientId: employee.client_id || null }));
