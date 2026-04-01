@@ -731,7 +731,7 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                 breakdownRequests.map((request) => String(request.employee_id || request.employee_name || '').trim().toLowerCase())
               ).size;
               const hoverBreakdown = breakdownRequests
-                .map((request) => `${request.employee_name} • ${leaveTypeMeta[request.type as LeaveType]?.label || request.type}${request.status === 'pending' ? ' • Pending' : ''}`)
+                .map((request) => `• ${request.employee_name} — ${leaveTypeMeta[request.type as LeaveType]?.label || request.type}${request.status === 'pending' ? ' (Pending)' : ''}`)
                 .join('\n');
 
               return (
@@ -755,12 +755,11 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                   
                   <div className="space-y-2">
                     {uniqueEmployeeCount > 0 && (
-                      <div
-                        title={hoverBreakdown}
-                        className="rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 py-2 text-[10px] font-black text-indigo-700 shadow-sm"
-                      >
-                        {uniqueEmployeeCount} employee{uniqueEmployeeCount === 1 ? '' : 's'} on leave
-                      </div>
+                      <Tooltip content={hoverBreakdown} className="block">
+                        <div className="cursor-help rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 py-2 text-[10px] font-black text-indigo-700 shadow-sm">
+                          {uniqueEmployeeCount} employee{uniqueEmployeeCount === 1 ? '' : 's'} on leave
+                        </div>
+                      </Tooltip>
                     )}
                   </div>
                 </div>

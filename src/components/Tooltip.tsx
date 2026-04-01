@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 
 interface TooltipProps {
   children: React.ReactNode;
-  content: string;
+  content: React.ReactNode;
   position?: 'top' | 'bottom' | 'left' | 'right';
   className?: string;
 }
@@ -119,7 +119,7 @@ export const Tooltip: React.FC<TooltipProps> = ({ children, content, position = 
               }}
               className="pointer-events-none"
             >
-              <div className="px-3 py-1.5 bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-2xl whitespace-nowrap relative">
+              <div className="max-w-[280px] px-3 py-2 bg-slate-800 text-white text-[10px] font-black tracking-wide rounded-lg shadow-2xl whitespace-pre-line break-words relative leading-4">
                 {content}
                 {/* Arrow */}
                 <div className={`absolute w-2 h-2 bg-slate-800 rotate-45 ${
