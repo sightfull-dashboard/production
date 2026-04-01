@@ -463,8 +463,11 @@ async function buildRosterDerivedLeaveRequests(employeeId: string, clientId: str
 }
 
 async function syncRosterLeaveRecordsForEmployeeSupabase(employeeId: string, clientId: string) {
-  await reconcileEmployeeLeaveAccrualSupabase(employeeId);
-
+  // Do not run the full accrual reconciler as part of roster leave sync.
+  // It can reset cycle-based balances (especially sick leave) to entitlement-level
+  // amounts before the roster deduction is applied, which makes balances jump up.
+  // Roster sync should only compare existing roster-sourced leave entries vs the
+  // newly-derived roster leave entries and apply the net balance delta.
   const nextEntries = await buildRosterDerivedLeaveRequests(employeeId, clientId, supabaseAdmin);
   const { data: existingRows, error: existingError } = await supabaseAdmin
     .from('leave_requests')
