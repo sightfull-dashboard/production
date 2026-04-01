@@ -26,8 +26,7 @@ import {
   eachDayOfInterval,
   isSameMonth,
   addMonths,
-  subMonths,
-  startOfDay
+  subMonths
 } from 'date-fns';
 import { Employee, LeaveRequest, LeaveType } from '../types';
 import { cn } from '../lib/utils';
@@ -198,9 +197,8 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
   const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 });
   const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
   const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
-  const visibleCalendarRequests = requests.filter((request) => ['approved', 'pending'].includes(request.status));
-  const upcomingRequests = visibleCalendarRequests
-    .filter((request) => new Date(request.end_date).getTime() >= startOfDay(new Date()).getTime())
+  const visibleCalendarRequests = requests
+    .filter((request) => ['approved', 'pending'].includes(request.status))
     .sort((a, b) => new Date(a.start_date).getTime() - new Date(b.start_date).getTime());
 
   // If an employee is selected, show their detailed view
@@ -696,19 +694,24 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
                   </div>
                   
                   <div className="space-y-1">
-                    {dayRequests.map(r => (
+                    {dayRequests.slice(0, 4).map(r => (
                       <div 
                         key={r.id} 
                         className={cn(
-                          "px-2 py-1 rounded-md text-[9px] font-bold truncate border",
+                          "px-2 py-1 rounded-md text-[9px] leading-tight font-bold border whitespace-normal break-words",
                           leaveTypeMeta[r.type as LeaveType]?.badge || 'bg-slate-100 text-slate-700 border-slate-200'
                         )}
                         title={`${r.employee_name} (${leaveTypeMeta[r.type as LeaveType]?.label || r.type}) • ${r.status}`}
                       >
-                        {r.employee_name}
-                        {r.status === 'pending' ? ' • Pending' : ''}
+                        <span className="block">{r.employee_name}</span>
+                        <span className="block opacity-80">{leaveTypeMeta[r.type as LeaveType]?.label || r.type}{r.status === 'pending' ? ' • Pending' : ''}</span>
                       </div>
                     ))}
+                    {dayRequests.length > 4 && (
+                      <div className="px-2 py-1 rounded-md text-[9px] font-black bg-slate-100 text-slate-600 border border-slate-200">
+                        +{dayRequests.length - 4} more
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -716,55 +719,8 @@ export const LeaveSection: React.FC<LeaveSectionProps> = ({ employees, requests,
           </div>
 
 
-          <div className="mt-8 bg-slate-50 rounded-[28px] border border-slate-200 p-6">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-5">
-              <div>
-                <h3 className="text-lg font-black text-slate-800">Upcoming Leave</h3>
-                <p className="text-sm text-slate-500 font-bold">Pending and approved leave booked from today onward.</p>
-              </div>
-              <span className="px-3 py-1 bg-white text-slate-600 rounded-lg text-[10px] font-black uppercase tracking-widest border border-slate-200">
-                {upcomingRequests.length} upcoming
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {upcomingRequests.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-5 py-6 text-center text-sm font-bold text-slate-500">
-                  No upcoming leave requests found.
-                </div>
-              ) : (
-                upcomingRequests.slice(0, 12).map((request) => (
-                  <div key={request.id} className="rounded-2xl border border-white bg-white px-5 py-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 shadow-sm">
-                    <div className="space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-black text-slate-800">{request.employee_name}</span>
-                        <span className={cn(
-                          "inline-flex items-center px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border",
-                          leaveTypeMeta[request.type as LeaveType]?.badge || 'bg-slate-100 text-slate-700 border-slate-200'
-                        )}>
-                          {leaveTypeMeta[request.type as LeaveType]?.label || request.type}
-                        </span>
-                        <span className={cn(
-                          "inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border",
-                          request.status === 'approved'
-                            ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-                            : "bg-amber-50 text-amber-700 border-amber-100"
-                        )}>
-                          {getStatusIcon(request.status)}
-                          {request.status}
-                        </span>
-                      </div>
-                      <div className="text-sm font-bold text-slate-600">
-                        {format(parseISO(request.start_date), 'MMM d, yyyy')} - {format(parseISO(request.end_date), 'MMM d, yyyy')}
-                      </div>
-                    </div>
-                    <div className="text-sm font-black text-slate-500">
-                      {Number(request.days ?? (request.is_half_day ? 0.5 : 1)).toFixed(2)} day(s)
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+          <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-4 text-sm font-bold text-slate-500">
+            Approved and pending leave is shown directly inside each calendar day, including past and future leave when you move between months.
           </div>        </div>
       )}
     </div>
