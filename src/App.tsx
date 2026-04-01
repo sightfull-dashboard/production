@@ -93,6 +93,120 @@ const SectionLoader = () => (
   </div>
 );
 
+const ROSTER_LEAVE_LABEL_MAP: Record<string, { type: LeaveRequest['type']; isHalfDay?: boolean }> = {
+  'annual leave': { type: 'annual' },
+  'sick leave': { type: 'sick' },
+  'family leave': { type: 'family' },
+  'family responsibility leave': { type: 'family' },
+  'unpaid leave': { type: 'unpaid' },
+  'half day': { type: 'half_day', isHalfDay: true },
+};
+
+const toDateOnly = (value: string) => String(value || '').slice(0, 10);
+const addDaysToDateOnly = (value: string, days: number) => {
+  const date = new Date(`${toDateOnly(value)}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return toDateOnly(value);
+  date.setDate(date.getDate() + days);
+  return format(date, 'yyyy-MM-dd');
+};
+
+const getWeekdayLeaveDayCount = (startDate: string, endDate: string, isHalfDay = false) => {
+  if (isHalfDay) return startDate === endDate ? 0.5 : 0;
+  const start = new Date(`${toDateOnly(startDate)}T00:00:00`);
+  const end = new Date(`${toDateOnly(endDate)}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return 0;
+  let count = 0;
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) count += 1;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return count;
+};
+
+const buildRosterDerivedLeaveRequests = (
+  employees: Employee[],
+  roster: RosterAssignment[],
+  shifts: Shift[],
+  existingRequests: LeaveRequest[]
+): LeaveRequest[] => {
+  if (!employees.length || !roster.length || !shifts.length) return [];
+
+  const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
+  const shiftMap = new Map(shifts.map((shift) => [shift.id, shift]));
+  const existingKeys = new Set(
+    existingRequests
+      .filter((request) => request.status !== 'cancelled')
+      .map((request) => `${request.employee_id}|${request.type}|${toDateOnly(request.start_date)}|${toDateOnly(request.end_date)}`)
+  );
+
+  const groupedByEmployee = new Map<string, Array<{ day_date: string; type: LeaveRequest['type']; is_half_day: boolean }>>();
+  roster.forEach((assignment) => {
+    if (!assignment.shift_id) return;
+    const shift = shiftMap.get(String(assignment.shift_id));
+    if (!shift) return;
+    const leaveMeta = ROSTER_LEAVE_LABEL_MAP[String(shift.label || '').trim().toLowerCase()];
+    if (!leaveMeta) return;
+    const list = groupedByEmployee.get(assignment.employee_id) || [];
+    list.push({ day_date: toDateOnly(assignment.day_date), type: leaveMeta.type, is_half_day: Boolean(leaveMeta.isHalfDay) });
+    groupedByEmployee.set(assignment.employee_id, list);
+  });
+
+  const derived: LeaveRequest[] = [];
+  groupedByEmployee.forEach((entries, employeeId) => {
+    const employee = employeeMap.get(employeeId);
+    if (!employee) return;
+    const sortedEntries = [...entries].sort((a, b) => a.day_date.localeCompare(b.day_date));
+    const segments: Array<{ type: LeaveRequest['type']; start_date: string; end_date: string; is_half_day: boolean }> = [];
+
+    sortedEntries.forEach((entry) => {
+      const previous = segments[segments.length - 1];
+      const canExtend = Boolean(
+        previous &&
+        previous.type === entry.type &&
+        !previous.is_half_day &&
+        !entry.is_half_day &&
+        addDaysToDateOnly(previous.end_date, 1) === entry.day_date
+      );
+      if (canExtend && previous) {
+        previous.end_date = entry.day_date;
+        return;
+      }
+      segments.push({
+        type: entry.type,
+        start_date: entry.day_date,
+        end_date: entry.day_date,
+        is_half_day: entry.is_half_day,
+      });
+    });
+
+    segments.forEach((segment) => {
+      const dedupeKey = `${employeeId}|${segment.type}|${segment.start_date}|${segment.end_date}`;
+      if (existingKeys.has(dedupeKey)) return;
+      const createdAt = `${segment.start_date}T00:00:00.000Z`;
+      derived.push({
+        id: `derived-roster-${employeeId}-${segment.type}-${segment.start_date}-${segment.end_date}`,
+        employee_id: employeeId,
+        employee_name: `${employee.first_name} ${employee.last_name}`.trim(),
+        type: segment.type,
+        start_date: segment.start_date,
+        end_date: segment.end_date,
+        is_half_day: segment.is_half_day,
+        status: 'approved',
+        notes: 'Assigned in roster',
+        admin_notes: 'Displayed from roster assignment',
+        created_at: createdAt,
+        updated_at: createdAt,
+        days: getWeekdayLeaveDayCount(segment.start_date, segment.end_date, segment.is_half_day),
+        source: 'roster',
+      });
+    });
+  });
+
+  return derived;
+};
+
 export default function App() {
   const [isSuperAdminRoute, setIsSuperAdminRoute] = useState(isSuperAdminPath(window.location.pathname));
   const [isEmployeeRoute, setIsEmployeeRoute] = useState(isEmployeePath(window.location.pathname));
@@ -659,6 +773,15 @@ export default function App() {
   };
 
   const activeEmployees = useMemo(() => employees.filter(e => e.status !== 'offboarded'), [employees]);
+
+  const combinedLeaveRequests = useMemo(() => {
+    const rosterDerivedRequests = buildRosterDerivedLeaveRequests(activeEmployees, roster, shifts, requests);
+    return [...requests, ...rosterDerivedRequests].sort((a, b) => {
+      const aDate = new Date(a.start_date).getTime();
+      const bDate = new Date(b.start_date).getTime();
+      return bDate - aDate;
+    });
+  }, [activeEmployees, roster, shifts, requests]);
   const visibleShiftsForManagement = useMemo(
     () => (isSuperAdminRole(auth.user?.role) ? shifts : shifts.filter((shift) => !isAdministrativeShift(shift))),
     [auth.user?.role, shifts],
@@ -1727,10 +1850,10 @@ export default function App() {
             <Suspense fallback={<SectionLoader />}>
               {employeeSection === 'dashboard' && <EmployeeDashboard employee={employeeAuth.employee} onApplyLeave={() => setEmployeeSection('apply-leave')} />}
               {employeeSection === 'apply-leave' && <ApplyLeave employee={employeeAuth.employee} onSuccess={async () => { await fetchLeaveRequests(employeeAuth.employee.id); setEmployeeSection('my-leave'); }} onCancel={() => setEmployeeSection('dashboard')} />}
-              {employeeSection === 'my-leave' && <MyLeave employee={employeeAuth.employee} requests={requests.filter(req => req.employee_id === employeeAuth.employee.id)} onCancelRequest={async (id) => { await appService.cancelLeaveRequest(id); await fetchLeaveRequests(employeeAuth.employee.id); toast.success('Leave request cancelled'); }} />}
-              {employeeSection === 'calendar' && <EmployeeCalendar employee={employeeAuth.employee} teamLeave={requests.filter(req => req.status === 'approved')} />}
+              {employeeSection === 'my-leave' && <MyLeave employee={employeeAuth.employee} requests={combinedLeaveRequests.filter(req => req.employee_id === employeeAuth.employee.id)} onCancelRequest={async (id) => { await appService.cancelLeaveRequest(id); await fetchLeaveRequests(employeeAuth.employee.id); toast.success('Leave request cancelled'); }} />}
+              {employeeSection === 'calendar' && <EmployeeCalendar employee={employeeAuth.employee} teamLeave={combinedLeaveRequests.filter(req => req.status === 'approved')} />}
               {employeeSection === 'documents' && <EmployeeDocuments employee={employeeAuth.employee} />}
-              {employeeSection === 'profile' && <EmployeeProfile employee={employeeAuth.employee} leaveRequests={requests.filter(req => req.employee_id === employeeAuth.employee.id)} onLogout={handleLogout} />}
+              {employeeSection === 'profile' && <EmployeeProfile employee={employeeAuth.employee} leaveRequests={combinedLeaveRequests.filter(req => req.employee_id === employeeAuth.employee.id)} onLogout={handleLogout} />}
             </Suspense>
           </motion.div>
         </main>
@@ -2313,7 +2436,7 @@ export default function App() {
           )}
           {activeSection === 'leave' && (
             <FeatureWrapper isLocked={lockedFeatures.includes('leave_management')} featureName="Leave Management">
-              <LeaveSection employees={activeEmployees} requests={requests} setRequests={setRequests} onRefresh={fetchLeaveRequests} onRefreshEmployees={fetchEmployees} initialSelectedEmployeeId={leaveManagementEmployeeId} />
+              <LeaveSection employees={activeEmployees} requests={combinedLeaveRequests} setRequests={setRequests} onRefresh={fetchLeaveRequests} onRefreshEmployees={fetchEmployees} initialSelectedEmployeeId={leaveManagementEmployeeId} />
             </FeatureWrapper>
           )}
           {activeSection === 'files' && (
