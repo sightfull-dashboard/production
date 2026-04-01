@@ -27,7 +27,18 @@ export default defineConfig({
 
           if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) return 'react-vendor';
           if (id.includes('recharts') || id.includes('d3-')) return 'charts-vendor';
-          if (id.includes('jspdf') || id.includes('html2canvas')) return 'pdf-vendor';
+          if (id.includes('jspdf-autotable')) return 'jspdf-autotable-vendor';
+          if (id.includes('html2canvas') || id.includes('dompurify')) return 'pdf-html-vendor';
+          if (
+            id.includes('canvg') ||
+            id.includes('rgbcolor') ||
+            id.includes('svg-pathdata') ||
+            id.includes('stackblur-canvas') ||
+            id.includes('/raf/') ||
+            id.includes('regenerator-runtime') ||
+            id.includes('/core-js/')
+          ) return 'pdf-render-vendor';
+          if (id.includes('jspdf') || id.includes('fast-png') || id.includes('fflate')) return 'jspdf-vendor';
           if (id.includes('xlsx') || id.includes('papaparse')) return 'data-vendor';
           if (id.includes('motion') || id.includes('lucide-react') || id.includes('sonner')) return 'ui-vendor';
           if (id.includes('date-fns')) return 'date-vendor';
