@@ -2,8 +2,10 @@ import express, { type Express, type Request } from 'express';
 import path from 'node:path';
 import { createRequestSupabaseClient, supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
-import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, resolveDownloadUrl, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
+import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, parseStoredBinaryValue, resolveDownloadUrl, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
+import { StorageQuotaError, assertClientStorageCapacity, resolveClientStorageUsage } from '../utils/fileStorageQuota';
 import { enqueueBackgroundJob, getBackgroundJobById, listRecentBackgroundJobs } from '../utils/backgroundJobs';
+import { ensureSupabaseClientVaultStructure } from '../utils/clientVaultStructure';
 
 type Middleware = (req: any, res: any, next: any) => unknown;
 
@@ -204,8 +206,13 @@ export function registerFilesRoutes({
       const actorClientId = getActorClientId(req);
       const ownerEmployeeId = employee_id || sessionEmployeeId || null;
       const ownerClientId = ownerEmployeeId ? null : actorClientId;
+      const storageClientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId });
       if (ownerEmployeeId && !canAccessEmployeeFiles(req, ownerEmployeeId)) {
         return res.status(403).json({ error: 'Forbidden' });
+      }
+
+      if (storageClientId && env.databaseProvider === 'supabase') {
+        await assertClientStorageCapacity({ clientId: storageClientId, incomingBytes: buffer.length });
       }
 
       if (parent_id) {
@@ -261,8 +268,7 @@ export function registerFilesRoutes({
       logActivity(req, 'UPLOAD_FILE', { fileId: id, name, type: 'file', employeeId: ownerEmployeeId, clientId: ownerClientId, transport: 'binary' });
       return res.status(201).json(hydrateFileRow({ ...data, size: data.size_bytes, extension: data.mime_type, url: data.public_url || data.storage_path || null }));
     } catch (error) {
-      console.error('Failed to upload binary file item:', error);
-      res.status(500).json({ error: 'Failed to upload file item' });
+      return handleFileQuotaError(res, error, 'Failed to upload binary file item:');
     }
   });
 
@@ -299,31 +305,64 @@ export function registerFilesRoutes({
         if (parentId) {
           clauses.push('parent_id = ?');
           params.push(parentId);
-        } else {
-          clauses.push('parent_id IS NULL');
         }
         const rows = db.prepare(`SELECT * FROM files WHERE ${clauses.join(' AND ')} ORDER BY type DESC, name ASC`).all(...params) as any[];
         return res.json(rows.map(hydrateFileRow));
       }
 
-      const dataClient = getTenantDataClient(req);
-      let query = dataClient.from('files').select('*').order('type', { ascending: false }).order('name', { ascending: true });
-      if (employeeId) {
-        query = query.eq('employee_id', employeeId);
-      } else if (sessionEmployeeId) {
-        query = query.eq('employee_id', sessionEmployeeId);
-      } else if (actorClientId) {
-        query = query.eq('client_id', actorClientId).is('employee_id', null);
-      } else {
-        query = query.is('employee_id', null);
+      const storageClientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId: employeeId || sessionEmployeeId || null });
+      if (storageClientId) {
+        await ensureSupabaseClientVaultStructure(storageClientId);
       }
-      if (parentId) query = query.eq('parent_id', parentId); else query = query.is('parent_id', null);
-      const { data, error } = await query;
+
+      const buildFilesListQuery = () => {
+        let query = supabaseAdmin.from('files').select('*').order('type', { ascending: false }).order('name', { ascending: true });
+        if (employeeId) {
+          query = query.eq('employee_id', employeeId);
+        } else if (sessionEmployeeId) {
+          query = query.eq('employee_id', sessionEmployeeId);
+        } else if (actorClientId) {
+          query = query.eq('client_id', actorClientId).is('employee_id', null);
+        } else {
+          query = query.is('employee_id', null);
+        }
+        if (parentId) {
+          query = query.eq('parent_id', parentId);
+        }
+        return query;
+      };
+
+      let { data, error } = await buildFilesListQuery();
       if (error) throw error;
+
+      if ((!data || data.length === 0) && storageClientId && !employeeId && !sessionEmployeeId && !parentId) {
+        await ensureSupabaseClientVaultStructure(storageClientId);
+        const retry = await buildFilesListQuery();
+        data = retry.data;
+        error = retry.error;
+        if (error) throw error;
+      }
+
       return res.json((data || []).map((row) => hydrateFileRow({ ...row, size: row.size_bytes, extension: row.mime_type, url: row.public_url || row.storage_path || null })));
     } catch (error) {
       console.error('Failed to load files:', error);
       res.status(500).json({ error: 'Failed to load files' });
+    }
+  });
+
+  app.get('/api/files/usage', ensureFileAccess, async (req, res) => {
+    try {
+      if (env.databaseProvider !== 'supabase') {
+        return res.json({ clientId: getActorClientId(req) || null, usedBytes: 0, limitBytes: 2 * 1024 * 1024 * 1024, remainingBytes: 2 * 1024 * 1024 * 1024, percentUsed: 0, packageLimitBytes: 100 * 1024 * 1024 * 1024 });
+      }
+      const actorClientId = getActorClientId(req);
+      const sessionEmployeeId = (req.session as any)?.employeeId;
+      const clientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId: sessionEmployeeId || null });
+      if (!clientId) return res.status(400).json({ error: 'Client context is required' });
+      return res.json(await resolveClientStorageUsage(clientId));
+    } catch (error) {
+      console.error('Failed to load file usage:', error);
+      return res.status(500).json({ error: 'Failed to load file usage' });
     }
   });
 
@@ -343,6 +382,7 @@ export function registerFilesRoutes({
       const actorClientId = getActorClientId(req);
       const ownerEmployeeId = employee_id || sessionEmployeeId || null;
       const ownerClientId = ownerEmployeeId ? null : actorClientId;
+      const storageClientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId });
       if (ownerEmployeeId && !canAccessEmployeeFiles(req, ownerEmployeeId)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -370,6 +410,12 @@ export function registerFilesRoutes({
         if (!parent || parent.type !== 'folder') return res.status(400).json({ error: 'Parent folder not found' });
       }
       const id = Math.random().toString(36).substr(2, 9);
+      if (type === 'file' && typeof url === 'string' && storageClientId) {
+        const parsedUpload = parseStoredBinaryValue(url);
+        if (parsedUpload?.buffer?.length) {
+          await assertClientStorageCapacity({ clientId: storageClientId, incomingBytes: parsedUpload.buffer.length });
+        }
+      }
       const uploadedAsset = type === 'file' && typeof url === 'string'
         ? await uploadBase64FileToSupabaseStorage({
             bucket: env.supabaseBucketVaultFiles,
@@ -398,6 +444,9 @@ export function registerFilesRoutes({
       logActivity(req, type === 'folder' ? 'CREATE_FOLDER' : 'UPLOAD_FILE', { fileId: id, name, type, employeeId: ownerEmployeeId, clientId: ownerClientId });
       return res.status(201).json(hydrateFileRow({ ...data, size: data.size_bytes, extension: data.mime_type, url: data.public_url || data.storage_path || null }));
     } catch (error) {
+      if (error instanceof StorageQuotaError) {
+        return res.status(error.status).json({ error: error.message, code: error.code, usage: error.usage });
+      }
       console.error('Failed to create file item:', error);
       res.status(500).json({ error: 'Failed to create file item' });
     }
@@ -1382,3 +1431,25 @@ export function registerFilesRoutes({
     }
   });
 }
+
+const resolveEmployeeClientId = async (employeeId: string | null | undefined) => {
+  const normalized = String(employeeId || '').trim();
+  if (!normalized) return null;
+  const { data, error } = await supabaseAdmin.from('employees').select('client_id').eq('id', normalized).maybeSingle();
+  if (error) throw error;
+  return String(data?.client_id || '').trim() || null;
+};
+
+const resolveStorageClientId = async ({ actorClientId, ownerEmployeeId }: { actorClientId: string | null | undefined; ownerEmployeeId: string | null | undefined; }) => {
+  const normalizedActor = String(actorClientId || '').trim();
+  if (normalizedActor) return normalizedActor;
+  return resolveEmployeeClientId(ownerEmployeeId);
+};
+
+const handleFileQuotaError = (res: any, error: unknown, fallbackMessage: string) => {
+  if (error instanceof StorageQuotaError) {
+    return res.status(error.status).json({ error: error.message, code: error.code, usage: error.usage });
+  }
+  console.error(fallbackMessage, error);
+  return res.status(500).json({ error: 'Failed to upload file item' });
+};

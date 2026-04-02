@@ -10,6 +10,7 @@ export const adminService = {
   updateClientUser: (clientId: string, userId: string, payload: Record<string, unknown>) => apiPatch(`/api/admin/clients/${clientId}/users/${userId}`, payload),
   deleteClientUser: (clientId: string, userId: string) => apiDelete(`/api/admin/clients/${clientId}/users/${userId}`),
   getClientFiles: (clientId: string) => apiGet<any[]>(`/api/admin/clients/${clientId}/files`),
+  getClientFileUsage: (clientId: string) => apiGet<any>(`/api/admin/clients/${clientId}/files/usage`),
   createClientFile: (clientId: string, payload: Record<string, unknown>) => apiPost(`/api/admin/clients/${clientId}/files`, payload),
   updateClientFile: (clientId: string, fileId: string, payload: Record<string, unknown>) => apiPatch(`/api/admin/clients/${clientId}/files/${fileId}`, payload),
   deleteClientFile: (clientId: string, fileId: string) => apiDelete(`/api/admin/clients/${clientId}/files/${fileId}`),

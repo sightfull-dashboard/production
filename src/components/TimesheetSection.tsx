@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { format, addDays, subDays } from 'date-fns';
-import { ChevronLeft, ChevronRight, Download, FileText, Search, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, FileText, Search } from 'lucide-react';
 import { Employee, Shift, RosterAssignment, RosterMeta, RosterDefinition, PayrollSubmission } from '../types';
 import { calculateEmployeePayroll } from '../services/PayrollService';
 import { cn } from '../lib/utils';
@@ -48,7 +48,6 @@ interface TimesheetSectionProps {
   rosterTitle?: string;
   onWeekChange: (date: Date) => void;
   onPayrollSubmit?: () => void | Promise<void>;
-  isLoading?: boolean;
 }
 
 const formatValue = (val: number | string | undefined) => {
@@ -71,7 +70,6 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
   rosterTitle = 'Weekly Roster',
   onWeekChange,
   onPayrollSubmit,
-  isLoading = false,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showExportOptions, setShowExportOptions] = useState(false);
@@ -317,14 +315,6 @@ export const TimesheetSection: React.FC<TimesheetSectionProps> = ({
             </div>
           </div>
         </div>
-
-
-        {isLoading && (
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500 px-1">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
-            Loading timesheet...
-          </div>
-        )}
 
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white/60 backdrop-blur-md p-2 rounded-2xl border border-slate-200/60 shadow-sm">
           <div className="relative w-full md:w-96">

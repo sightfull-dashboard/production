@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { format, addDays, subDays, isSunday, isToday, isBefore, startOfDay, differenceInCalendarDays } from 'date-fns';
-import { ChevronLeft, ChevronRight, CheckCircle2, DollarSign, AlertCircle, Clock, CreditCard, FileText, Search, Download, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, DollarSign, AlertCircle, Clock, CreditCard, FileText, Search, Download } from 'lucide-react';
 import { Employee, Shift, RosterAssignment, RosterMeta, PayrollSubmission } from '../types';
 import { isSAPublicHoliday } from '../constants';
 import { cn } from '../lib/utils';
@@ -69,7 +69,6 @@ interface RosterSectionProps {
   isSuperAdmin?: boolean;
   payrollSubmissions?: PayrollSubmission[];
   rosterTitle?: string;
-  isLoading?: boolean;
 }
 
 export const RosterSection: React.FC<RosterSectionProps> = ({ 
@@ -89,8 +88,7 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
   onPayrollSubmit,
   isSuperAdmin = false,
   payrollSubmissions = [],
-  rosterTitle = 'Weekly Roster',
-  isLoading = false
+  rosterTitle = 'Weekly Roster'
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const payrollMode = rosterMode;
@@ -505,14 +503,6 @@ export const RosterSection: React.FC<RosterSectionProps> = ({
             </Tooltip>
           </div>
         </div>
-
-
-        {isLoading && (
-          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500 px-1">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
-            Loading roster...
-          </div>
-        )}
 
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 bg-white/60 backdrop-blur-md p-2 rounded-2xl border border-slate-200/60 shadow-sm">
           <div className="relative w-full md:w-96">

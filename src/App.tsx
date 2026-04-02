@@ -284,13 +284,9 @@ export default function App() {
   const [sickLeaveDisplay, setSickLeaveDisplay] = useState('');
   const [familyLeaveDisplay, setFamilyLeaveDisplay] = useState('');
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [employeesLoading, setEmployeesLoading] = useState(false);
   const [shifts, setShifts] = useState<Shift[]>([]);
-  const [shiftsLoading, setShiftsLoading] = useState(false);
   const [roster, setRoster] = useState<RosterAssignment[]>([]);
-  const [rosterLoading, setRosterLoading] = useState(false);
   const [rosterMeta, setRosterMeta] = useState<RosterMeta[]>([]);
-  const [rosterMetaLoading, setRosterMetaLoading] = useState(false);
   const leaveOverrideWarningShownRef = useRef<Set<string>>(new Set());
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
@@ -422,7 +418,6 @@ export default function App() {
       setEmployees([]);
       return;
     }
-    setEmployeesLoading(true);
     try {
       const data = await appService.getEmployees();
       const visibleClientId = getVisibleClientId();
@@ -434,7 +429,6 @@ export default function App() {
       console.error('Failed to fetch employees:', error);
       setEmployees([]);
     } finally {
-      setEmployeesLoading(false);
     }
   };
 
@@ -443,14 +437,12 @@ export default function App() {
       setShifts([]);
       return;
     }
-    setShiftsLoading(true);
     try {
       const data = await appService.getShifts();
       setShifts(data);
     } catch (error) {
       console.error('Failed to fetch shifts:', error);
     } finally {
-      setShiftsLoading(false);
     }
   };
 
@@ -459,7 +451,6 @@ export default function App() {
       setRoster([]);
       return;
     }
-    setRosterLoading(true);
     try {
       const periodDays = rosterDuration === '2_weeks' ? 14 : rosterDuration === '1_month' ? 28 : 7;
       const rosterFetchStart = subDays(currentWeekStart, 1);
@@ -470,7 +461,6 @@ export default function App() {
       console.error('Failed to fetch roster:', error);
       setRoster([]);
     } finally {
-      setRosterLoading(false);
     }
   };
 
@@ -479,7 +469,6 @@ export default function App() {
       setRosterMeta([]);
       return;
     }
-    setRosterMetaLoading(true);
     try {
       const data = await appService.getRosterMeta(format(currentWeekStart, 'yyyy-MM-dd'));
       const employeeIds = new Set(employees.map((employee) => employee.id));
@@ -488,7 +477,6 @@ export default function App() {
       console.error('Failed to fetch roster meta:', error);
       setRosterMeta([]);
     } finally {
-      setRosterMetaLoading(false);
     }
   };
 
@@ -2212,9 +2200,6 @@ export default function App() {
     );
   }
 
-  const rosterScreenLoading = employeesLoading || shiftsLoading || rosterLoading || rosterMetaLoading;
-  const timesheetScreenLoading = employeesLoading || shiftsLoading || rosterLoading || rosterMetaLoading;
-
   return (
     <div className="flex min-h-screen">
       <Toaster position="top-right" richColors />
@@ -2465,7 +2450,6 @@ export default function App() {
                 onUpdateRoster={updateRoster}
                 rosterTitle={rosterTitle}
                 payrollSubmissions={currentClientNotifications}
-                isLoading={rosterScreenLoading}
                 onUpdateMeta={updateMeta}
                 isSuperAdmin={isSuperAdminRole(auth.user?.role)}
                 onPayrollSubmit={async () => {
@@ -2540,7 +2524,6 @@ export default function App() {
                 currentWeekStart={currentWeekStart}
                 payrollSubmissions={currentClientNotifications}
                 rosterTitle={rosterTitle}
-                isLoading={timesheetScreenLoading}
                 onWeekChange={setCurrentWeekStart}
                 onPayrollSubmit={async () => {
                   try {

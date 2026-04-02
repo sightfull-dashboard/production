@@ -3,8 +3,10 @@ import path from 'node:path';
 import { createRequestSupabaseClient, supabaseAdmin } from '../integrations/supabase';
 import { env } from '../config/env';
 import bcrypt from 'bcryptjs';
-import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
+import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, parseStoredBinaryValue, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
+import { StorageQuotaError, assertClientStorageCapacity, resolveClientStorageUsage } from '../utils/fileStorageQuota';
 import { deleteSupabaseAuthUser, syncSupabaseAuthUser } from '../utils/supabaseAuth';
+import { ensureSupabaseClientVaultStructure } from '../utils/clientVaultStructure';
 
 type Middleware = (req: any, res: any, next: any) => unknown;
 
@@ -435,6 +437,7 @@ export function registerAdminRoutes({
         return res.status(201).json(db.prepare("SELECT * FROM files WHERE id = ?").get(id));
       }
 
+      await assertClientStorageCapacity({ clientId: req.params.id, incomingBytes: buffer.length });
       const uploadedAsset = await uploadBinaryFileToSupabaseStorage({
         bucket: env.supabaseBucketVaultFiles,
         fileName: name,
@@ -462,6 +465,9 @@ export function registerAdminRoutes({
       logActivity(req, 'UPLOAD_CLIENT_FILE', { clientId: req.params.id, fileId: id, name, type: 'file', transport: 'binary' });
       return res.status(201).json(hydrateFileRow({ ...data, size: data.size_bytes, extension: data.mime_type, url: data.public_url || data.storage_path || null }));
     } catch (error) {
+      if (error instanceof StorageQuotaError) {
+        return res.status(error.status).json({ error: error.message, code: error.code, usage: error.usage });
+      }
       console.error('Failed to upload client file:', error);
       return res.status(500).json({ error: 'Failed to create client file' });
     }
@@ -706,6 +712,7 @@ export function registerAdminRoutes({
         const rows = db.prepare("SELECT * FROM files WHERE client_id = ? ORDER BY type DESC, name ASC").all(req.params.id);
         return res.json(rows.map(hydrateFileRow));
       }
+      await ensureSupabaseClientVaultStructure(req.params.id);
       const { data, error } = await supabaseAdmin.from('files').select('*').eq('client_id', req.params.id).order('type', { ascending: false }).order('name', { ascending: true });
       if (error) throw error;
       return res.json((data || []).map((row) => hydrateFileRow({
@@ -717,6 +724,18 @@ export function registerAdminRoutes({
     } catch (error) {
       console.error('Failed to load client files:', error);
       return res.status(500).json({ error: 'Failed to load client files' });
+    }
+  });
+
+  app.get("/api/admin/clients/:id/files/usage", requireClientAccess('view_files'), async (req, res) => {
+    try {
+      if (env.databaseProvider !== 'supabase') {
+        return res.json({ clientId: req.params.id, usedBytes: 0, limitBytes: 2 * 1024 * 1024 * 1024, remainingBytes: 2 * 1024 * 1024 * 1024, percentUsed: 0, packageLimitBytes: 100 * 1024 * 1024 * 1024 });
+      }
+      return res.json(await resolveClientStorageUsage(req.params.id));
+    } catch (error) {
+      console.error('Failed to load client file usage:', error);
+      return res.status(500).json({ error: 'Failed to load client file usage' });
     }
   });
 
@@ -745,6 +764,12 @@ export function registerAdminRoutes({
         if (!parent || parent.type !== 'folder' || parent.client_id !== req.params.id) return res.status(400).json({ error: 'Parent folder not found.' });
       }
 
+      if (type === 'file' && typeof url === 'string') {
+        const parsedUpload = parseStoredBinaryValue(url);
+        if (parsedUpload?.buffer?.length) {
+          await assertClientStorageCapacity({ clientId: req.params.id, incomingBytes: parsedUpload.buffer.length });
+        }
+      }
       const uploadedAsset = type === 'file' && typeof url === 'string'
         ? await uploadBase64FileToSupabaseStorage({
             bucket: env.supabaseBucketVaultFiles,
@@ -773,6 +798,9 @@ export function registerAdminRoutes({
       logActivity(req, type === 'folder' ? 'CREATE_CLIENT_FOLDER' : 'UPLOAD_CLIENT_FILE', { clientId: req.params.id, fileId: id, name, type });
       return res.status(201).json(hydrateFileRow({ ...data, size: data.size_bytes, extension: data.mime_type, url: data.public_url || data.storage_path || null }));
     } catch (error) {
+      if (error instanceof StorageQuotaError) {
+        return res.status(error.status).json({ error: error.message, code: error.code, usage: error.usage });
+      }
       console.error('Failed to create client file:', error);
       return res.status(500).json({ error: 'Failed to create client file' });
     }

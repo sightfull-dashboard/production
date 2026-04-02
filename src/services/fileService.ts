@@ -12,4 +12,5 @@ export const fileService = {
   create: (payload: Record<string, unknown>) => apiPost<FileItem>('/api/files', payload),
   remove: (id: string) => apiDelete(`/api/files/${id}`),
   download: (id: string) => apiGet<{ url?: string; name: string }>(`/api/files/${id}/download`),
+  getUsage: () => apiGet<any>('/api/files/usage'),
 };

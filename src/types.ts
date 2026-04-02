@@ -115,6 +115,15 @@ export type FileItem = {
   password?: string;
 };
 
+export type FileStorageUsage = {
+  clientId: string;
+  usedBytes: number;
+  limitBytes: number;
+  remainingBytes: number;
+  percentUsed: number;
+  packageLimitBytes: number;
+};
+
 export type OffboardReason = 
   | 'deceased' 
   | 'retired' 

@@ -52,7 +52,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
-import type { FileItem, PayrollSubmission, SupportTicket, RosterDefinition, User } from '../types';
+import type { FileItem, FileStorageUsage, PayrollSubmission, SupportTicket, RosterDefinition, User } from '../types';
 import { BrandedState } from './BrandedStates';
 import { Tooltip } from './Tooltip';
 import { toast } from 'sonner';
@@ -115,6 +115,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   
   const [clientUsers, setClientUsers] = useState<any[]>([]);
   const [clientFiles, setClientFiles] = useState<any[]>([]);
+  const [clientFileUsage, setClientFileUsage] = useState<FileStorageUsage | null>(null);
   const [clientLogs, setClientLogs] = useState<any[]>([]);
   const [clientSupportTickets, setClientSupportTickets] = useState<SupportTicket[]>([]);
   const [clientPayrollNotifications, setClientPayrollNotifications] = useState<PayrollSubmission[]>([]);
@@ -143,6 +144,23 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   const [waFilter, setWaFilter] = useState('all');
   const [waSelected, setWaSelected] = useState<number[]>([1, 2]);
   const [isWaConfirmOpen, setIsWaConfirmOpen] = useState(false);
+
+
+  const formatStorageValue = (bytes: number) => {
+    const normalized = Math.max(0, Number(bytes) || 0);
+    if (normalized >= 1024 ** 3) return `${(normalized / (1024 ** 3)).toFixed(2)} GB`;
+    if (normalized >= 1024 ** 2) return `${(normalized / (1024 ** 2)).toFixed(2)} MB`;
+    if (normalized >= 1024) return `${(normalized / 1024).toFixed(2)} KB`;
+    return `${normalized} B`;
+  };
+
+  const formatStorageCompact = (bytes: number) => {
+    const normalized = Math.max(0, Number(bytes) || 0);
+    if (normalized >= 1024 ** 3) return `${(normalized / (1024 ** 3)).toFixed(1)} GB`;
+    if (normalized >= 1024 ** 2) return `${Math.round(normalized / (1024 ** 2))} MB`;
+    if (normalized >= 1024) return `${Math.round(normalized / 1024)} KB`;
+    return `${normalized} B`;
+  };
 
   const fetchClients = async () => {
     try {
@@ -189,6 +207,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
 
     setClientUsers([]);
     setClientFiles([]);
+    setClientFileUsage(null);
     setClientLogs([]);
     setClientSupportTickets([]);
     setClientPayrollNotifications([]);
@@ -202,6 +221,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
       if (!selectedClient?.id) {
         setClientUsers([]);
         setClientFiles([]);
+        setClientFileUsage(null);
         setClientLogs([]);
             setClientSupportTickets([]);
         setClientPayrollNotifications([]);
@@ -250,7 +270,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
             case 'users':
               return adminService.getClientUsers(selectedClient.id).then((value) => ({ section, value }));
             case 'files':
-              return adminService.getClientFiles(selectedClient.id).then((value) => ({ section, value }));
+              return Promise.all([adminService.getClientFiles(selectedClient.id), adminService.getClientFileUsage(selectedClient.id).catch(() => null)]).then(([value, usage]) => ({ section, value, usage }));
             case 'logs':
               return adminService.getClientLogs(selectedClient.id).then((value) => ({ section, value }));
             case 'support_tickets':
@@ -267,7 +287,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
 
         results.forEach((result) => {
           if (result.status !== 'fulfilled') return;
-          const { section, value } = result.value as { section: string; value: any };
+          const { section, value, usage } = result.value as { section: string; value: any; usage?: FileStorageUsage | null };
           loadedClientSectionsRef.current[selectedClient.id].add(section);
           switch (section) {
             case 'users':
@@ -275,6 +295,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
               break;
             case 'files':
               setClientFiles(Array.isArray(value) ? value : []);
+              setClientFileUsage(usage || null);
               navigateClientFolder(null, { pushHistory: false });
               break;
             case 'logs':
@@ -585,6 +606,8 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
     try {
       await adminService.deleteClientFile(selectedClient.id, id);
       setClientFiles(clientFiles.filter(f => f.id !== id));
+      const usage = await adminService.getClientFileUsage(selectedClient.id).catch(() => null);
+      if (usage) setClientFileUsage(usage);
       toast.success('File deleted successfully');
     } catch (error: any) {
       console.error('Failed to delete file:', error);
@@ -1052,7 +1075,15 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
               )}
             >
               <tab.icon className={cn("w-4 h-4 transition-transform", activeTab === tab.id ? "scale-110" : "group-hover:scale-110")} />
-              {tab.label}
+              <span>{tab.label}</span>
+              {tab.id === 'files' && selectedClient && clientFileUsage && (
+                <span className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-black tracking-normal",
+                  activeTab === tab.id ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-500 group-hover:bg-slate-200"
+                )}>
+                  {formatStorageCompact(clientFileUsage.usedBytes)} / {formatStorageCompact(clientFileUsage.limitBytes)}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -1534,7 +1565,8 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                     </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar text-xs font-black uppercase tracking-widest text-slate-400">
+  
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar text-xs font-black uppercase tracking-widest text-slate-400">
                   <button type="button" onClick={() => navigateClientFolder(null)} className="inline-flex items-center gap-1 rounded-lg border border-transparent px-2 py-1 text-slate-500 transition hover:border-indigo-100 hover:bg-white hover:text-indigo-600">
                     <Home className="w-3.5 h-3.5" />
                     Vault

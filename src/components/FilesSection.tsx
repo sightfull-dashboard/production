@@ -34,6 +34,7 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
     fetchFiles();
   }, [employeeId]);
 
+
   const navigateToFolder = (nextFolderId: string | null, options?: { pushHistory?: boolean }) => {
     const pushHistory = options?.pushHistory !== false;
     setCurrentFolderId((prev) => {
@@ -111,7 +112,7 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
       setFiles(data);
 
       if (employeeId && !currentFolderId) {
-        const rootFolder = data.find((f) => f.employee_id === employeeId && f.parent_id === null);
+        const rootFolder = data.find((f) => f.employee_id === employeeId && !hasVisibleParent(f));
         if (rootFolder) {
           navigateToFolder(rootFolder.id, { pushHistory: false });
         }
@@ -123,6 +124,12 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
     }
   };
 
+
+  const hasVisibleParent = (item: FileItem) => {
+    if (!item.parent_id) return false;
+    return files.some((file) => file.id === item.parent_id);
+  };
+
   const currentFolder = currentFolderId ? files.find(f => f.id === currentFolderId) : null;
   
   const items = files.filter(f => {
@@ -132,8 +139,8 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
   });
 
   const rootFolders = employeeId 
-    ? files.filter(f => f.type === 'folder' && f.employee_id === employeeId && f.parent_id === null)
-    : files.filter(f => f.type === 'folder' && f.parent_id === null);
+    ? files.filter((f) => f.type === 'folder' && f.employee_id === employeeId && !hasVisibleParent(f))
+    : files.filter((f) => f.type === 'folder' && f.parent_id === null && !f.employee_id);
 
   const handleDownload = async (item: FileItem) => {
     try {
@@ -269,6 +276,8 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
         />
       </div>
       
+
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <div className="md:col-span-1 space-y-6">
           <div className="bg-white/80 backdrop-blur-md rounded-[32px] shadow-xl shadow-indigo-100/20 border border-white/20 p-5 space-y-6">
@@ -300,17 +309,6 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
                 ))}
               </div>
             </div>
-            {!readOnly && (
-              <div className="space-y-3 pt-4 border-t border-slate-100">
-                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Storage Status</h4>
-                <div className="space-y-2">
-                  <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full w-2/3 bg-indigo-600 rounded-full" />
-                  </div>
-                  <p className="text-[10px] text-slate-500 font-black">1.2 GB of 2.0 GB used</p>
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
