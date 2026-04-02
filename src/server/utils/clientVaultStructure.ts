@@ -14,22 +14,10 @@ const buildEmployeeDisplayName = (employee: any) => {
   return combined || String(employee?.emp_id || employee?.id || 'Employee').trim();
 };
 
-const fetchEmployeeFolders = async (clientId: string, employeeIds: string[]) => {
-  if (!employeeIds.length) return [] as any[];
-  const rows: any[] = [];
-  const batchSize = 100;
-  for (let index = 0; index < employeeIds.length; index += batchSize) {
-    const batch = employeeIds.slice(index, index + batchSize);
-    const { data, error } = await supabaseAdmin
-      .from('files')
-      .select('id,name,parent_id,employee_id,client_id,type')
-      .eq('type', 'folder')
-      .eq('client_id', clientId)
-      .in('employee_id', batch);
-    if (error) throw error;
-    rows.push(...(data || []));
-  }
-  return rows;
+const upsertFolderIdentity = async (folderId: string, updates: Record<string, any>) => {
+  const payload = { ...updates, updated_at: nowIso() };
+  const { error } = await supabaseAdmin.from('files').update(payload).eq('id', folderId);
+  if (error) throw error;
 };
 
 export const ensureSupabaseClientVaultStructure = async (clientId: string | null | undefined) => {
@@ -38,13 +26,13 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
 
   const { data: employeesData, error: employeesError } = await supabaseAdmin
     .from('employees')
-    .select('id,emp_id,first_name,last_name,status')
+    .select('id,emp_id,first_name,last_name,status,client_id')
     .eq('client_id', normalizedClientId)
     .neq('status', 'offboarded');
+
   if (employeesError) throw employeesError;
   const employees = (employeesData || []) as any[];
   const employeeIds = employees.map((employee) => String(employee.id || '').trim()).filter(Boolean);
-
 
   if (employeeIds.length) {
     const { error: normalizeEmployeeFilesError } = await supabaseAdmin
@@ -54,18 +42,15 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
     if (normalizeEmployeeFilesError) throw normalizeEmployeeFilesError;
   }
 
-  const [clientFoldersResult, employeeFolders] = await Promise.all([
-    supabaseAdmin
-      .from('files')
-      .select('id,name,parent_id,employee_id,client_id,type')
-      .eq('client_id', clientId)
-      .eq('type', 'folder'),
-    fetchEmployeeFolders(normalizedClientId, employeeIds),
-  ]);
+  const { data: folderRows, error: folderRowsError } = await supabaseAdmin
+    .from('files')
+    .select('id,name,parent_id,employee_id,client_id,type')
+    .eq('client_id', normalizedClientId)
+    .eq('type', 'folder');
 
-  if (clientFoldersResult.error) throw clientFoldersResult.error;
+  if (folderRowsError) throw folderRowsError;
 
-  const folders = ([...(clientFoldersResult.data || []), ...employeeFolders]) as any[];
+  const folders = (folderRows || []) as any[];
   const folderKeyToId = new Map<string, string>();
   const employeeFoldersById = new Map<string, any[]>();
 
@@ -74,7 +59,8 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
     if (!folderId) continue;
     folderKeyToId.set(normalizeKey({ name: folder.name, parentId: folder.parent_id, employeeId: folder.employee_id }), folderId);
     if (folder.employee_id) {
-      const employeeId = String(folder.employee_id);
+      const employeeId = String(folder.employee_id || '').trim();
+      if (!employeeId) continue;
       const current = employeeFoldersById.get(employeeId) || [];
       current.push(folder);
       employeeFoldersById.set(employeeId, current);
@@ -139,6 +125,7 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
   for (const employee of employees) {
     const employeeId = String(employee.id || '').trim();
     if (!employeeId) continue;
+
     const displayName = buildEmployeeDisplayName(employee);
     const employeeFolders = employeeFoldersById.get(employeeId) || [];
     const rootCandidates = employeeFolders.filter((folder) => {
@@ -146,19 +133,26 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
       return !parentId || parentId === clientEmployeesId;
     });
 
-    let rootFolder = rootCandidates.find((folder) => String(folder.parent_id || '') === clientEmployeesId) || rootCandidates[0] || null;
+    let rootFolder =
+      rootCandidates.find((folder) => String(folder.parent_id || '') === clientEmployeesId) ||
+      rootCandidates[0] ||
+      null;
 
     if (rootFolder?.id) {
-      const updates: Record<string, any> = { updated_at: nowIso() };
       const currentName = String(rootFolder.name || '').trim();
       const currentParentId = rootFolder.parent_id ? String(rootFolder.parent_id) : null;
+      const currentClientId = String(rootFolder.client_id || '').trim() || null;
+      const updates: Record<string, any> = {};
+
       if (currentName !== displayName) updates.name = displayName;
       if (currentParentId !== clientEmployeesId) updates.parent_id = clientEmployeesId;
-      if (String(rootFolder.client_id || '') !== normalizedClientId) updates.client_id = normalizedClientId;
-      if (Object.keys(updates).length > 1) {
-        const { error } = await supabaseAdmin.from('files').update(updates).eq('id', rootFolder.id);
-        if (error) throw error;
+      if (currentClientId !== normalizedClientId) updates.client_id = normalizedClientId;
+      if (String(rootFolder.employee_id || '') !== employeeId) updates.employee_id = employeeId;
+
+      if (Object.keys(updates).length) {
+        await upsertFolderIdentity(String(rootFolder.id), updates);
       }
+
       folderKeyToId.delete(normalizeKey({ name: currentName, parentId: currentParentId, employeeId }));
       folderKeyToId.set(normalizeKey({ name: displayName, parentId: clientEmployeesId, employeeId }), String(rootFolder.id));
     } else {
@@ -166,19 +160,27 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
       rootFolder = { id: rootId, name: displayName, employee_id: employeeId, parent_id: clientEmployeesId, client_id: normalizedClientId };
     }
 
-    const employeeRootId = String(rootFolder.id);
+    const employeeRootId = String(rootFolder.id || '').trim();
+    if (!employeeRootId) continue;
 
     for (const duplicate of rootCandidates) {
       const duplicateId = String(duplicate.id || '').trim();
       if (!duplicateId || duplicateId === employeeRootId) continue;
-      const { error: reparentError } = await supabaseAdmin
+
+      const { error: reparentChildrenError } = await supabaseAdmin
         .from('files')
-        .update({ parent_id: employeeRootId, updated_at: nowIso() })
+        .update({ parent_id: employeeRootId, client_id: normalizedClientId, employee_id: employeeId, updated_at: nowIso() })
         .eq('parent_id', duplicateId)
-        .eq('employee_id', employeeId);
-      if (reparentError) throw reparentError;
-      const { error: deleteError } = await supabaseAdmin.from('files').delete().eq('id', duplicateId);
-      if (deleteError) throw deleteError;
+        .eq('client_id', normalizedClientId);
+      if (reparentChildrenError) throw reparentChildrenError;
+
+      const { error: deleteDuplicateError } = await supabaseAdmin
+        .from('files')
+        .delete()
+        .eq('id', duplicateId)
+        .eq('client_id', normalizedClientId);
+      if (deleteDuplicateError) throw deleteDuplicateError;
+
       folderKeyToId.delete(normalizeKey({ name: duplicate.name, parentId: duplicate.parent_id, employeeId }));
     }
 

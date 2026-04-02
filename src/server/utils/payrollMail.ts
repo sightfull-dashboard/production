@@ -140,12 +140,6 @@ export const buildRosterAndTimesheetAttachments = (
     });
     return [...base, ...daily];
   });
-  const rosterPdfBuffer = buildStyledTablePdfBuffer(
-    `Roster - ${payload.clientName}`,
-    `Period: ${payload.periodStart} to ${payload.periodEnd}`,
-    rosterHeader,
-    rosterRows,
-  );
 
   const weekDays = periodDays.map((dayIso) => new Date(`${dayIso}T00:00:00`));
   const visibleDefinitions = deps.mergeDefinitions(context.rosterMeta.length ? Object.keys(context.rosterMeta[0]).filter((key) => !['id','client_id','employee_id','week_start','created_at','updated_at'].includes(key)) : undefined);
@@ -177,8 +171,6 @@ export const buildRosterAndTimesheetAttachments = (
 
   const safeBase = `${payload.clientName}-${payload.periodEnd}`.replace(/\s+/g, '-');
   return [
-    { filename: `${safeBase}-payroll.csv`, content: Buffer.from(formatPayrollCsv(payload.employeeBreakdown), 'utf-8'), contentType: 'text/csv; charset=utf-8' },
-    { filename: `${safeBase}-roster.pdf`, content: rosterPdfBuffer, contentType: 'application/pdf' },
     { filename: `${safeBase}-timesheet.csv`, content: Buffer.from(timesheetCsv, 'utf-8'), contentType: 'text/csv; charset=utf-8' },
     { filename: `${safeBase}-timesheet.pdf`, content: timesheetPdfBuffer, contentType: 'application/pdf' },
   ];
@@ -224,7 +216,7 @@ export const sendPayrollSubmissionEmail = async (payload: {
         <tr><td style="padding: 6px 12px 6px 0;"><strong>Total hours</strong></td><td>${Number(payload.totalHours || 0).toFixed(2)}</td></tr>
         <tr><td style="padding: 6px 12px 6px 0;"><strong>Total pay</strong></td><td>R${Number(payload.totalPay || 0).toFixed(2)}</td></tr>
       </table>
-      <p style="margin: 12px 0 0;">The payroll breakdown, roster and timesheet files are attached in CSV and PDF format.</p>
+      <p style="margin: 12px 0 0;">The timesheet is attached in CSV and PDF format.</p>
     </div>
   `;
   const text = [
@@ -240,7 +232,7 @@ export const sendPayrollSubmissionEmail = async (payload: {
     `Total hours: ${Number(payload.totalHours || 0).toFixed(2)}`,
     `Total pay: R${Number(payload.totalPay || 0).toFixed(2)}`,
     '',
-    'The payroll breakdown, roster and timesheet files are attached in CSV and PDF format.',
+    'The timesheet is attached in CSV and PDF format.',
   ].join('\n');
 
   return sendMailMessage({
@@ -253,7 +245,7 @@ export const sendPayrollSubmissionEmail = async (payload: {
       ? payload.attachments
       : [
           {
-            filename: `${payload.clientName}-${payload.periodEnd}-payroll.csv`.replace(/\s+/g, '-'),
+            filename: `${payload.clientName}-${payload.periodEnd}-timesheet.csv`.replace(/\s+/g, '-'),
             content: Buffer.from(csv, 'utf-8'),
             contentType: 'text/csv; charset=utf-8',
           },
