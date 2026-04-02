@@ -659,7 +659,54 @@ async function fetchEmployeeForClient(employeeId: string, clientId: string, clie
   return data as any;
 }
 
+const DEFAULT_CLIENT_SHIFT_TEMPLATES = [
+  { label: 'Day Shift', start: '08:00', end: '17:00', lunch: 60 },
+  { label: 'Night Shift', start: '18:00', end: '06:00', lunch: 60 },
+  { label: 'Absent', start: '', end: '', lunch: 0 },
+  { label: 'Annual Leave', start: '', end: '', lunch: 0 },
+  { label: 'Sick Leave', start: '', end: '', lunch: 0 },
+  { label: 'Family Leave', start: '', end: '', lunch: 0 },
+  { label: 'Half Day', start: '', end: '', lunch: 0 },
+  { label: 'Unshifted', start: '', end: '', lunch: 0 },
+] as const;
+
+const normalizeShiftLabelKey = (label: string | null | undefined) => String(label || '').trim().toLowerCase();
+
+async function ensureDefaultShiftsForClient(clientId: string) {
+  const { data: currentRows, error: currentError } = await supabaseAdmin
+    .from('shifts')
+    .select('*')
+    .eq('client_id', clientId);
+  if (currentError) throw currentError;
+
+  const current = (currentRows || []) as any[];
+  const currentLabels = new Set(current.map((row) => normalizeShiftLabelKey(row.label)));
+
+  const templatesToInsert = DEFAULT_CLIENT_SHIFT_TEMPLATES.filter((template) => {
+    const key = normalizeShiftLabelKey(template.label);
+    if (current.length === 0) return true;
+    return PROTECTED_ADMINISTRATIVE_SHIFT_LABELS.includes(key) && !currentLabels.has(key);
+  });
+
+  if (templatesToInsert.length > 0) {
+    const payload = templatesToInsert.map((template) => ({
+      id: Math.random().toString(36).slice(2, 11),
+      client_id: clientId,
+      label: template.label,
+      start: template.start,
+      end: template.end,
+      lunch: template.lunch,
+      crosses_saturday_into_sunday: false,
+      saturday_lunch_hours: 0,
+      sunday_lunch_hours: 0,
+    }));
+    const { error: insertError } = await supabaseAdmin.from('shifts').insert(payload);
+    if (insertError) throw insertError;
+  }
+}
+
 async function listShiftsForClient(clientId: string, client: any = supabaseAdmin) {
+  await ensureDefaultShiftsForClient(clientId);
   const { data, error } = await client
     .from('shifts')
     .select('*')

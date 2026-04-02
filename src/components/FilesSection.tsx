@@ -34,6 +34,11 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
     fetchFiles();
   }, [employeeId]);
 
+  useEffect(() => {
+    if (!employeeId && currentFolderId) {
+      fetchFolderChildren(currentFolderId);
+    }
+  }, [currentFolderId, employeeId]);
 
   const navigateToFolder = (nextFolderId: string | null, options?: { pushHistory?: boolean }) => {
     const pushHistory = options?.pushHistory !== false;
@@ -89,6 +94,9 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
       setIsPasswordModalOpen(true);
       setEnteredPassword('');
     } else {
+      if (!employeeId) {
+        fetchFolderChildren(item.id);
+      }
       navigateToFolder(item.id);
     }
   };
@@ -124,6 +132,27 @@ export const FilesSection: React.FC<FilesSectionProps> = ({ employeeId, readOnly
     }
   };
 
+  const fetchFolderChildren = async (folderId: string) => {
+    try {
+      const data = await fileService.list({ parent_id: folderId, employee_id: employeeId });
+      setFiles((prev) => {
+        const existingIds = new Set(prev.map((f) => f.id));
+        const merged = [...prev];
+        for (const item of data) {
+          const index = merged.findIndex((f) => f.id === item.id);
+          if (index >= 0) {
+            merged[index] = item;
+          } else if (!existingIds.has(item.id)) {
+            merged.push(item);
+            existingIds.add(item.id);
+          }
+        }
+        return merged;
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to load folder contents');
+    }
+  };
 
   const hasVisibleParent = (item: FileItem) => {
     if (!item.parent_id) return false;

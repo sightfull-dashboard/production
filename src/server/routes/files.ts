@@ -253,9 +253,10 @@ export function registerFilesRoutes({
 
       const sessionEmployeeId = (req.session as any)?.employeeId;
       const actorClientId = getActorClientId(req);
+      const effectiveClientId = getEffectiveClientId(db, req) || actorClientId;
       let ownerEmployeeId = employee_id || sessionEmployeeId || null;
-      let storageClientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId });
-      let ownerClientId = storageClientId || actorClientId || null;
+      let storageClientId = await resolveStorageClientId({ actorClientId: effectiveClientId, ownerEmployeeId });
+      let ownerClientId = storageClientId || effectiveClientId || null;
       if (ownerEmployeeId && !canAccessEmployeeFiles(req, ownerEmployeeId)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -339,6 +340,7 @@ export function registerFilesRoutes({
       const parentId = typeof req.query.parent_id === 'string' ? req.query.parent_id : null;
       const employeeId = typeof req.query.employee_id === 'string' ? req.query.employee_id : null;
       const actorClientId = getActorClientId(req);
+      const effectiveClientId = getEffectiveClientId(db, req) || actorClientId;
       const sessionEmployeeId = (req.session as any)?.employeeId;
 
       if (employeeId && !canAccessEmployeeFiles(req, employeeId)) {
@@ -346,8 +348,8 @@ export function registerFilesRoutes({
       }
 
       if (env.databaseProvider !== 'supabase') {
-        if (!employeeId && actorClientId) {
-          ensureClientVaultStructure(actorClientId);
+        if (!employeeId && effectiveClientId) {
+          ensureClientVaultStructure(effectiveClientId);
         }
         const clauses: string[] = [];
         const params: any[] = [];
@@ -357,12 +359,9 @@ export function registerFilesRoutes({
         } else if (sessionEmployeeId) {
           clauses.push('employee_id = ?');
           params.push(sessionEmployeeId);
-        } else if (actorClientId) {
+        } else if (effectiveClientId) {
           clauses.push('client_id = ?');
-          params.push(actorClientId);
-          if (!parentId) {
-            clauses.push('employee_id IS NULL');
-          }
+          params.push(effectiveClientId);
         } else {
           clauses.push('employee_id IS NULL');
         }
@@ -374,7 +373,7 @@ export function registerFilesRoutes({
         return res.json(rows.map(hydrateFileRow));
       }
 
-      const storageClientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId: employeeId || sessionEmployeeId || null });
+      const storageClientId = await resolveStorageClientId({ actorClientId: effectiveClientId, ownerEmployeeId: employeeId || sessionEmployeeId || null });
       if (storageClientId) {
         await ensureSupabaseClientVaultStructure(storageClientId);
       }
@@ -387,11 +386,8 @@ export function registerFilesRoutes({
         } else if (sessionEmployeeId) {
           if (storageClientId) query = query.eq('client_id', storageClientId);
           query = query.eq('employee_id', sessionEmployeeId);
-        } else if (actorClientId) {
-          query = query.eq('client_id', actorClientId);
-          if (!parentId) {
-            query = query.is('employee_id', null);
-          }
+        } else if (effectiveClientId) {
+          query = query.eq('client_id', effectiveClientId);
         } else {
           query = query.is('employee_id', null);
         }
@@ -425,8 +421,9 @@ export function registerFilesRoutes({
         return res.json({ clientId: getActorClientId(req) || null, usedBytes: 0, limitBytes: 2 * 1024 * 1024 * 1024, remainingBytes: 2 * 1024 * 1024 * 1024, percentUsed: 0, packageLimitBytes: 100 * 1024 * 1024 * 1024 });
       }
       const actorClientId = getActorClientId(req);
+      const effectiveClientId = getEffectiveClientId(db, req) || actorClientId;
       const sessionEmployeeId = (req.session as any)?.employeeId;
-      const clientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId: sessionEmployeeId || null });
+      const clientId = await resolveStorageClientId({ actorClientId: effectiveClientId, ownerEmployeeId: sessionEmployeeId || null });
       if (!clientId) return res.status(400).json({ error: 'Client context is required' });
       return res.json(await resolveClientStorageUsage(clientId));
     } catch (error) {
@@ -449,9 +446,10 @@ export function registerFilesRoutes({
       }
       const sessionEmployeeId = (req.session as any)?.employeeId;
       const actorClientId = getActorClientId(req);
+      const effectiveClientId = getEffectiveClientId(db, req) || actorClientId;
       let ownerEmployeeId = employee_id || sessionEmployeeId || null;
-      let storageClientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId });
-      let ownerClientId = storageClientId || actorClientId || null;
+      let storageClientId = await resolveStorageClientId({ actorClientId: effectiveClientId, ownerEmployeeId });
+      let ownerClientId = storageClientId || effectiveClientId || null;
       if (ownerEmployeeId && !canAccessEmployeeFiles(req, ownerEmployeeId)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -545,8 +543,9 @@ export function registerFilesRoutes({
         if (!existing) return res.status(404).json({ error: 'File not found' });
         if (existing.employee_id && !canAccessEmployeeFiles(req, existing.employee_id)) return res.status(403).json({ error: 'Forbidden' });
         const actorClientId = getActorClientId(req);
+        const effectiveClientId = getEffectiveClientId(db, req) || actorClientId;
         const sessionRole = (req.session as any)?.userRole;
-        if (actorClientId && sessionRole !== 'superadmin' && existing.client_id && existing.client_id !== actorClientId) return res.status(403).json({ error: 'Forbidden' });
+        if (effectiveClientId && sessionRole !== 'superadmin' && existing.client_id && existing.client_id !== effectiveClientId) return res.status(403).json({ error: 'Forbidden' });
         const removeRecursively = (fileId: string) => {
           const children = db.prepare('SELECT id FROM files WHERE parent_id = ?').all(fileId) as any[];
           children.forEach((child) => removeRecursively(child.id));
@@ -562,8 +561,9 @@ export function registerFilesRoutes({
       if (fetchError || !existing) return res.status(404).json({ error: 'File not found' });
       if (existing.employee_id && !canAccessEmployeeFiles(req, existing.employee_id)) return res.status(403).json({ error: 'Forbidden' });
       const actorClientId = getActorClientId(req);
+      const effectiveClientId = getEffectiveClientId(db, req) || actorClientId;
       const sessionRole = (req.session as any)?.userRole;
-      if (actorClientId && sessionRole !== 'superadmin' && existing.client_id && existing.client_id !== actorClientId) return res.status(403).json({ error: 'Forbidden' });
+      if (effectiveClientId && sessionRole !== 'superadmin' && existing.client_id && existing.client_id !== effectiveClientId) return res.status(403).json({ error: 'Forbidden' });
 
       const removeRecursively = async (fileId: string) => {
         const { data: children } = await dataClient.from('files').select('id').eq('parent_id', fileId);
@@ -592,8 +592,9 @@ export function registerFilesRoutes({
         return res.status(403).json({ error: 'Forbidden' });
       }
       const actorClientId = getActorClientId(req);
+      const effectiveClientId = getEffectiveClientId(db, req) || actorClientId;
       const sessionRole = (req.session as any)?.userRole;
-      if (actorClientId && sessionRole !== 'superadmin' && existing.client_id && existing.client_id !== actorClientId) {
+      if (effectiveClientId && sessionRole !== 'superadmin' && existing.client_id && existing.client_id !== effectiveClientId) {
         return res.status(403).json({ error: 'Forbidden' });
       }
       if (existing.type === 'folder') {

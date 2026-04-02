@@ -1,5 +1,7 @@
 import { supabaseAdmin } from '../integrations/supabase';
 
+const structureEnsureLocks = new Map<string, Promise<void>>();
+
 const randomId = () => Math.random().toString(36).slice(2, 11);
 const nowIso = () => new Date().toISOString();
 
@@ -20,7 +22,7 @@ const upsertFolderIdentity = async (folderId: string, updates: Record<string, an
   if (error) throw error;
 };
 
-export const ensureSupabaseClientVaultStructure = async (clientId: string | null | undefined) => {
+const ensureSupabaseClientVaultStructureUnlocked = async (clientId: string | null | undefined) => {
   const normalizedClientId = String(clientId || '').trim();
   if (!normalizedClientId) return;
 
@@ -67,10 +69,35 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
     }
   }
 
+  const findExistingFolderId = async ({ name, parentId = null, employeeId = null }: { name: string; parentId?: string | null; employeeId?: string | null }) => {
+    let query = supabaseAdmin
+      .from('files')
+      .select('id')
+      .eq('client_id', normalizedClientId)
+      .eq('type', 'folder')
+      .eq('name', name);
+
+    if (parentId) query = query.eq('parent_id', parentId);
+    else query = query.is('parent_id', null);
+
+    if (employeeId) query = query.eq('employee_id', employeeId);
+    else query = query.is('employee_id', null);
+
+    const { data, error } = await query.limit(1).maybeSingle();
+    if (error) throw error;
+    return data?.id ? String(data.id) : null;
+  };
+
   const insertFolder = async ({ name, parentId = null, employeeId = null }: { name: string; parentId?: string | null; employeeId?: string | null }) => {
     const key = normalizeKey({ name, parentId, employeeId });
     const existingId = folderKeyToId.get(key);
     if (existingId) return existingId;
+
+    const foundId = await findExistingFolderId({ name, parentId, employeeId });
+    if (foundId) {
+      folderKeyToId.set(key, foundId);
+      return foundId;
+    }
 
     const payload = {
       id: randomId(),
@@ -91,7 +118,17 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
     };
 
     const { data, error } = await supabaseAdmin.from('files').insert(payload).select('id').single();
-    if (error) throw error;
+    if (error) {
+      const code = String((error as any)?.code || '');
+      if (code === '23505') {
+        const retryId = await findExistingFolderId({ name, parentId, employeeId });
+        if (retryId) {
+          folderKeyToId.set(key, retryId);
+          return retryId;
+        }
+      }
+      throw error;
+    }
     const id = String((data as any)?.id || payload.id);
     folderKeyToId.set(key, id);
     return id;
@@ -172,7 +209,7 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
         .update({ parent_id: employeeRootId, client_id: normalizedClientId, employee_id: employeeId, updated_at: nowIso() })
         .eq('parent_id', duplicateId)
         .eq('client_id', normalizedClientId);
-      if (reparentChildrenError) throw reparentChildrenError;
+      if (reparentChildrenError && String((reparentChildrenError as any)?.code || '') !== '23505') throw reparentChildrenError;
 
       const { error: deleteDuplicateError } = await supabaseAdmin
         .from('files')
@@ -188,4 +225,21 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
       await insertFolder({ name: folderName, parentId: employeeRootId, employeeId });
     }
   }
+};
+
+export const ensureSupabaseClientVaultStructure = async (clientId: string | null | undefined) => {
+  const normalizedClientId = String(clientId || '').trim();
+  if (!normalizedClientId) return;
+  const existing = structureEnsureLocks.get(normalizedClientId);
+  if (existing) return existing;
+
+  const pending = ensureSupabaseClientVaultStructureUnlocked(normalizedClientId)
+    .finally(() => {
+      if (structureEnsureLocks.get(normalizedClientId) === pending) {
+        structureEnsureLocks.delete(normalizedClientId);
+      }
+    });
+
+  structureEnsureLocks.set(normalizedClientId, pending);
+  return pending;
 };

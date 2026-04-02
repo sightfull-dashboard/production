@@ -130,17 +130,6 @@ export const buildRosterAndTimesheetAttachments = (
   },
 ) => {
   const periodDays = buildPeriodDays(payload.periodStart, payload.periodEnd, deps.toLocalIsoDate);
-  const rosterHeader = ['Employee ID', 'Employee', 'Department', ...periodDays];
-  const rosterRows = context.employees.map((employee) => {
-    const base = [employee.emp_id || '', `${employee.first_name || ''} ${employee.last_name || ''}`.trim(), employee.department || 'Unassigned'];
-    const daily = periodDays.map((dayIso) => {
-      const assignment = context.roster.find((row) => row.employee_id === employee.id && row.day_date === dayIso);
-      const shift = context.shifts.find((item) => item.id === assignment?.shift_id);
-      return shift?.label || 'Unassigned';
-    });
-    return [...base, ...daily];
-  });
-
   const weekDays = periodDays.map((dayIso) => new Date(`${dayIso}T00:00:00`));
   const visibleDefinitions = deps.mergeDefinitions(context.rosterMeta.length ? Object.keys(context.rosterMeta[0]).filter((key) => !['id','client_id','employee_id','week_start','created_at','updated_at'].includes(key)) : undefined);
   const timesheetHeader = ['Employee ID', 'Employee', 'Department', 'Normal (45h)', 'OT 1.5', 'Sun 1.5', 'Sun 2.0', 'Public Holiday', 'Annual Leave', 'Sick Leave', 'Family Leave', ...visibleDefinitions.map((d) => d)];
@@ -162,17 +151,9 @@ export const buildRosterAndTimesheetAttachments = (
     ];
   });
   const timesheetCsv = [timesheetHeader, ...timesheetRows].map((line) => line.map(csvEscape).join(',')).join('\n');
-  const timesheetPdfBuffer = buildStyledTablePdfBuffer(
-    `Timesheet - ${payload.clientName}`,
-    `Period: ${payload.periodStart} to ${payload.periodEnd}`,
-    timesheetHeader,
-    timesheetRows,
-  );
-
   const safeBase = `${payload.clientName}-${payload.periodEnd}`.replace(/\s+/g, '-');
   return [
     { filename: `${safeBase}-timesheet.csv`, content: Buffer.from(timesheetCsv, 'utf-8'), contentType: 'text/csv; charset=utf-8' },
-    { filename: `${safeBase}-timesheet.pdf`, content: timesheetPdfBuffer, contentType: 'application/pdf' },
   ];
 };
 
@@ -216,7 +197,7 @@ export const sendPayrollSubmissionEmail = async (payload: {
         <tr><td style="padding: 6px 12px 6px 0;"><strong>Total hours</strong></td><td>${Number(payload.totalHours || 0).toFixed(2)}</td></tr>
         <tr><td style="padding: 6px 12px 6px 0;"><strong>Total pay</strong></td><td>R${Number(payload.totalPay || 0).toFixed(2)}</td></tr>
       </table>
-      <p style="margin: 12px 0 0;">The timesheet is attached in CSV and PDF format.</p>
+      <p style="margin: 12px 0 0;">The timesheet CSV for the submitted period is attached.</p>
     </div>
   `;
   const text = [
@@ -232,7 +213,7 @@ export const sendPayrollSubmissionEmail = async (payload: {
     `Total hours: ${Number(payload.totalHours || 0).toFixed(2)}`,
     `Total pay: R${Number(payload.totalPay || 0).toFixed(2)}`,
     '',
-    'The timesheet is attached in CSV and PDF format.',
+    'The timesheet CSV for the submitted period is attached.',
   ].join('\n');
 
   return sendMailMessage({
@@ -246,7 +227,7 @@ export const sendPayrollSubmissionEmail = async (payload: {
       : [
           {
             filename: `${payload.clientName}-${payload.periodEnd}-timesheet.csv`.replace(/\s+/g, '-'),
-            content: Buffer.from(csv, 'utf-8'),
+            content: payload.attachments?.[0]?.content || Buffer.from(csv, 'utf-8'),
             contentType: 'text/csv; charset=utf-8',
           },
         ],
