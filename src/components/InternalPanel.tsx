@@ -138,6 +138,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
   const [payrollEmail, setPayrollEmail] = useState<string>('');
   const [payrollCc, setPayrollCc] = useState<string>('');
   const [payrollSubmissionDay, setPayrollSubmissionDay] = useState<number>(1); // Default to Monday or 1st
+  const [storageQuotaGb, setStorageQuotaGb] = useState<number>(2);
 
   // WhatsApp State
   const [waStep, setWaStep] = useState<'upload' | 'review'>('upload');
@@ -185,6 +186,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
       setPayrollEmail(selectedClient.payrollEmail || '');
       setPayrollCc(selectedClient.payrollCc || '');
       setPayrollSubmissionDay(selectedClient.payrollSubmissionDay || 1);
+      setStorageQuotaGb(Math.max(1, Number((((selectedClient.storageQuotaBytes || 2 * 1024 * 1024 * 1024) / (1024 ** 3))).toFixed(2))));
       setRosterStartDay(selectedClient.rosterStartDay ?? 1);
       setRosterDuration(selectedClient.rosterDuration || '1_week');
       setEnabledDefinitions(selectedClient.enabledDefinitions || ['salary_advance', 'shortages', 'unpaid_hours', 'staff_loan', 'notes']);
@@ -1232,16 +1234,16 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                     </div>
                     <div>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Storage</p>
-                      <p className="text-2xl font-black text-slate-800">{clientFiles.length} Files</p>
+                      <p className="text-2xl font-black text-slate-800">{clientFileUsage ? formatStorageCompact(clientFileUsage.usedBytes) : `${clientFiles.length} Files`}</p>
                     </div>
                   </div>
                   <div className="space-y-2 relative z-10">
                     <div className="flex items-center justify-between text-[11px] font-bold">
                       <span className="text-slate-400 uppercase tracking-wider">Quota</span>
-                      <span className="text-amber-600">12% Used</span>
+                      <span className="text-amber-600">{clientFileUsage ? `${Math.round(clientFileUsage.percentUsed)}% Used` : `${storageQuotaGb.toFixed(storageQuotaGb % 1 === 0 ? 0 : 1)} GB Allocation`}</span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                      <motion.div initial={{ width: 0 }} animate={{ width: '12%' }} className="h-full bg-amber-500 rounded-full" />
+                      <motion.div initial={{ width: 0 }} animate={{ width: `${clientFileUsage ? Math.min(100, clientFileUsage.percentUsed) : 0}%` }} className="h-full bg-amber-500 rounded-full" />
                     </div>
                   </div>
                 </div>
@@ -2058,6 +2060,31 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                       </div>
                     </div>
 
+                    <div className="pt-8 border-t border-slate-100 space-y-6">
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-bold text-slate-800">Client Storage Quota</h4>
+                        <p className="text-xs text-slate-500">Increase or reduce the per-client document storage cap for this dashboard.</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Storage Quota (GB)</label>
+                          <input
+                            type="number"
+                            min={1}
+                            step="0.5"
+                            value={storageQuotaGb}
+                            onChange={(e) => setStorageQuotaGb(Math.max(1, Number(e.target.value || 0)))}
+                            className="w-full px-4 py-3 rounded-2xl border border-slate-200 focus:ring-4 focus:ring-indigo-600/10 outline-none font-bold text-sm bg-slate-50"
+                          />
+                        </div>
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-5 py-4 space-y-2">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Current Usage</p>
+                          <p className="text-lg font-black text-slate-800">{clientFileUsage ? `${formatStorageCompact(clientFileUsage.usedBytes)} / ${storageQuotaGb.toFixed(storageQuotaGb % 1 === 0 ? 0 : 1)} GB` : `${storageQuotaGb.toFixed(storageQuotaGb % 1 === 0 ? 0 : 1)} GB allocation`}</p>
+                          <p className="text-xs text-slate-500">Default allocation is 2 GB. Super admin can increase this client only.</p>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="pt-8 border-t border-rose-100 space-y-4">
                       <div className="space-y-1">
                         <h4 className="text-sm font-bold text-rose-700">Danger Zone</h4>
@@ -2281,6 +2308,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                         payrollEmail,
                         payrollCc,
                         payrollSubmissionDay,
+                        storageQuotaBytes: Math.round(storageQuotaGb * 1024 * 1024 * 1024),
                       });
                       const nextClient = updatedClient || {
                         ...selectedClient,
@@ -2295,6 +2323,7 @@ export const InternalPanel: React.FC<InternalPanelProps> = ({ onLoginAsSuperAdmi
                         payrollEmail,
                         payrollCc,
                         payrollSubmissionDay,
+                        storageQuotaBytes: Math.round(storageQuotaGb * 1024 * 1024 * 1024),
                       };
                       await fetchClients();
                       if (String(nextClient?.status || 'active').trim().toLowerCase() === 'deactivated') {

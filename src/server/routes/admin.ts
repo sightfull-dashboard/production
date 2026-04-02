@@ -4,7 +4,7 @@ import { createRequestSupabaseClient, supabaseAdmin } from '../integrations/supa
 import { env } from '../config/env';
 import bcrypt from 'bcryptjs';
 import { deleteStoredObjectIfPresent, encodeBufferAsDataUrl, parseStoredBinaryValue, uploadBase64FileToSupabaseStorage, uploadBinaryFileToSupabaseStorage } from '../utils/storage';
-import { StorageQuotaError, assertClientStorageCapacity, resolveClientStorageUsage } from '../utils/fileStorageQuota';
+import { CLIENT_STORAGE_LIMIT_BYTES, StorageQuotaError, assertClientStorageCapacity, isClientStorageQuotaColumnAvailable, resolveClientStorageUsage } from '../utils/fileStorageQuota';
 import { deleteSupabaseAuthUser, syncSupabaseAuthUser } from '../utils/supabaseAuth';
 import { ensureSupabaseClientVaultStructure } from '../utils/clientVaultStructure';
 
@@ -153,6 +153,7 @@ const serializeSupabaseClient = (row: any, extras?: { users?: number; employees?
     payrollCc: row.payroll_cc || '',
     payrollSubmissionDay: row.payroll_submission_day || 1,
     fallbackImage: row.fallback_image || null,
+    storageQuotaBytes: resolveSerializedClientStorageQuota(row),
     created_at: row.created_at,
     data: {
       employees: Number(extras?.employees) || 0,
@@ -201,6 +202,18 @@ const countSupabaseEmployees = async (clientId: string) => {
     .eq('client_id', clientId);
   if (error) throw error;
   return (data || []).filter((row: any) => String(row.status || 'active').toLowerCase() !== 'offboarded').length;
+};
+
+const normalizeRequestedStorageQuotaBytes = (input: unknown) => {
+  const parsed = Number(input);
+  if (!Number.isFinite(parsed)) return null;
+  const rounded = Math.round(parsed);
+  return rounded > 0 ? rounded : null;
+};
+
+const resolveSerializedClientStorageQuota = (row: any) => {
+  const parsed = Number(row?.storage_quota_bytes || 0);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : CLIENT_STORAGE_LIMIT_BYTES;
 };
 
 
@@ -1368,7 +1381,8 @@ export function registerAdminRoutes({
         return res.status(201).json(serializeAdminClient(row));
       }
 
-      const payload = {
+      const clientQuotaColumnAvailable = await isClientStorageQuotaColumnAvailable().catch(() => false);
+      const payload: Record<string, any> = {
         id,
         name,
         status: req.body.status || 'active',
@@ -1388,6 +1402,11 @@ export function registerAdminRoutes({
         payroll_cc: String(req.body.payrollCc || '').trim(),
         payroll_submission_day: req.body.payrollSubmissionDay || 1,
       };
+
+      const requestedStorageQuotaBytes = normalizeRequestedStorageQuotaBytes(req.body.storageQuotaBytes);
+      if (clientQuotaColumnAvailable && requestedStorageQuotaBytes) {
+        payload.storage_quota_bytes = requestedStorageQuotaBytes;
+      }
 
       const { data, error } = await supabaseAdmin.from('clients').insert(payload).select('*').single();
       if (error) {
@@ -1439,7 +1458,8 @@ export function registerAdminRoutes({
       existing,
     });
 
-    const updatePayload = {
+    const clientQuotaColumnAvailable = await isClientStorageQuotaColumnAvailable().catch(() => false);
+    const updatePayload: Record<string, any> = {
       name: req.body.name ?? existing.name,
       status: req.body.status ?? existing.status,
       fallback_image: req.body.fallbackImage ?? existing.fallback_image ?? null,
@@ -1458,6 +1478,11 @@ export function registerAdminRoutes({
       payroll_cc: String(req.body.payrollCc ?? existing.payroll_cc ?? '').trim(),
       payroll_submission_day: req.body.payrollSubmissionDay ?? existing.payroll_submission_day ?? 1,
     };
+
+    const requestedStorageQuotaBytes = normalizeRequestedStorageQuotaBytes(req.body.storageQuotaBytes);
+    if (clientQuotaColumnAvailable && requestedStorageQuotaBytes) {
+      updatePayload.storage_quota_bytes = requestedStorageQuotaBytes;
+    }
 
     const { data: updated, error: updateError } = await supabaseAdmin.from('clients').update(updatePayload).eq('id', req.params.id).select('*').single();
     if (updateError || !updated) {

@@ -204,6 +204,7 @@ export type Client = {
   trialEndDate?: string | null;
   trialExpired?: boolean;
   trialDaysRemaining?: number;
+  storageQuotaBytes?: number;
 };
 
 export type ClientStats = {
