@@ -205,8 +205,8 @@ export function registerFilesRoutes({
       const sessionEmployeeId = (req.session as any)?.employeeId;
       const actorClientId = getActorClientId(req);
       const ownerEmployeeId = employee_id || sessionEmployeeId || null;
-      const ownerClientId = ownerEmployeeId ? null : actorClientId;
       const storageClientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId });
+      const ownerClientId = storageClientId || actorClientId || null;
       if (ownerEmployeeId && !canAccessEmployeeFiles(req, ownerEmployeeId)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -220,8 +220,10 @@ export function registerFilesRoutes({
           const parent = db.prepare('SELECT id, type FROM files WHERE id = ?').get(parent_id) as any;
           if (!parent || parent.type !== 'folder') return res.status(400).json({ error: 'Parent folder not found' });
         } else {
-          const { data: parent } = await supabaseAdmin.from('files').select('id,type').eq('id', parent_id).single();
+          const { data: parent } = await supabaseAdmin.from('files').select('id,type,client_id,employee_id').eq('id', parent_id).single();
           if (!parent || parent.type !== 'folder') return res.status(400).json({ error: 'Parent folder not found' });
+          if (storageClientId && String(parent.client_id || '') !== storageClientId) return res.status(400).json({ error: 'Parent folder not found' });
+          if (ownerEmployeeId && parent.employee_id && String(parent.employee_id) !== String(ownerEmployeeId)) return res.status(400).json({ error: 'Parent folder not found' });
         }
       }
 
@@ -318,8 +320,10 @@ export function registerFilesRoutes({
       const buildFilesListQuery = () => {
         let query = supabaseAdmin.from('files').select('*').order('type', { ascending: false }).order('name', { ascending: true });
         if (employeeId) {
+          if (storageClientId) query = query.eq('client_id', storageClientId);
           query = query.eq('employee_id', employeeId);
         } else if (sessionEmployeeId) {
+          if (storageClientId) query = query.eq('client_id', storageClientId);
           query = query.eq('employee_id', sessionEmployeeId);
         } else if (actorClientId) {
           query = query.eq('client_id', actorClientId).is('employee_id', null);
@@ -381,8 +385,8 @@ export function registerFilesRoutes({
       const sessionEmployeeId = (req.session as any)?.employeeId;
       const actorClientId = getActorClientId(req);
       const ownerEmployeeId = employee_id || sessionEmployeeId || null;
-      const ownerClientId = ownerEmployeeId ? null : actorClientId;
       const storageClientId = await resolveStorageClientId({ actorClientId, ownerEmployeeId });
+      const ownerClientId = storageClientId || actorClientId || null;
       if (ownerEmployeeId && !canAccessEmployeeFiles(req, ownerEmployeeId)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
@@ -406,8 +410,10 @@ export function registerFilesRoutes({
 
       const dataClient = getTenantDataClient(req);
       if (parent_id) {
-        const { data: parent } = await dataClient.from('files').select('id,type').eq('id', parent_id).single();
+        const { data: parent } = await dataClient.from('files').select('id,type,client_id,employee_id').eq('id', parent_id).single();
         if (!parent || parent.type !== 'folder') return res.status(400).json({ error: 'Parent folder not found' });
+        if (storageClientId && String(parent.client_id || '') !== storageClientId) return res.status(400).json({ error: 'Parent folder not found' });
+        if (ownerEmployeeId && parent.employee_id && String(parent.employee_id) !== String(ownerEmployeeId)) return res.status(400).json({ error: 'Parent folder not found' });
       }
       const id = Math.random().toString(36).substr(2, 9);
       if (type === 'file' && typeof url === 'string' && storageClientId) {

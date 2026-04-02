@@ -14,7 +14,7 @@ const buildEmployeeDisplayName = (employee: any) => {
   return combined || String(employee?.emp_id || employee?.id || 'Employee').trim();
 };
 
-const fetchEmployeeFolders = async (employeeIds: string[]) => {
+const fetchEmployeeFolders = async (clientId: string, employeeIds: string[]) => {
   if (!employeeIds.length) return [] as any[];
   const rows: any[] = [];
   const batchSize = 100;
@@ -24,6 +24,7 @@ const fetchEmployeeFolders = async (employeeIds: string[]) => {
       .from('files')
       .select('id,name,parent_id,employee_id,client_id,type')
       .eq('type', 'folder')
+      .eq('client_id', clientId)
       .in('employee_id', batch);
     if (error) throw error;
     rows.push(...(data || []));
@@ -48,8 +49,7 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
   if (employeeIds.length) {
     const { error: normalizeEmployeeFilesError } = await supabaseAdmin
       .from('files')
-      .update({ client_id: null, updated_at: nowIso() })
-      .eq('client_id', normalizedClientId)
+      .update({ client_id: normalizedClientId, updated_at: nowIso() })
       .in('employee_id', employeeIds);
     if (normalizeEmployeeFilesError) throw normalizeEmployeeFilesError;
   }
@@ -58,9 +58,9 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
     supabaseAdmin
       .from('files')
       .select('id,name,parent_id,employee_id,client_id,type')
-      .eq('client_id', normalizedClientId)
+      .eq('client_id', clientId)
       .eq('type', 'folder'),
-    fetchEmployeeFolders(employeeIds),
+    fetchEmployeeFolders(normalizedClientId, employeeIds),
   ]);
 
   if (clientFoldersResult.error) throw clientFoldersResult.error;
@@ -88,7 +88,7 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
 
     const payload = {
       id: randomId(),
-      client_id: employeeId ? null : normalizedClientId,
+      client_id: normalizedClientId,
       parent_id: parentId,
       employee_id: employeeId,
       name,
@@ -154,7 +154,7 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
       const currentParentId = rootFolder.parent_id ? String(rootFolder.parent_id) : null;
       if (currentName !== displayName) updates.name = displayName;
       if (currentParentId !== clientEmployeesId) updates.parent_id = clientEmployeesId;
-      if (rootFolder.client_id !== null) updates.client_id = null;
+      if (String(rootFolder.client_id || '') !== normalizedClientId) updates.client_id = normalizedClientId;
       if (Object.keys(updates).length > 1) {
         const { error } = await supabaseAdmin.from('files').update(updates).eq('id', rootFolder.id);
         if (error) throw error;
@@ -163,7 +163,7 @@ export const ensureSupabaseClientVaultStructure = async (clientId: string | null
       folderKeyToId.set(normalizeKey({ name: displayName, parentId: clientEmployeesId, employeeId }), String(rootFolder.id));
     } else {
       const rootId = await insertFolder({ name: displayName, parentId: clientEmployeesId, employeeId });
-      rootFolder = { id: rootId, name: displayName, employee_id: employeeId, parent_id: clientEmployeesId, client_id: null };
+      rootFolder = { id: rootId, name: displayName, employee_id: employeeId, parent_id: clientEmployeesId, client_id: normalizedClientId };
     }
 
     const employeeRootId = String(rootFolder.id);
